@@ -1,0 +1,93 @@
+import { useCommandRegistration } from "./useCommands.js";
+import { useDialogs } from "./useDialogs.js";
+import { useLayout } from "./useLayout.js";
+import { useTheme } from "./useTheme.js";
+
+/**
+ * App-wide commands. Shortcuts follow macOS conventions and are reserved
+ * in docs/design/workspace.md so later phases don't collide.
+ */
+export function useAppCommands() {
+  const dialogs = useDialogs();
+  const layout = useLayout();
+  const theme = useTheme();
+
+  const commands = [
+    {
+      id: "app.commandPalette",
+      title: "Open Anything",
+      group: "General",
+      shortcut: "Mod+P",
+      run: () => dialogs.show("palette"),
+    },
+    {
+      id: "app.settings",
+      title: "Settings…",
+      group: "General",
+      shortcut: "Mod+Comma",
+      run: () => dialogs.show("settings"),
+    },
+    {
+      id: "app.shortcuts",
+      title: "Keyboard Shortcuts",
+      group: "Help",
+      shortcut: "Mod+Slash",
+      run: () => dialogs.show("shortcuts"),
+    },
+    {
+      id: "app.about",
+      title: "About Thabi Studio",
+      group: "Help",
+      run: () => dialogs.show("about"),
+    },
+    {
+      id: "view.toggleSidebar",
+      title: "Toggle Sidebar",
+      group: "View",
+      shortcut: "Mod+1",
+      run: layout.toggleSidebar,
+    },
+    ...[
+      ["explorer", "Show Explorer"],
+      ["saved", "Show Saved Queries"],
+      ["history", "Show Query History"],
+    ].map(([view, title]) => ({
+      id: `view.sidebar.${view}`,
+      title,
+      group: "View",
+      run: () => {
+        layout.sidebarView.value = view;
+        layout.sidebarOpen.value = true;
+      },
+    })),
+    ...[
+      ["system", "Use System Appearance"],
+      ["light", "Use Light Appearance"],
+      ["dark", "Use Dark Appearance"],
+    ].map(([mode, title]) => ({
+      id: `view.appearance.${mode}`,
+      title,
+      group: "Appearance",
+      run: () => theme.setMode(mode),
+    })),
+  ];
+
+  if (import.meta.env.DEV) {
+    commands.push(
+      {
+        id: "dev.gallery",
+        title: "Show Component Gallery",
+        group: "Developer",
+        run: () => (layout.mainView.value = "gallery"),
+      },
+      {
+        id: "dev.welcome",
+        title: "Show Welcome View",
+        group: "Developer",
+        run: () => (layout.mainView.value = "welcome"),
+      },
+    );
+  }
+
+  useCommandRegistration(commands);
+}

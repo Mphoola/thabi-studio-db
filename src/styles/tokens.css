@@ -61,6 +61,7 @@
   --focus: rgb(86 81 214 / 0.55);
   --selection: #d9d8fb;
   --overlay: rgb(23 23 28 / 0.28);
+  --knob: #ffffff; /* switch thumb */
 
   /* Elevation */
   --shadow-popover:
@@ -142,6 +143,7 @@
   --focus: rgb(169 166 255 / 0.6);
   --selection: #3b3973;
   --overlay: rgb(0 0 0 / 0.55);
+  --knob: #e6e6ec;
 
   --shadow-popover:
     0 0 0 1px rgb(255 255 255 / 0.07), 0 8px 24px -4px rgb(0 0 0 / 0.5);
@@ -224,6 +226,7 @@
   --color-focus: var(--focus);
   --color-selection: var(--selection);
   --color-overlay: var(--overlay);
+  --color-knob: var(--knob);
 
   --color-grid-header: var(--grid-header);
   --color-grid-row-alt: var(--grid-row-alt);

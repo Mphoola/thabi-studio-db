@@ -14,8 +14,9 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 ## Current status
 
 - Phase 1 (scaffold and engineering baseline): complete.
-- Colour system and workspace design: `docs/design/workspace.md` (proposed).
-- Next: Phase 2 (product shell and design system), built to that design.
+- Phase 2 (product shell and design system): complete. Layout, principles,
+  copy and shortcuts live in `docs/design/workspace.md`; follow them.
+- Next: Phase 3 (local persistence and connection profiles).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -31,7 +32,8 @@ Update this section and the tracker in `plan.md` §12 when a phase finishes.
 ```bash
 npm install            # install frontend deps (Rust deps build on first run)
 npm run tauri dev      # run the desktop app with hot reload
-npm run check          # format, ESLint, design check, frontend build, clippy, cargo test
+npm run check          # format, ESLint, design check, Vitest, build, clippy, cargo test
+npm run test           # Vitest unit tests
 npm run format         # Prettier + rustfmt
 npm run lint:fix       # ESLint autofix
 npm run tauri build    # release .app/.dmg (slow: LTO)
@@ -42,9 +44,19 @@ Run `npm run check` after every meaningful change and before calling work done.
 ## Layout
 
 - `src/components/app/` — app shell (sidebar, status bar, error boundary, About).
-- `src/components/common/` — reusable primitives (`BaseButton`, `BaseDialog`,
-  `ToastHost`, `ConfirmHost`).
-- `src/composables/` — shared state: `useTheme`, `useToasts`, `useConfirm`, `useAppInfo`.
+- `src/components/app/` also holds the title bar, sidebar, command palette,
+  settings and shortcuts dialogs.
+- `src/components/common/` — reusable primitives: `BaseButton`, `IconButton`,
+  `TextInput`, `SelectInput`, `CheckboxInput`, `SwitchInput`,
+  `SegmentedControl`, `DropdownMenu`, `BaseDialog`, `EmptyState`,
+  `InlineAlert`, `SpinnerIcon`, `KbdShortcut`, plus the toast, confirm and
+  tooltip hosts. See them all in the dev-only Component Gallery (⌘P).
+- `src/components/dev/` — development-only screens, never in release builds.
+- `src/composables/` — shared state: `useCommands` (commands + shortcuts),
+  `useAppCommands`, `useLayout`, `useDialogs`, `useTheme`, `useToasts`,
+  `useConfirm`, `useTooltip` (`v-tooltip`), `useAppInfo`.
+- `src/lib/` — pure helpers (`shortcuts.js`, `fuzzy.js`, `position.js`),
+  unit-tested in `tests/frontend/`.
 - `src/lib/tauri/` — the only place that calls `invoke`. Add new command
   wrappers to `commands.js`; errors arrive as `{ kind, message }`.
 - `src/styles/tokens.css` — the only place colours, type, radii and shadows are defined.
@@ -61,13 +73,19 @@ Run `npm run check` after every meaningful change and before calling work done.
    in `src/`. New colours are added as tokens in both themes and must pass the
    contrast pairs in `scripts/check-design.js`.
 3. Use `BaseDialog` for modals, `confirm()` from `useConfirm` for confirmations,
-   and `useToasts()` for notifications. Don't build one-off versions.
-4. Keep business logic out of components: composables, stores and Rust services.
-5. The frontend never connects to a database or holds raw credentials.
-6. Never show fake data, fake success states or placeholder features that look real.
-7. Keep dependencies minimal and record why each new one is needed in `docs/decisions/`.
-8. Review `capabilities/` whenever a plugin or native capability is added.
-9. Don't refactor unrelated code during a phase.
+   `useToasts()` for notifications, `v-tooltip` for tooltips and the common
+   inputs for forms. Don't build one-off versions.
+4. New user actions are commands registered with `useCommandRegistration`
+   (title in Title Case, optional `Mod+…` shortcut). Check the reserved
+   shortcuts in `docs/design/workspace.md` first.
+5. Icons come from `lucide-vue-next`: 14px in controls, 16px in toolbars,
+   `stroke-width` 1.75, `aria-hidden` unless the icon is the only label.
+6. Keep business logic out of components: composables, stores and Rust services.
+7. The frontend never connects to a database or holds raw credentials.
+8. Never show fake data, fake success states or placeholder features that look real.
+9. Keep dependencies minimal and record why each new one is needed in `docs/decisions/`.
+10. Review `capabilities/` whenever a plugin or native capability is added.
+11. Don't refactor unrelated code during a phase.
 
 ## Security
 

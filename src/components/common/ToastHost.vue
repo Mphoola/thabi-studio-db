@@ -1,7 +1,22 @@
 <script setup>
+import { onMounted, ref, watch } from "vue";
 import { useToasts } from "../../composables/useToasts.js";
 
 const { toasts, dismiss } = useToasts();
+const host = ref(null);
+
+// A manual popover lives in the top layer, so toasts stay visible and
+// clickable above modal dialogs. Re-showing it moves it back on top.
+onMounted(() => host.value.showPopover());
+watch(
+  () => toasts.value.length,
+  (count, previous) => {
+    if (count > previous) {
+      host.value.hidePopover();
+      host.value.showPopover();
+    }
+  },
+);
 
 const toneClass = {
   info: "border-l-accent",
@@ -12,7 +27,9 @@ const toneClass = {
 
 <template>
   <div
-    class="pointer-events-none fixed right-4 bottom-10 z-50 flex w-80 flex-col gap-2"
+    ref="host"
+    popover="manual"
+    class="pointer-events-none fixed top-auto right-4 bottom-10 left-auto m-0 flex w-80 flex-col gap-2 overflow-visible bg-transparent p-0"
     aria-live="polite"
     aria-relevant="additions"
   >

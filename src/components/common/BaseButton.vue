@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import SpinnerIcon from "./SpinnerIcon.vue";
 
 const props = defineProps({
   variant: {
@@ -13,7 +14,10 @@ const props = defineProps({
     validator: (v) => ["sm", "md"].includes(v),
   },
   type: { type: String, default: "button" },
+  /** A lucide icon component shown before the label. */
+  icon: { type: [Object, Function], default: null },
   disabled: { type: Boolean, default: false },
+  loading: { type: Boolean, default: false },
 });
 
 const variantClass = computed(
@@ -37,10 +41,19 @@ const sizeClass = computed(() =>
 <template>
   <button
     :type="type"
-    :disabled="disabled"
+    :disabled="disabled || loading"
+    :aria-busy="loading || undefined"
     class="inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors disabled:pointer-events-none disabled:opacity-50"
     :class="[variantClass, sizeClass]"
   >
+    <SpinnerIcon v-if="loading" :size="14" />
+    <component
+      :is="icon"
+      v-else-if="icon"
+      :size="14"
+      :stroke-width="1.75"
+      aria-hidden="true"
+    />
     <slot />
   </button>
 </template>

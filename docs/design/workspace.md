@@ -1,6 +1,6 @@
 # Workspace design
 
-Status: proposed (2026-10-14). The source of truth for Phase 2 and the UI
+Status: accepted (2026-10-14). The source of truth for Phase 2 and the UI
 work in later phases. Colours come only from `src/styles/tokens.css`.
 
 Based on how TablePlus and DataGrip handle the same jobs:

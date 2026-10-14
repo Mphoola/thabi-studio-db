@@ -1,0 +1,14 @@
+import { ref } from "vue";
+
+/** App-level dialogs, opened from commands. One open at a time. */
+const open = ref(
+  /** @type {null | "about" | "settings" | "shortcuts" | "palette"} */ (null),
+);
+
+export function useDialogs() {
+  return {
+    open,
+    show: (name) => (open.value = name),
+    close: () => (open.value = null),
+  };
+}

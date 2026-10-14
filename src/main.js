@@ -1,5 +1,6 @@
 import { createApp } from "vue";
 import App from "./App.vue";
+import { installShortcutListener } from "./composables/useCommands.js";
 import { initTheme } from "./composables/useTheme.js";
 import { useToasts } from "./composables/useToasts.js";
 import { toUserMessage } from "./lib/errors.js";
@@ -22,4 +23,5 @@ window.addEventListener("unhandledrejection", (event) => {
   toasts.error("Something went wrong", toUserMessage(event.reason));
 });
 
+installShortcutListener();
 app.mount("#app");

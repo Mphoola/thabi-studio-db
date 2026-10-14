@@ -796,7 +796,16 @@ Update this section as work progresses.
   - [x] `CLAUDE.md`, `README.md`, `docs/decisions/0001-phase-1-baseline.md`
   - [x] Template demo command and unused opener plugin removed; strict CSP set
   - Note: CSP is verified against a release build in Phase 10
-- [ ] Phase 2 — Product shell and design system
+- [x] Phase 2 — Product shell and design system (2026-10-14)
+  - [x] Workspace design agreed: `docs/design/workspace.md` (layout, principles, copy, shortcuts)
+  - [x] Semantic colour tokens for light and dark; Tailwind palette disabled; contrast and hard-coded colour check in `npm run check`
+  - [x] Unified title bar, resizable sidebar (Explorer/Saved/History), status bar, first-connection empty state
+  - [x] Components: buttons, icon buttons, text input, select, checkbox, switch, segmented control/tabs, dropdown menu, tooltip, dialog, confirm, toast, spinner, empty and error states
+  - [x] Command registry with macOS shortcuts, Open Anything (⌘P), Settings (⌘,) with appearance, Keyboard Shortcuts (⌘/)
+  - [x] Keyboard: visible focus, labelled controls, arrow-key menus and segmented controls, keyboard-resizable sidebar
+  - [x] Narrow windows hide the sidebar below 1000px; ⌘1 toggles it
+  - [x] All components under 250 lines; Vitest covers shortcut and fuzzy logic
+  - Note: theme and layout preferences use localStorage until SQLite settings land in Phase 3
 - [ ] Phase 3 — Local persistence and connection profiles
 - [ ] Phase 4 — Database driver proof of concept and connection lifecycle
 - [ ] Phase 5 — Remote connectivity, TLS, and SSH tunnelling

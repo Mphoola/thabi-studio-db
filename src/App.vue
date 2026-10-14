@@ -3,6 +3,7 @@ import AppShell from "./components/app/AppShell.vue";
 import ErrorBoundary from "./components/app/ErrorBoundary.vue";
 import ConfirmHost from "./components/common/ConfirmHost.vue";
 import ToastHost from "./components/common/ToastHost.vue";
+import TooltipHost from "./components/common/TooltipHost.vue";
 </script>
 
 <template>
@@ -11,4 +12,5 @@ import ToastHost from "./components/common/ToastHost.vue";
   </ErrorBoundary>
   <ConfirmHost />
   <ToastHost />
+  <TooltipHost />
 </template>
