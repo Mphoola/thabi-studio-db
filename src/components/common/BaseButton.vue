@@ -19,11 +19,13 @@ const props = defineProps({
 const variantClass = computed(
   () =>
     ({
-      primary: "bg-accent text-accent-fg hover:bg-accent-hover",
+      primary:
+        "bg-accent text-accent-fg hover:bg-accent-hover active:bg-accent-active",
       secondary:
-        "bg-surface-raised text-fg border border-line-strong hover:bg-canvas",
-      ghost: "text-fg-muted hover:bg-line hover:text-fg",
-      danger: "bg-danger text-white hover:opacity-90",
+        "border border-line-strong bg-surface text-fg hover:bg-surface-hover active:bg-surface-active",
+      ghost:
+        "text-fg-muted hover:bg-surface-hover hover:text-fg active:bg-surface-active",
+      danger: "bg-danger text-danger-fg hover:bg-danger-hover",
     })[props.variant],
 );
 

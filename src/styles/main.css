@@ -39,6 +39,6 @@
   }
 
   ::selection {
-    background: var(--color-accent-subtle);
+    background: var(--color-selection);
   }
 }

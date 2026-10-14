@@ -1,92 +1,257 @@
 /*
- * Thabi Studio design tokens. This is the only place colours, type,
- * radii and shadows are defined. Raw values live on :root (light) and
- * [data-theme="dark"]; @theme exposes them to Tailwind as utilities such
- * as bg-canvas, text-fg-muted and border-line.
+ * Thabi Studio design tokens.
+ *
+ * This file is the ONLY place colour values are written. Tailwind's default
+ * palette (zinc-500, white, black, …) is switched off below, so components
+ * can only use the semantic names defined here: bg-surface, text-fg-muted,
+ * border-line, bg-accent, text-danger-text, and so on.
+ *
+ * Palette: cool graphite neutrals with an iris (blue-violet) accent.
+ * Light values live on :root, dark values on [data-theme="dark"].
+ * `npm run check:design` verifies contrast for the key pairs.
  */
 
 :root {
   color-scheme: light;
 
-  --canvas: #f6f6f7;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --sidebar: #eeeef0;
-  --line: #e2e2e6;
-  --line-strong: #cfcfd5;
+  /* Surfaces, from back to front */
+  --canvas: #fcfcfd; /* main content and editor area */
+  --sidebar: #f3f3f6; /* navigation and explorer */
+  --toolbar: #f7f7f9; /* tab bar, toolbars, status bar */
+  --surface: #ffffff; /* inputs, panels */
+  --surface-raised: #ffffff; /* dialogs, popovers, menus */
+  --surface-hover: #eeeef2;
+  --surface-active: #e5e5eb;
 
-  --fg: #1c1c1f;
-  --fg-muted: #5f5f68;
-  --fg-subtle: #8b8b94;
+  /* Lines */
+  --line: #e4e4ea;
+  --line-strong: #cfcfd8;
 
-  --accent: #2f6fed;
-  --accent-hover: #2a62d4;
+  /* Text */
+  --fg: #17171c;
+  --fg-muted: #5b5b68;
+  --fg-subtle: #858592;
+  --fg-disabled: #b4b4bf;
+
+  /* Accent (iris) */
+  --accent: #5651d6;
+  --accent-hover: #4a45c4;
+  --accent-active: #403bb0;
   --accent-fg: #ffffff;
-  --accent-subtle: rgb(47 111 237 / 0.16);
+  --accent-text: #4a45c4;
+  --accent-subtle: #ececfd;
+  --accent-muted: #d9d8fb;
 
-  --danger: #d1343d;
-  --danger-subtle: rgb(209 52 61 / 0.12);
-  --success: #1f8a4c;
-  --success-subtle: rgb(31 138 76 / 0.12);
-  --warning: #b26b00;
-  --warning-subtle: rgb(178 107 0 / 0.12);
+  /* Status */
+  --danger: #d23b42;
+  --danger-hover: #bd3238;
+  --danger-fg: #ffffff;
+  --danger-text: #bb2f36;
+  --danger-subtle: #fdeced;
+  --success: #1c8a55;
+  --success-fg: #ffffff;
+  --success-text: #157146;
+  --success-subtle: #e6f5ed;
+  --warning: #c27606;
+  --warning-fg: #ffffff;
+  --warning-text: #925700;
+  --warning-subtle: #fcf2df;
 
-  --focus: rgb(47 111 237 / 0.6);
-  --overlay: rgb(20 20 24 / 0.32);
+  /* Interaction */
+  --focus: rgb(86 81 214 / 0.55);
+  --selection: #d9d8fb;
+  --overlay: rgb(23 23 28 / 0.28);
+
+  /* Elevation */
+  --shadow-popover:
+    0 0 0 1px rgb(23 23 28 / 0.06), 0 6px 20px -4px rgb(23 23 28 / 0.14);
+  --shadow-dialog:
+    0 0 0 1px rgb(23 23 28 / 0.07), 0 24px 56px -12px rgb(23 23 28 / 0.28);
+
+  /* Results grid */
+  --grid-header: #f7f7f9;
+  --grid-row-alt: #f9f9fb;
+  --grid-null: #8b8b97;
+
+  /* SQL syntax */
+  --syntax-keyword: #5651d6;
+  --syntax-string: #1a7a4c;
+  --syntax-number: #b05410;
+  --syntax-comment: #8b8b97;
+  --syntax-function: #0b69a3;
+  --syntax-type: #9a3489;
+  --syntax-operator: #5b5b68;
+
+  /* Database engines */
+  --engine-postgres: #33679a;
+  --engine-mysql: #c8750a;
+  --engine-sqlserver: #c1272d;
+
+  /* Connection tags (environment colours a user can pick) */
+  --tag-red: #d23b42;
+  --tag-orange: #d9690f;
+  --tag-yellow: #a87f00;
+  --tag-green: #1c8a55;
+  --tag-teal: #0f8a8a;
+  --tag-blue: #2f6fd6;
+  --tag-purple: #8348c9;
+  --tag-gray: #7b7b88;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --canvas: #1b1b1e;
-  --surface: #232327;
-  --surface-raised: #2b2b30;
-  --sidebar: #202024;
-  --line: #34343a;
-  --line-strong: #45454d;
+  --canvas: #161618;
+  --sidebar: #1b1b1e;
+  --toolbar: #1b1b1e;
+  --surface: #202024;
+  --surface-raised: #26262b;
+  --surface-hover: #27272c;
+  --surface-active: #303036;
 
-  --fg: #ececef;
-  --fg-muted: #a5a5ae;
-  --fg-subtle: #75757e;
+  --line: #2b2b31;
+  --line-strong: #3b3b43;
 
-  --accent: #4c86f5;
-  --accent-hover: #6396f7;
+  --fg: #ededf0;
+  --fg-muted: #a4a4b0;
+  --fg-subtle: #75757f;
+  --fg-disabled: #50505a;
+
+  --accent: #5e59e0;
+  --accent-hover: #6560e3;
+  --accent-active: #534ed2;
   --accent-fg: #ffffff;
-  --accent-subtle: rgb(76 134 245 / 0.24);
+  --accent-text: #a9a6ff;
+  --accent-subtle: #25244a;
+  --accent-muted: #33316a;
 
-  --danger: #f0616a;
-  --danger-subtle: rgb(240 97 106 / 0.16);
-  --success: #45c07a;
-  --success-subtle: rgb(69 192 122 / 0.16);
-  --warning: #e8a33d;
-  --warning-subtle: rgb(232 163 61 / 0.16);
+  --danger: #cf3f45;
+  --danger-hover: #c3353b;
+  --danger-fg: #ffffff;
+  --danger-text: #ff8a8f;
+  --danger-subtle: #3a1d20;
+  --success: #24965e;
+  --success-fg: #ffffff;
+  --success-text: #6fd6a0;
+  --success-subtle: #16301f;
+  --warning: #c98410;
+  --warning-fg: #1c1305;
+  --warning-text: #f2bb5e;
+  --warning-subtle: #36280f;
 
-  --focus: rgb(99 150 247 / 0.7);
-  --overlay: rgb(0 0 0 / 0.5);
+  --focus: rgb(169 166 255 / 0.6);
+  --selection: #3b3973;
+  --overlay: rgb(0 0 0 / 0.55);
+
+  --shadow-popover:
+    0 0 0 1px rgb(255 255 255 / 0.07), 0 8px 24px -4px rgb(0 0 0 / 0.5);
+  --shadow-dialog:
+    0 0 0 1px rgb(255 255 255 / 0.08), 0 28px 64px -12px rgb(0 0 0 / 0.65);
+
+  --grid-header: #1b1b1e;
+  --grid-row-alt: #19191b;
+  --grid-null: #64646e;
+
+  --syntax-keyword: #a9a6ff;
+  --syntax-string: #7fd3a6;
+  --syntax-number: #f2ac6b;
+  --syntax-comment: #6f6f7a;
+  --syntax-function: #72b9f2;
+  --syntax-type: #e290d3;
+  --syntax-operator: #a4a4b0;
+
+  --engine-postgres: #6f9fd8;
+  --engine-mysql: #f0a540;
+  --engine-sqlserver: #f0656a;
+
+  --tag-red: #f0656a;
+  --tag-orange: #f08a3c;
+  --tag-yellow: #e8c14a;
+  --tag-green: #4cc488;
+  --tag-teal: #3cc4c4;
+  --tag-blue: #6a9ef0;
+  --tag-purple: #b388f0;
+  --tag-gray: #8e8e9a;
+}
+
+/* Turn off Tailwind's built-in palette so only the tokens below exist. */
+@theme {
+  --color-*: initial;
 }
 
 @theme inline {
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
   --color-canvas: var(--canvas);
+  --color-sidebar: var(--sidebar);
+  --color-toolbar: var(--toolbar);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
-  --color-sidebar: var(--sidebar);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-fg-subtle: var(--fg-subtle);
+  --color-fg-disabled: var(--fg-disabled);
+
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
   --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
   --color-accent-subtle: var(--accent-subtle);
+  --color-accent-muted: var(--accent-muted);
+
   --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-text: var(--danger-text);
   --color-danger-subtle: var(--danger-subtle);
   --color-success: var(--success);
+  --color-success-fg: var(--success-fg);
+  --color-success-text: var(--success-text);
   --color-success-subtle: var(--success-subtle);
   --color-warning: var(--warning);
+  --color-warning-fg: var(--warning-fg);
+  --color-warning-text: var(--warning-text);
   --color-warning-subtle: var(--warning-subtle);
+
   --color-focus: var(--focus);
+  --color-selection: var(--selection);
   --color-overlay: var(--overlay);
+
+  --color-grid-header: var(--grid-header);
+  --color-grid-row-alt: var(--grid-row-alt);
+  --color-grid-null: var(--grid-null);
+
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-comment: var(--syntax-comment);
+  --color-syntax-function: var(--syntax-function);
+  --color-syntax-type: var(--syntax-type);
+  --color-syntax-operator: var(--syntax-operator);
+
+  --color-engine-postgres: var(--engine-postgres);
+  --color-engine-mysql: var(--engine-mysql);
+  --color-engine-sqlserver: var(--engine-sqlserver);
+
+  --color-tag-red: var(--tag-red);
+  --color-tag-orange: var(--tag-orange);
+  --color-tag-yellow: var(--tag-yellow);
+  --color-tag-green: var(--tag-green);
+  --color-tag-teal: var(--tag-teal);
+  --color-tag-blue: var(--tag-blue);
+  --color-tag-purple: var(--tag-purple);
+  --color-tag-gray: var(--tag-gray);
+
+  --shadow-popover: var(--shadow-popover);
+  --shadow-dialog: var(--shadow-dialog);
 }
 
 @theme {
@@ -114,9 +279,4 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
-
-  --shadow-popover:
-    0 0 0 1px rgb(0 0 0 / 0.06), 0 8px 24px -6px rgb(0 0 0 / 0.2);
-  --shadow-dialog:
-    0 0 0 1px rgb(0 0 0 / 0.08), 0 24px 64px -12px rgb(0 0 0 / 0.35);
 }

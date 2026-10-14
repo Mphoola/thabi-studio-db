@@ -6,7 +6,7 @@ const { info, error } = useAppInfo();
 
 <template>
   <footer
-    class="flex h-6 shrink-0 items-center justify-between border-t border-line bg-sidebar px-3 text-xs text-fg-subtle"
+    class="flex h-6 shrink-0 items-center justify-between border-t border-line bg-toolbar px-3 text-xs text-fg-subtle"
   >
     <span>No active connection</span>
     <span v-if="info">v{{ info.version }}</span>

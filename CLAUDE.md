@@ -14,7 +14,8 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 ## Current status
 
 - Phase 1 (scaffold and engineering baseline): complete.
-- Next: Phase 2 (product shell and design system).
+- Colour system and workspace design: `docs/design/workspace.md` (proposed).
+- Next: Phase 2 (product shell and design system), built to that design.
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -30,7 +31,7 @@ Update this section and the tracker in `plan.md` §12 when a phase finishes.
 ```bash
 npm install            # install frontend deps (Rust deps build on first run)
 npm run tauri dev      # run the desktop app with hot reload
-npm run check          # format check + ESLint + frontend build + clippy + cargo test
+npm run check          # format, ESLint, design check, frontend build, clippy, cargo test
 npm run format         # Prettier + rustfmt
 npm run lint:fix       # ESLint autofix
 npm run tauri build    # release .app/.dmg (slow: LTO)
@@ -53,8 +54,12 @@ Run `npm run check` after every meaningful change and before calling work done.
 ## Coding rules
 
 1. Vue components stay under 250 lines; split by responsibility.
-2. Use theme tokens (`bg-surface`, `text-fg-muted`, `border-line`, …). No raw
-   hex colours or Tailwind palette colours (`zinc-500`) in components.
+2. Colours come only from `src/styles/tokens.css` (`bg-surface`, `text-fg-muted`,
+   `border-line`, `bg-danger text-danger-fg`, …). Tailwind's default palette is
+   switched off, so `text-white` or `bg-zinc-500` produce nothing, and
+   `npm run check:design` fails on hex/rgb values or palette classes anywhere
+   in `src/`. New colours are added as tokens in both themes and must pass the
+   contrast pairs in `scripts/check-design.js`.
 3. Use `BaseDialog` for modals, `confirm()` from `useConfirm` for confirmations,
    and `useToasts()` for notifications. Don't build one-off versions.
 4. Keep business logic out of components: composables, stores and Rust services.
