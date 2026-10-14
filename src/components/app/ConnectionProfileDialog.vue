@@ -15,6 +15,7 @@ import CheckboxInput from "../common/CheckboxInput.vue";
 import PasswordInput from "../common/PasswordInput.vue";
 import SelectInput from "../common/SelectInput.vue";
 import TextInput from "../common/TextInput.vue";
+import ConnectionTestAction from "./ConnectionTestAction.vue";
 import SshProfileFields from "./SshProfileFields.vue";
 
 const store = useConnectionProfiles();
@@ -227,15 +228,13 @@ async function save() {
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasSshPassword"
       />
-
-      <p class="text-sm text-fg-subtle">
-        Test Connection will be available when database drivers are implemented.
-        Saving this profile does not connect to the database.
-      </p>
     </form>
     <template #footer>
       <BaseButton @click="open = false">Cancel</BaseButton>
-      <BaseButton disabled>Test Connection</BaseButton>
+      <ConnectionTestAction
+        :profile-id="editingProfile?.id"
+        :disabled="!editingProfile || !store.nativeAvailable"
+      />
       <BaseButton
         variant="primary"
         type="submit"

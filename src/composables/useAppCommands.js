@@ -3,6 +3,8 @@ import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useDialogs } from "./useDialogs.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
+import { useToasts } from "./useToasts.js";
+import { toUserMessage } from "../lib/errors.js";
 
 /**
  * App-wide commands. Shortcuts follow macOS conventions and are reserved
@@ -13,6 +15,29 @@ export function useAppCommands() {
   const connections = useConnectionProfiles();
   const layout = useLayout();
   const theme = useTheme();
+  const toasts = useToasts();
+
+  async function connectSelected() {
+    const profile = connections.selectedProfile.value;
+    if (!profile) return;
+    try {
+      await connections.connect(profile.id);
+      toasts.success(`Connected to ${profile.name}`);
+    } catch (error) {
+      toasts.error("Couldn't connect to database", toUserMessage(error));
+    }
+  }
+
+  async function disconnectSelected() {
+    const profile = connections.selectedProfile.value;
+    if (!profile) return;
+    try {
+      await connections.disconnect(profile.id);
+      toasts.success(`Disconnected from ${profile.name}`);
+    } catch (error) {
+      toasts.error("Couldn't disconnect from database", toUserMessage(error));
+    }
+  }
 
   const commands = [
     {
@@ -22,6 +47,26 @@ export function useAppCommands() {
       shortcut: "Mod+N",
       enabled: () => connections.nativeAvailable,
       run: connections.openNew,
+    },
+    {
+      id: "connections.connectSelected",
+      title: "Connect Selected Connection",
+      group: "Connections",
+      enabled: () =>
+        connections.nativeAvailable &&
+        Boolean(connections.selectedProfile.value) &&
+        !connections.isConnected(connections.selectedProfile.value.id),
+      run: connectSelected,
+    },
+    {
+      id: "connections.disconnectSelected",
+      title: "Disconnect Selected Connection",
+      group: "Connections",
+      enabled: () =>
+        connections.nativeAvailable &&
+        Boolean(connections.selectedProfile.value) &&
+        connections.isConnected(connections.selectedProfile.value.id),
+      run: disconnectSelected,
     },
     {
       id: "app.commandPalette",

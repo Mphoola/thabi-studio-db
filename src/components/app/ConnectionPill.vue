@@ -4,11 +4,15 @@ import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
 
-const { selectedProfile } = useConnectionProfiles();
+const store = useConnectionProfiles();
+const { selectedProfile } = store;
 const environment = computed(() =>
   selectedProfile.value
     ? environmentFor(selectedProfile.value.environment)
     : null,
+);
+const connected = computed(
+  () => selectedProfile.value && store.isConnected(selectedProfile.value.id),
 );
 </script>
 
@@ -16,7 +20,9 @@ const environment = computed(() =>
   <div
     v-tooltip="
       selectedProfile
-        ? 'This profile is selected but not connected'
+        ? connected
+          ? 'This profile is connected'
+          : 'This profile is selected but not connected'
         : 'No connection profile is selected'
     "
     class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted"
@@ -30,7 +36,9 @@ const environment = computed(() =>
     />
     <template v-if="selectedProfile">
       <span class="max-w-36 truncate">{{ selectedProfile.name }}</span>
-      <span class="text-fg-subtle">Not connected</span>
+      <span :class="connected ? 'text-success-text' : 'text-fg-subtle'">
+        {{ connected ? "Connected" : "Not connected" }}
+      </span>
     </template>
     <span v-else>No connection</span>
   </div>

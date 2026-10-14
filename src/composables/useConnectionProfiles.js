@@ -1,10 +1,14 @@
 import { computed, readonly, ref } from "vue";
 import {
+  connectConnectionProfile,
   createConnectionProfile,
   deleteConnectionProfile,
+  disconnectConnectionProfile,
   duplicateConnectionProfile,
+  listConnectedProfiles,
   listConnectionProfiles,
   selectConnectionProfile,
+  testConnectionProfile,
   updateConnectionProfile,
 } from "../lib/tauri/commands.js";
 import { isTauri } from "../lib/tauri/ipc.js";
@@ -14,6 +18,7 @@ import { useDialogs } from "./useDialogs.js";
 const profiles = ref([]);
 const loaded = ref(false);
 const editingId = ref(null);
+const connectedProfileIds = ref(new Set());
 let loadPromise;
 
 export function useConnectionProfiles() {
@@ -31,6 +36,9 @@ export function useConnectionProfiles() {
     if (loadPromise) return loadPromise;
     loadPromise = (async () => {
       if (isTauri()) profiles.value = await listConnectionProfiles();
+      if (isTauri()) {
+        connectedProfileIds.value = new Set(await listConnectedProfiles());
+      }
       loaded.value = true;
       return profiles.value;
     })();
@@ -67,6 +75,11 @@ export function useConnectionProfiles() {
         : profiles.value.map((profile) =>
             profile.id === result.profile.id ? result.profile : profile,
           );
+    if (editingId.value) {
+      const ids = new Set(connectedProfileIds.value);
+      ids.delete(result.profile.id);
+      connectedProfileIds.value = ids;
+    }
     dialogs.close();
     return result.warning;
   }
@@ -86,10 +99,35 @@ export function useConnectionProfiles() {
 
   async function remove(id) {
     await deleteConnectionProfile(id);
+    const ids = new Set(connectedProfileIds.value);
+    ids.delete(id);
+    connectedProfileIds.value = ids;
     profiles.value = profiles.value.filter((profile) => profile.id !== id);
     if (settings.value.selectedProfileId === id) {
       applyLocalAppSetting("selectedProfileId", null);
     }
+  }
+
+  async function test(id) {
+    await testConnectionProfile(id);
+  }
+
+  async function connect(id) {
+    await connectConnectionProfile(id);
+    const ids = new Set(connectedProfileIds.value);
+    ids.add(id);
+    connectedProfileIds.value = ids;
+  }
+
+  async function disconnect(id) {
+    await disconnectConnectionProfile(id);
+    const ids = new Set(connectedProfileIds.value);
+    ids.delete(id);
+    connectedProfileIds.value = ids;
+  }
+
+  function isConnected(id) {
+    return connectedProfileIds.value.has(id);
   }
 
   return {
@@ -97,6 +135,7 @@ export function useConnectionProfiles() {
     loaded: readonly(loaded),
     editingId: readonly(editingId),
     selectedProfile,
+    isConnected,
     nativeAvailable: isTauri(),
     load,
     openNew,
@@ -105,5 +144,8 @@ export function useConnectionProfiles() {
     duplicate,
     select,
     remove,
+    test,
+    connect,
+    disconnect,
   };
 }

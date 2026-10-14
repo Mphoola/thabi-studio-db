@@ -4,4 +4,5 @@
 
 pub mod app;
 pub mod connection_profiles;
+pub mod connections;
 pub mod settings;

@@ -1,4 +1,5 @@
 <script setup>
+import { ref } from "vue";
 import { Copy, Pencil, Trash2 } from "lucide-vue-next";
 import { confirm } from "../../composables/useConfirm.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
@@ -10,6 +11,14 @@ import IconButton from "../common/IconButton.vue";
 
 const store = useConnectionProfiles();
 const toasts = useToasts();
+const busyProfileIds = ref(new Set());
+
+function markBusy(id, busy) {
+  const next = new Set(busyProfileIds.value);
+  if (busy) next.add(id);
+  else next.delete(id);
+  busyProfileIds.value = next;
+}
 
 async function duplicate(profile) {
   try {
@@ -26,7 +35,7 @@ async function remove(profile) {
   const confirmed = await confirm({
     title: `Delete “${profile.name}”?`,
     message:
-      "Its saved database and SSH passwords are also removed from Keychain. This can't be undone.",
+      "Any active database connection will be closed, and its saved database and SSH passwords will be removed from Keychain. This can't be undone.",
     confirmLabel: "Delete",
     destructive: true,
   });
@@ -45,6 +54,29 @@ async function select(profile) {
     await store.select(profile.id);
   } catch (error) {
     toasts.error("Couldn't select connection profile", toUserMessage(error));
+  }
+}
+
+async function toggleConnection(profile) {
+  markBusy(profile.id, true);
+  try {
+    if (store.isConnected(profile.id)) {
+      await store.disconnect(profile.id);
+      toasts.success(`Disconnected from ${profile.name}`);
+    } else {
+      await store.select(profile.id);
+      await store.connect(profile.id);
+      toasts.success(`Connected to ${profile.name}`);
+    }
+  } catch (error) {
+    toasts.error(
+      store.isConnected(profile.id)
+        ? "Couldn't disconnect from database"
+        : "Couldn't connect to database",
+      toUserMessage(error),
+    );
+  } finally {
+    markBusy(profile.id, false);
   }
 }
 </script>
@@ -74,7 +106,14 @@ async function select(profile) {
             v-if="store.selectedProfile.value?.id === profile.id"
             class="text-xs text-fg-subtle"
           >
-            Selected · Not connected
+            Selected ·
+            {{ store.isConnected(profile.id) ? "Connected" : "Not connected" }}
+          </span>
+          <span
+            v-else-if="store.isConnected(profile.id)"
+            class="text-xs text-success-text"
+          >
+            Connected
           </span>
         </div>
         <span class="truncate font-mono text-sm text-fg-muted">
@@ -84,6 +123,14 @@ async function select(profile) {
           </template>
         </span>
       </div>
+      <BaseButton
+        size="sm"
+        :disabled="!store.nativeAvailable"
+        :loading="busyProfileIds.has(profile.id)"
+        @click="toggleConnection(profile)"
+      >
+        {{ store.isConnected(profile.id) ? "Disconnect" : "Connect" }}
+      </BaseButton>
       <BaseButton
         v-if="store.selectedProfile.value?.id !== profile.id"
         size="sm"

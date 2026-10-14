@@ -4,7 +4,8 @@ import { environmentFor } from "../../lib/environments.js";
 import { useAppInfo } from "../../composables/useAppInfo.js";
 
 const { info, error } = useAppInfo();
-const { selectedProfile } = useConnectionProfiles();
+const store = useConnectionProfiles();
+const { selectedProfile } = store;
 </script>
 
 <template>
@@ -22,7 +23,10 @@ const { selectedProfile } = useConnectionProfiles();
         aria-hidden="true"
       />
       <template v-if="selectedProfile">
-        {{ selectedProfile.name }} · Not connected
+        {{ selectedProfile.name }} ·
+        {{
+          store.isConnected(selectedProfile.id) ? "Connected" : "Not connected"
+        }}
       </template>
       <template v-else>No connection</template>
     </span>

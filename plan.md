@@ -390,6 +390,10 @@ Tasks:
 - Add connection testing through the real selected driver.
 - Verify connections against local development databases and at least one remote environment per supported engine where available.
 - Document required environment variables or test configuration without committing credentials.
+- [x] Evaluate and document the selected Rust drivers, versions, runtime, and TLS features in `docs/decisions/0005-phase-4-database-drivers.md`.
+- [x] Add Rust-owned direct connection test/connect/disconnect commands with bounded connect/ping timeouts and sanitized errors.
+- [x] Make profile edits and deletion close an active database connection before changing saved credentials or metadata.
+- [x] Expose connect, disconnect, live status, and saved-profile connection testing in the UI.
 
 **Deliverables:**
 
@@ -814,7 +818,12 @@ Update this section as work progresses.
   - [x] Field-specific validation, password visibility controls and explicit disabled test-connection state
   - [x] CRUD, restart-persistence, secure-secret-boundary and forward-migration tests
   - Note: no live database connections exist yet; profile deletion will close one after Phase 4 adds connection lifecycle
-- [ ] Phase 4 — Database driver proof of concept and connection lifecycle
+- [ ] Phase 4 — Database driver proof of concept and connection lifecycle (in progress)
+  - [x] Select SQLx 0.9 for MySQL/PostgreSQL and Tiberius 0.13 for SQL Server; record the runtime/TLS feature choices
+  - [x] Compile the selected driver stack on the current macOS development toolchain
+  - [x] Implement direct-connect adapters, keep connections in the Rust process, and expose connect/disconnect/test commands with sanitized failures
+  - [x] Close active connections before profile updates or deletion; refuse SSH profiles rather than silently connecting directly
+  - [ ] Verify connect/query/close and TLS failure behavior against live MySQL, PostgreSQL, and SQL Server services
 - [ ] Phase 5 — Remote connectivity, TLS, and SSH tunnelling
 - [ ] Phase 6 — Database explorer and metadata
 - [ ] Phase 7 — SQL editor and query execution

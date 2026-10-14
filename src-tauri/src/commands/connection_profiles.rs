@@ -66,6 +66,11 @@ struct CredentialBundle {
     ssh_password: Option<String>,
 }
 
+pub(crate) struct ConnectionParameters {
+    pub profile: ConnectionProfile,
+    pub password: Option<String>,
+}
+
 impl CredentialBundle {
     fn is_empty(&self) -> bool {
         self.database_password.is_none() && self.ssh_password.is_none()
@@ -146,6 +151,33 @@ fn get_credential_key(connection: &Connection, id: &str) -> Result<Option<String
         .optional()
         .map_err(|_| AppError::storage())?
         .ok_or_else(|| AppError::new("not_found", "That saved connection couldn't be found."))
+}
+
+pub(crate) fn connection_parameters(
+    connection: &Connection,
+    credentials: &dyn CredentialStore,
+    id: &str,
+) -> Result<ConnectionParameters, AppError> {
+    let profile = get_profile(connection, id)?;
+    let credential_key = get_credential_key(connection, id)?;
+    let bundle = match credential_key.as_deref() {
+        Some(reference) => match credentials.get(reference)? {
+            Some(secret) => serde_json::from_str::<CredentialBundle>(&secret)
+                .map_err(|_| AppError::credential_missing())?,
+            None if profile.has_database_password || profile.has_ssh_password => {
+                return Err(AppError::credential_missing());
+            }
+            None => CredentialBundle::default(),
+        },
+        None => CredentialBundle::default(),
+    };
+    if profile.has_database_password && bundle.database_password.is_none() {
+        return Err(AppError::credential_missing());
+    }
+    Ok(ConnectionParameters {
+        profile,
+        password: bundle.database_password,
+    })
 }
 
 fn validate(input: ProfileInput) -> Result<ValidatedProfile, AppError> {
@@ -469,15 +501,18 @@ fn create_profile(
 }
 
 #[tauri::command]
-pub fn update_connection_profile(
+pub async fn update_connection_profile(
     id: String,
     input: ProfileInput,
     state: State<'_, AppState>,
 ) -> Result<ProfileWriteResult, AppError> {
+    let profile = validate(input)?;
+    state.connections.disconnect_profile(&id).await?;
     let connection = state.database.lock().map_err(|_| AppError::storage())?;
-    update_profile(&connection, &*state.credentials, &id, input)
+    update_validated_profile(&connection, &*state.credentials, &id, profile)
 }
 
+#[cfg(test)]
 fn update_profile(
     connection: &Connection,
     credentials: &dyn CredentialStore,
@@ -485,6 +520,15 @@ fn update_profile(
     input: ProfileInput,
 ) -> Result<ProfileWriteResult, AppError> {
     let profile = validate(input)?;
+    update_validated_profile(connection, credentials, id, profile)
+}
+
+fn update_validated_profile(
+    connection: &Connection,
+    credentials: &dyn CredentialStore,
+    id: &str,
+    profile: ValidatedProfile,
+) -> Result<ProfileWriteResult, AppError> {
     let existing = get_profile(connection, id)?;
     let old_key = get_credential_key(connection, id)?;
     let secret_changed = profile.database_password.is_some()
@@ -660,7 +704,11 @@ fn duplicate_profile(
 }
 
 #[tauri::command]
-pub fn delete_connection_profile(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn delete_connection_profile(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.connections.disconnect_profile(&id).await?;
     let mut connection = state.database.lock().map_err(|_| AppError::storage())?;
     delete_profile(&mut connection, &*state.credentials, &id)
 }
@@ -827,6 +875,48 @@ mod tests {
         assert_eq!(validated.port, 5432);
         assert!(validated.database_password.is_none());
         assert!(!validated.ssh_enabled);
+    }
+
+    #[test]
+    fn connection_parameters_load_password_only_from_secure_storage() {
+        let connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut profile_input = input();
+        profile_input.database_password = Some("database-secret".into());
+        let saved = create_profile(&connection, &credentials, profile_input).unwrap();
+
+        let parameters =
+            connection_parameters(&connection, &credentials, &saved.profile.id).unwrap();
+
+        assert_eq!(parameters.password.as_deref(), Some("database-secret"));
+        assert!(
+            !serde_json::to_string(&parameters.profile)
+                .unwrap()
+                .contains("database-secret")
+        );
+    }
+
+    #[test]
+    fn connection_parameters_report_missing_saved_password() {
+        let connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut profile_input = input();
+        profile_input.database_password = Some("database-secret".into());
+        let saved = create_profile(&connection, &credentials, profile_input).unwrap();
+        let key = get_credential_key(&connection, &saved.profile.id)
+            .unwrap()
+            .unwrap();
+        credentials.delete(&key).unwrap();
+
+        let error = match connection_parameters(&connection, &credentials, &saved.profile.id) {
+            Ok(_) => panic!("missing saved password should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind, "credential_missing");
+        assert!(!error.message.contains("database-secret"));
     }
 
     #[test]

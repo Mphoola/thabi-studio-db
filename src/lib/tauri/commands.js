@@ -40,3 +40,19 @@ export function deleteConnectionProfile(id) {
 export function selectConnectionProfile(id) {
   return call("select_connection_profile", { id });
 }
+
+export function testConnectionProfile(id) {
+  return call("test_connection_profile", { id });
+}
+
+export function connectConnectionProfile(id) {
+  return call("connect_connection_profile", { id });
+}
+
+export function disconnectConnectionProfile(id) {
+  return call("disconnect_connection_profile", { id });
+}
+
+export function listConnectedProfiles() {
+  return call("list_connected_profiles");
+}

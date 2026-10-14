@@ -17,9 +17,10 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 - Phase 2 (product shell and design system): complete. Layout, principles,
   copy and shortcuts live in `docs/design/workspace.md`; follow them.
 - Phase 3 (local persistence and connection profiles): complete. SQLite profile
-  and preference storage is in place; passwords use Keychain. Profiles are not
-  live connections and driver testing is deferred to Phase 4.
-- Next: Phase 4 (database driver proof of concept and connection lifecycle).
+  and preference storage is in place; passwords use Keychain.
+- Phase 4 (database driver proof of concept and connection lifecycle): in
+  progress. Driver feasibility and crate choices are recorded in
+  `docs/decisions/0005-phase-4-database-drivers.md`.
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 

@@ -1,4 +1,5 @@
 mod commands;
+mod connections;
 mod credentials;
 mod errors;
 mod state;
@@ -26,6 +27,10 @@ pub fn run() {
             commands::connection_profiles::duplicate_connection_profile,
             commands::connection_profiles::delete_connection_profile,
             commands::connection_profiles::select_connection_profile,
+            commands::connections::test_connection_profile,
+            commands::connections::connect_connection_profile,
+            commands::connections::disconnect_connection_profile,
+            commands::connections::list_connected_profiles,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
             commands::settings::import_legacy_preferences
