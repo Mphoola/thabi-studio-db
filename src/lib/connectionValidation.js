@@ -1,5 +1,6 @@
 const DRIVERS = new Set(["mysql", "postgres", "sqlserver"]);
 const DEFAULT_PORTS = { mysql: "3306", postgres: "5432", sqlserver: "1433" };
+const TLS_MODES = new Set(["verify-full", "require", "disable"]);
 const ENVIRONMENTS = new Set([
   "local",
   "development",
@@ -16,7 +17,18 @@ function hasControlCharacters(value) {
 }
 
 export function isValidHost(host) {
+  return hostError(host) === "";
+}
+
+/** Field message for a host, or "" when it's valid. Mirrors Rust's normalise_host. */
+export function hostError(host) {
   const value = String(host ?? "").trim();
+  if (value.includes("\\"))
+    return "Named instances (host\\instance) aren't supported. Enter the host and the instance's port.";
+  return checkHost(value) ? "" : "Enter a valid host name or IP address.";
+}
+
+function checkHost(value) {
   if (!value || value.length > 253 || /\s/.test(value)) return false;
 
   const unwrapped =
@@ -34,7 +46,7 @@ export function isValidHost(host) {
         (label) =>
           label.length > 0 &&
           label.length <= 63 &&
-          /^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(label),
+          /^[a-z\d_](?:[a-z\d_-]*[a-z\d_])?$/i.test(label),
       )
   );
 }
@@ -84,8 +96,10 @@ export function validateConnectionProfile(profile) {
     errors.environment = "Choose an environment.";
   if (!DRIVERS.has(profile.driver))
     errors.driver = "Choose a supported database.";
-  if (!isValidHost(host))
-    errors.host = "Enter a valid host name or IP address.";
+  const hostMessage = hostError(host);
+  if (hostMessage) errors.host = hostMessage;
+  if (!TLS_MODES.has(profile.tlsMode ?? "verify-full"))
+    errors.tlsMode = "Choose a TLS setting.";
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (

@@ -4,6 +4,12 @@ Reviewed 2026-10-15 against `plan.md`, `docs/design/workspace.md` and the
 decision records. `npm run check` passes (28 frontend and 21 Rust tests).
 Phase 4 is uncommitted and, as `docs/decisions/0005` says, unfinished.
 
+## Status (2026-10-15)
+
+All items below were fixed in the commit after this review, except remote-
+server verification (needs servers) and query cancellation (Phase 7). See
+`docs/decisions/0006-connection-model.md` for what changed.
+
 ## What's right
 
 - Secrets live only in Keychain behind random opaque references; SQLite holds
@@ -24,11 +30,12 @@ SQL Server use self-signed certificates, so connecting to a typical local or
 dev database fails.
 
 Fix: per-connection TLS setting in the form:
+
 - **Verify certificate** (default): current behaviour.
 - **Verify with custom CA…**: pick a CA file (for internal CAs).
 - **Encrypt, don't verify**: allowed, labelled with a warning.
 - **Off**: allowed, labelled; the default suggestion only for `localhost`.
-Never change the mode silently. This is what plan.md principle 5 asks for.
+  Never change the mode silently. This is what plan.md principle 5 asks for.
 
 ### 2. A connection pool is the wrong model for a query editor
 

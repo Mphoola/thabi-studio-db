@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Capability for the main window. Keep to least privilege.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open"
+  ]
 }

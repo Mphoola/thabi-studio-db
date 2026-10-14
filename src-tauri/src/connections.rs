@@ -1,410 +1,353 @@
-use crate::{commands::connection_profiles::ConnectionProfile, errors::AppError};
-use sqlx::{
-    mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlSslMode},
-    postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgSslMode},
+//! Live connections, owned by Rust and keyed by profile id.
+//!
+//! Each open connection is exactly one database session (see
+//! `database::Session`). States are explicit: an entry is `Connecting`,
+//! `Connected` or `Closing`; no entry means disconnected. Errors are returned
+//! to the caller rather than stored.
+
+use crate::{
+    database::{Capabilities, ConnectParams, ServerInfo, Session},
+    errors::AppError,
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
-use tokio::{net::TcpStream, sync::Mutex, time::timeout};
-use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+use serde::Serialize;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use tokio::sync::Mutex;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const PING_TIMEOUT: Duration = Duration::from_secs(10);
+/// Close a connection nobody has used for this long.
+pub const IDLE_DISCONNECT_AFTER: Duration = Duration::from_secs(60 * 60);
+/// Check that quiet connections are still alive this often.
+pub const HEALTH_CHECK_AFTER: Duration = Duration::from_secs(5 * 60);
+/// How long disconnect waits for a running statement before giving up.
+const CLOSE_WAIT: Duration = Duration::from_secs(15);
 
-type SqlServerClient = Client<Compat<TcpStream>>;
+pub type SessionHandle = Arc<Mutex<Option<Session>>>;
 
-enum DriverConnection {
-    MySql(MySqlPool),
-    Postgres(PgPool),
-    SqlServer(Box<SqlServerClient>),
-}
-
-impl DriverConnection {
-    async fn open(profile: &ConnectionProfile, password: Option<&str>) -> Result<Self, AppError> {
-        if profile.ssh_enabled {
-            return Err(AppError::unsupported_ssh());
-        }
-        if profile.tls_mode != "verify-full" {
-            return Err(AppError::unsupported_tls_mode());
-        }
-
-        match profile.driver.as_str() {
-            "mysql" => {
-                let mut options = MySqlConnectOptions::new()
-                    .host(&profile.host)
-                    .port(profile.port)
-                    .username(&profile.username)
-                    .password(password.unwrap_or_default())
-                    .ssl_mode(MySqlSslMode::VerifyIdentity);
-                if !profile.database_name.is_empty() {
-                    options = options.database(&profile.database_name);
-                }
-                let pool = timeout(
-                    CONNECT_TIMEOUT,
-                    MySqlPoolOptions::new()
-                        .max_connections(5)
-                        .acquire_timeout(CONNECT_TIMEOUT)
-                        .connect_with(options),
-                )
-                .await
-                .map_err(|_| AppError::connection_timeout())?
-                .map_err(map_sqlx_error)?;
-                Ok(Self::MySql(pool))
-            }
-            "postgres" => {
-                let mut options = PgConnectOptions::new()
-                    .host(&profile.host)
-                    .port(profile.port)
-                    .username(&profile.username)
-                    .password(password.unwrap_or_default())
-                    .ssl_mode(PgSslMode::VerifyFull);
-                if !profile.database_name.is_empty() {
-                    options = options.database(&profile.database_name);
-                }
-                let pool = timeout(
-                    CONNECT_TIMEOUT,
-                    PgPoolOptions::new()
-                        .max_connections(5)
-                        .acquire_timeout(CONNECT_TIMEOUT)
-                        .connect_with(options),
-                )
-                .await
-                .map_err(|_| AppError::connection_timeout())?
-                .map_err(map_sqlx_error)?;
-                Ok(Self::Postgres(pool))
-            }
-            "sqlserver" => {
-                let mut config = Config::new();
-                config.host(&profile.host);
-                config.port(profile.port);
-                config.authentication(AuthMethod::sql_server(
-                    &profile.username,
-                    password.unwrap_or_default(),
-                ));
-                config.encryption(EncryptionLevel::Required);
-                if !profile.database_name.is_empty() {
-                    config.database(&profile.database_name);
-                }
-
-                let result = timeout(CONNECT_TIMEOUT, async {
-                    let tcp = TcpStream::connect((profile.host.as_str(), profile.port))
-                        .await
-                        .map_err(|_| AppError::connection_failed())?;
-                    tcp.set_nodelay(true)
-                        .map_err(|_| AppError::connection_failed())?;
-                    Client::connect(config, tcp.compat_write())
-                        .await
-                        .map_err(map_tiberius_error)
-                })
-                .await
-                .map_err(|_| AppError::connection_timeout())??;
-                Ok(Self::SqlServer(Box::new(result)))
-            }
-            _ => Err(AppError::unsupported_driver()),
-        }
-    }
-
-    async fn ping(&mut self) -> Result<(), AppError> {
-        timeout(PING_TIMEOUT, async {
-            match self {
-                Self::MySql(pool) => sqlx::query("SELECT 1")
-                    .execute(&*pool)
-                    .await
-                    .map(|_| ())
-                    .map_err(map_sqlx_error),
-                Self::Postgres(pool) => sqlx::query("SELECT 1")
-                    .execute(&*pool)
-                    .await
-                    .map(|_| ())
-                    .map_err(map_sqlx_error),
-                Self::SqlServer(client) => client
-                    .simple_query("SELECT 1")
-                    .await
-                    .map_err(map_tiberius_error)?
-                    .into_row()
-                    .await
-                    .and_then(|row| {
-                        row.ok_or_else(|| {
-                            tiberius::error::Error::Protocol("Health check returned no row".into())
-                        })
-                    })
-                    .map(|_| ())
-                    .map_err(map_tiberius_error),
-            }
-        })
-        .await
-        .map_err(|_| AppError::connection_timeout())?
-    }
-
-    async fn close(self) -> Result<(), AppError> {
-        match self {
-            Self::MySql(pool) => {
-                pool.close().await;
-                Ok(())
-            }
-            Self::Postgres(pool) => {
-                pool.close().await;
-                Ok(())
-            }
-            Self::SqlServer(client) => (*client).close().await,
-        }
-        .map_err(|_| AppError::connection_close_failed())
-    }
-}
-
-fn map_sqlx_error(error: sqlx::Error) -> AppError {
-    match error {
-        sqlx::Error::Tls(_) => AppError::tls_verification_failed(),
-        sqlx::Error::Database(_) => AppError::authentication_failed(),
-        _ => AppError::connection_failed(),
-    }
-}
-
-fn map_tiberius_error(error: tiberius::error::Error) -> AppError {
-    if matches!(error, tiberius::error::Error::Tls(_)) {
-        return AppError::tls_verification_failed();
-    }
-    if matches!(error.code(), Some(18456 | 4060)) {
-        return AppError::authentication_failed();
-    }
-    AppError::connection_failed()
-}
-
-enum ActiveConnection {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionState {
     Connecting,
-    Connected(Arc<Mutex<DriverConnection>>),
+    Connected,
+    Closing,
 }
 
-#[derive(Default)]
-pub struct ConnectionService {
-    active: Mutex<HashMap<String, ActiveConnection>>,
+struct Entry {
+    generation: u64,
+    state: ConnectionState,
+    session: Option<SessionHandle>,
+    server: Option<ServerInfo>,
+    capabilities: Option<Capabilities>,
+    last_used: Instant,
 }
 
-struct ConnectionReservation<'a> {
-    service: &'a ConnectionService,
-    profile_id: String,
-    committed: bool,
-}
-
-impl ConnectionReservation<'_> {
-    fn commit(&mut self) {
-        self.committed = true;
-    }
-}
-
-impl Drop for ConnectionReservation<'_> {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        if let Ok(mut active) = self.service.active.try_lock()
-            && matches!(
-                active.get(&self.profile_id),
-                Some(ActiveConnection::Connecting)
-            )
-        {
-            active.remove(&self.profile_id);
-        }
-    }
-}
-
-#[derive(Debug, serde::Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionStatus {
     pub profile_id: String,
+    /// Changes every time the profile connects, so stale replies can be told apart.
     pub connection_id: String,
-    pub status: &'static str,
+    pub state: ConnectionState,
+    pub server: Option<ServerInfo>,
+    pub capabilities: Option<Capabilities>,
+}
+
+#[derive(Default)]
+struct Inner {
+    entries: Mutex<HashMap<String, Entry>>,
+    next_generation: AtomicU64,
+}
+
+#[derive(Clone, Default)]
+pub struct ConnectionService {
+    inner: Arc<Inner>,
+}
+
+fn status(profile_id: &str, entry: &Entry) -> ConnectionStatus {
+    ConnectionStatus {
+        profile_id: profile_id.to_owned(),
+        connection_id: format!("{profile_id}:{}", entry.generation),
+        state: entry.state,
+        server: entry.server.clone(),
+        capabilities: entry.capabilities,
+    }
+}
+
+/// Removes a `Connecting` entry if the connect call is dropped midway
+/// (for example when the window closes), so the profile never stays stuck.
+struct Reservation {
+    inner: Arc<Inner>,
+    profile_id: String,
+    generation: u64,
+    armed: bool,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let inner = self.inner.clone();
+        let profile_id = std::mem::take(&mut self.profile_id);
+        let generation = self.generation;
+        tauri::async_runtime::spawn(async move {
+            let mut entries = inner.entries.lock().await;
+            if entries.get(&profile_id).is_some_and(|e| {
+                e.generation == generation && e.state == ConnectionState::Connecting
+            }) {
+                entries.remove(&profile_id);
+            }
+        });
+    }
 }
 
 impl ConnectionService {
-    pub async fn test(
-        &self,
-        profile: &ConnectionProfile,
-        password: Option<&str>,
-    ) -> Result<(), AppError> {
-        let mut connection = DriverConnection::open(profile, password).await?;
-        let ping_result = connection.ping().await;
-        let close_result = connection.close().await;
-        ping_result?;
-        close_result
-    }
-
     pub async fn connect(
         &self,
-        profile: &ConnectionProfile,
-        password: Option<&str>,
+        profile_id: &str,
+        params: &ConnectParams,
     ) -> Result<ConnectionStatus, AppError> {
-        {
-            let mut active = self.active.lock().await;
-            match active.get(&profile.id) {
-                Some(ActiveConnection::Connected(_)) => {
-                    return Ok(ConnectionStatus {
-                        profile_id: profile.id.clone(),
-                        connection_id: profile.id.clone(),
-                        status: "connected",
-                    });
+        let generation = {
+            let mut entries = self.inner.entries.lock().await;
+            match entries.get(profile_id) {
+                Some(entry) if entry.state == ConnectionState::Connected => {
+                    return Ok(status(profile_id, entry));
                 }
-                Some(ActiveConnection::Connecting) => {
-                    return Err(AppError::connection_in_progress());
-                }
-                None => {
-                    active.insert(profile.id.clone(), ActiveConnection::Connecting);
-                }
+                Some(_) => return Err(AppError::connection_in_progress()),
+                None => {}
             }
-        }
-        let mut reservation = ConnectionReservation {
-            service: self,
-            profile_id: profile.id.clone(),
-            committed: false,
+            let generation = self.inner.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
+            entries.insert(
+                profile_id.to_owned(),
+                Entry {
+                    generation,
+                    state: ConnectionState::Connecting,
+                    session: None,
+                    server: None,
+                    capabilities: None,
+                    last_used: Instant::now(),
+                },
+            );
+            generation
+        };
+        let mut reservation = Reservation {
+            inner: self.inner.clone(),
+            profile_id: profile_id.to_owned(),
+            generation,
+            armed: true,
         };
 
-        let result = async {
-            let mut driver = DriverConnection::open(profile, password).await?;
-            driver.ping().await?;
-            Ok::<_, AppError>(driver)
+        let opened = async {
+            let mut session = Session::connect(params).await?;
+            session.ping().await?;
+            Ok::<_, AppError>(session)
         }
         .await;
 
-        let mut active = self.active.lock().await;
-        let result = match result {
-            Ok(driver) => {
-                active.insert(
-                    profile.id.clone(),
-                    ActiveConnection::Connected(Arc::new(Mutex::new(driver))),
-                );
-                Ok(ConnectionStatus {
-                    profile_id: profile.id.clone(),
-                    connection_id: profile.id.clone(),
-                    status: "connected",
-                })
+        let mut entries = self.inner.entries.lock().await;
+        reservation.armed = false;
+        let still_wanted = entries
+            .get(profile_id)
+            .is_some_and(|e| e.generation == generation && e.state == ConnectionState::Connecting);
+        match opened {
+            Ok(session) if still_wanted => {
+                let entry = entries.get_mut(profile_id).expect("checked above");
+                entry.server = Some(session.server_info().clone());
+                entry.capabilities = Some(session.capabilities());
+                entry.session = Some(Arc::new(Mutex::new(Some(session))));
+                entry.state = ConnectionState::Connected;
+                entry.last_used = Instant::now();
+                Ok(status(profile_id, entry))
+            }
+            Ok(session) => {
+                // Disconnect was requested while connecting.
+                drop(entries);
+                let _ = session.close().await;
+                Err(AppError::connection_cancelled())
             }
             Err(error) => {
-                active.remove(&profile.id);
+                if still_wanted {
+                    entries.remove(profile_id);
+                }
                 Err(error)
             }
+        }
+    }
+
+    /// Closes the connection if there is one. Always removes the entry, so
+    /// nothing is left behind even if the server doesn't answer.
+    pub async fn disconnect(&self, profile_id: &str) -> Result<(), AppError> {
+        let (generation, session) = {
+            let mut entries = self.inner.entries.lock().await;
+            let Some(entry) = entries.get_mut(profile_id) else {
+                return Ok(());
+            };
+            match entry.state {
+                ConnectionState::Connecting => {
+                    // The connect call sees the entry gone and closes what it opened.
+                    entries.remove(profile_id);
+                    return Ok(());
+                }
+                ConnectionState::Closing => return Ok(()),
+                ConnectionState::Connected => {
+                    entry.state = ConnectionState::Closing;
+                    (entry.generation, entry.session.clone())
+                }
+            }
         };
-        reservation.commit();
+
+        let result = match session {
+            Some(handle) => match tokio::time::timeout(CLOSE_WAIT, handle.lock()).await {
+                Ok(mut guard) => match guard.take() {
+                    Some(session) => session.close().await,
+                    None => Ok(()),
+                },
+                // A statement is still running. Dropping our handle lets the
+                // session close when that statement finishes.
+                Err(_) => Err(AppError::connection_close_failed()),
+            },
+            None => Ok(()),
+        };
+
+        let mut entries = self.inner.entries.lock().await;
+        if entries
+            .get(profile_id)
+            .is_some_and(|e| e.generation == generation)
+        {
+            entries.remove(profile_id);
+        }
         result
     }
 
-    pub async fn disconnect_profile(&self, profile_id: &str) -> Result<(), AppError> {
-        let connection = {
-            let mut active = self.active.lock().await;
-            match active.remove(profile_id) {
-                Some(ActiveConnection::Connecting) => {
-                    active.insert(profile_id.to_owned(), ActiveConnection::Connecting);
-                    return Err(AppError::connection_in_progress());
-                }
-                Some(ActiveConnection::Connected(connection)) => Some(connection),
-                None => None,
+    /// The session for a connected profile. Lock it to run a statement; the
+    /// lock keeps statements on one session in order.
+    pub async fn session(&self, profile_id: &str) -> Result<SessionHandle, AppError> {
+        let mut entries = self.inner.entries.lock().await;
+        match entries.get_mut(profile_id) {
+            Some(entry) if entry.state == ConnectionState::Connected => {
+                entry.last_used = Instant::now();
+                entry.session.clone().ok_or_else(AppError::not_connected)
             }
-        };
-        if let Some(connection) = connection {
-            let connection =
-                Arc::try_unwrap(connection).map_err(|_| AppError::connection_close_failed())?;
-            connection.into_inner().close().await?;
+            Some(entry) if entry.state == ConnectionState::Connecting => {
+                Err(AppError::connection_in_progress())
+            }
+            _ => Err(AppError::not_connected()),
         }
-        Ok(())
     }
 
-    pub async fn connected_profiles(&self) -> Vec<String> {
-        self.active
-            .lock()
-            .await
-            .iter()
-            .filter(|(_, status)| matches!(status, ActiveConnection::Connected(_)))
-            .map(|(id, _)| id.clone())
-            .collect()
+    pub async fn statuses(&self) -> Vec<ConnectionStatus> {
+        let entries = self.inner.entries.lock().await;
+        let mut list: Vec<_> = entries.iter().map(|(id, e)| status(id, e)).collect();
+        list.sort_by(|a, b| a.profile_id.cmp(&b.profile_id));
+        list
+    }
+
+    pub async fn disconnect_all(&self) {
+        let ids: Vec<String> = self.inner.entries.lock().await.keys().cloned().collect();
+        for id in ids {
+            let _ = self.disconnect(&id).await;
+        }
+    }
+
+    /// One pass of upkeep: closes idle connections and checks quiet ones.
+    /// Returns the profiles that were closed, with the reason.
+    pub async fn maintain(&self) -> Vec<(String, &'static str)> {
+        let candidates: Vec<(String, Duration, Option<SessionHandle>)> = {
+            let entries = self.inner.entries.lock().await;
+            entries
+                .iter()
+                .filter(|(_, e)| e.state == ConnectionState::Connected)
+                .map(|(id, e)| (id.clone(), e.last_used.elapsed(), e.session.clone()))
+                .collect()
+        };
+        let mut closed = Vec::new();
+        for (profile_id, idle, handle) in candidates {
+            if idle >= IDLE_DISCONNECT_AFTER {
+                let _ = self.disconnect(&profile_id).await;
+                closed.push((profile_id, "idle"));
+                continue;
+            }
+            if idle < HEALTH_CHECK_AFTER {
+                continue;
+            }
+            let Some(handle) = handle else { continue };
+            // Skip sessions that are busy running a statement.
+            let Ok(mut guard) = handle.try_lock() else {
+                continue;
+            };
+            let alive = match guard.as_mut() {
+                Some(session) => session.ping().await.is_ok(),
+                None => false,
+            };
+            drop(guard);
+            if !alive {
+                let _ = self.disconnect(&profile_id).await;
+                closed.push((profile_id, "lost"));
+            }
+        }
+        closed
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::{Engine, TlsMode};
 
-    fn profile() -> ConnectionProfile {
-        ConnectionProfile {
-            id: "profile-id".into(),
-            name: "Test".into(),
-            environment: "testing".into(),
-            driver: "postgres".into(),
-            host: "localhost".into(),
+    fn unreachable_params() -> ConnectParams {
+        ConnectParams {
+            engine: Engine::Postgres,
+            // Reserved for documentation (RFC 6761); never resolves.
+            host: "thabi-studio-test.invalid".into(),
             port: 5432,
-            database_name: "test".into(),
+            database: None,
             username: "user".into(),
-            auth_mode: "password".into(),
-            tls_mode: "verify-full".into(),
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_username: String::new(),
-            ssh_auth_mode: "password".into(),
-            has_database_password: false,
-            has_ssh_password: false,
-            created_at: String::new(),
-            updated_at: String::new(),
+            password: None,
+            tls: TlsMode::Verify,
+            ca_path: None,
         }
     }
 
     #[tokio::test]
-    async fn refuses_ssh_instead_of_falling_back_to_direct_connection() {
-        let mut profile = profile();
-        profile.ssh_enabled = true;
-
-        let error = match DriverConnection::open(&profile, None).await {
-            Ok(_) => panic!("SSH profile must not fall back to a direct connection"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.kind, "ssh_unavailable");
-    }
-
-    #[tokio::test]
-    async fn refuses_unverified_tls_modes() {
-        let mut profile = profile();
-        profile.tls_mode = "disabled".into();
-
-        let error = match DriverConnection::open(&profile, None).await {
-            Ok(_) => panic!("unverified TLS mode must not be accepted"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.kind, "tls_configuration");
-    }
-
-    #[tokio::test]
-    async fn refuses_unknown_database_drivers() {
-        let mut profile = profile();
-        profile.driver = "unknown".into();
-
-        let error = match DriverConnection::open(&profile, None).await {
-            Ok(_) => panic!("unknown database driver must not be accepted"),
-            Err(error) => error,
-        };
-
-        assert_eq!(error.kind, "unsupported_driver");
-    }
-
-    #[tokio::test]
-    async fn failed_connect_does_not_leave_a_profile_in_connecting_state() {
+    async fn failed_connect_leaves_no_entry_behind() {
         let service = ConnectionService::default();
-        let mut profile = profile();
-        profile.driver = "unknown".into();
-
-        assert_eq!(
-            service.connect(&profile, None).await.unwrap_err().kind,
-            "unsupported_driver"
-        );
-        assert!(service.connected_profiles().await.is_empty());
+        let error = service
+            .connect("profile", &unreachable_params())
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, "host_not_found");
+        assert!(service.statuses().await.is_empty());
     }
 
-    #[test]
-    fn sql_server_tls_errors_are_sanitized() {
-        let error = map_tiberius_error(tiberius::error::Error::Tls(
-            "private certificate detail".into(),
+    #[tokio::test]
+    async fn disconnecting_an_unknown_profile_is_a_no_op() {
+        let service = ConnectionService::default();
+        service.disconnect("nothing").await.unwrap();
+        assert!(matches!(
+            service.session("nothing").await,
+            Err(AppError {
+                kind: "not_connected",
+                ..
+            })
         ));
+    }
 
-        assert_eq!(error.kind, "tls");
-        assert!(!error.message.contains("private certificate detail"));
+    #[tokio::test]
+    async fn disconnect_during_connect_cancels_it() {
+        let service = ConnectionService::default();
+        let connecting = {
+            let service = service.clone();
+            tokio::spawn(async move { service.connect("p", &unreachable_params()).await })
+        };
+        // Give connect a moment to register, then cancel.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        service.disconnect("p").await.unwrap();
+        let _ = connecting.await.unwrap();
+        assert!(service.statuses().await.is_empty());
     }
 }

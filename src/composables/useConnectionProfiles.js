@@ -5,10 +5,10 @@ import {
   deleteConnectionProfile,
   disconnectConnectionProfile,
   duplicateConnectionProfile,
-  listConnectedProfiles,
+  listConnections,
   listConnectionProfiles,
   selectConnectionProfile,
-  testConnectionProfile,
+  testConnectionInput,
   updateConnectionProfile,
 } from "../lib/tauri/commands.js";
 import { isTauri } from "../lib/tauri/ipc.js";
@@ -18,8 +18,21 @@ import { useDialogs } from "./useDialogs.js";
 const profiles = ref([]);
 const loaded = ref(false);
 const editingId = ref(null);
-const connectedProfileIds = ref(new Set());
+/** Live connection status per profile id, as reported by Rust. */
+const statuses = ref(new Map());
 let loadPromise;
+
+async function refreshStatuses() {
+  const list = await listConnections();
+  statuses.value = new Map(list.map((status) => [status.profileId, status]));
+}
+
+function setStatus(profileId, status) {
+  const next = new Map(statuses.value);
+  if (status) next.set(profileId, status);
+  else next.delete(profileId);
+  statuses.value = next;
+}
 
 export function useConnectionProfiles() {
   const { settings } = useAppSettings();
@@ -36,9 +49,7 @@ export function useConnectionProfiles() {
     if (loadPromise) return loadPromise;
     loadPromise = (async () => {
       if (isTauri()) profiles.value = await listConnectionProfiles();
-      if (isTauri()) {
-        connectedProfileIds.value = new Set(await listConnectedProfiles());
-      }
+      if (isTauri()) await refreshStatuses();
       loaded.value = true;
       return profiles.value;
     })();
@@ -75,11 +86,8 @@ export function useConnectionProfiles() {
         : profiles.value.map((profile) =>
             profile.id === result.profile.id ? result.profile : profile,
           );
-    if (editingId.value) {
-      const ids = new Set(connectedProfileIds.value);
-      ids.delete(result.profile.id);
-      connectedProfileIds.value = ids;
-    }
+    // Rust closes the old connection when a profile's settings change.
+    if (editingId.value) setStatus(result.profile.id, null);
     dialogs.close();
     return result.warning;
   }
@@ -99,35 +107,42 @@ export function useConnectionProfiles() {
 
   async function remove(id) {
     await deleteConnectionProfile(id);
-    const ids = new Set(connectedProfileIds.value);
-    ids.delete(id);
-    connectedProfileIds.value = ids;
+    setStatus(id, null);
     profiles.value = profiles.value.filter((profile) => profile.id !== id);
     if (settings.value.selectedProfileId === id) {
       applyLocalAppSetting("selectedProfileId", null);
     }
   }
 
-  async function test(id) {
-    await testConnectionProfile(id);
+  /** Tests form values. Resolves to `{ server, elapsedMs }`. */
+  function test(input, profileId = null) {
+    return testConnectionInput(input, profileId);
   }
 
   async function connect(id) {
-    await connectConnectionProfile(id);
-    const ids = new Set(connectedProfileIds.value);
-    ids.add(id);
-    connectedProfileIds.value = ids;
+    setStatus(id, { profileId: id, state: "connecting", server: null });
+    try {
+      setStatus(id, await connectConnectionProfile(id));
+    } catch (error) {
+      setStatus(id, null);
+      throw error;
+    }
   }
 
   async function disconnect(id) {
-    await disconnectConnectionProfile(id);
-    const ids = new Set(connectedProfileIds.value);
-    ids.delete(id);
-    connectedProfileIds.value = ids;
+    try {
+      await disconnectConnectionProfile(id);
+    } finally {
+      setStatus(id, null);
+    }
+  }
+
+  function statusFor(id) {
+    return statuses.value.get(id) ?? null;
   }
 
   function isConnected(id) {
-    return connectedProfileIds.value.has(id);
+    return statusFor(id)?.state === "connected";
   }
 
   return {
@@ -136,6 +151,8 @@ export function useConnectionProfiles() {
     editingId: readonly(editingId),
     selectedProfile,
     isConnected,
+    statusFor,
+    forgetStatus: (id) => setStatus(id, null),
     nativeAvailable: isTauri(),
     load,
     openNew,

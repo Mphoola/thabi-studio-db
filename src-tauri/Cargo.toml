@@ -21,7 +21,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-keyring = "4.2"
+keyring-core = "1.0"
 rusqlite = { version = "0.40", features = ["bundled"] }
 sqlx = { version = "0.9", default-features = false, features = [
   "runtime-tokio",
@@ -32,9 +32,13 @@ sqlx = { version = "0.9", default-features = false, features = [
 tiberius = { version = "0.13", default-features = false, features = [
   "tds80",
   "rustls",
+  "chrono",
 ] }
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+tauri-plugin-dialog = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -44,3 +48,6 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0", features = ["keychain"] }

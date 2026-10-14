@@ -1,0 +1,13 @@
+import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "./ipc.js";
+
+/**
+ * Rust closed a connection on its own: "idle" after an hour unused, or
+ * "lost" when a health check failed. Returns an unlisten function.
+ *
+ * @param {(event: { profileId: string, reason: "idle" | "lost" }) => void} handler
+ */
+export async function onConnectionClosed(handler) {
+  if (!isTauri()) return () => {};
+  return listen("connection-closed", (event) => handler(event.payload));
+}

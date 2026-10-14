@@ -17,7 +17,7 @@ defineProps({
     <SwitchInput
       v-model="form.sshEnabled"
       label="Use an SSH tunnel"
-      description="SSH settings are saved now; tunnel support arrives later."
+      description="Tunnels arrive in a later build. You can save SSH settings now, but connections with SSH on can't be opened yet."
     />
     <div v-if="form.sshEnabled" class="grid grid-cols-2 gap-3">
       <TextInput

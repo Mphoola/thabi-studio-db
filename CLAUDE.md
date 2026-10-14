@@ -18,9 +18,10 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   copy and shortcuts live in `docs/design/workspace.md`; follow them.
 - Phase 3 (local persistence and connection profiles): complete. SQLite profile
   and preference storage is in place; passwords use Keychain.
-- Phase 4 (database driver proof of concept and connection lifecycle): in
-  progress. Driver feasibility and crate choices are recorded in
-  `docs/decisions/0005-phase-4-database-drivers.md`.
+- Phase 4 (database drivers and connection lifecycle): complete. Read
+  `docs/decisions/0006-connection-model.md` before touching connections.
+  Remote-server verification is still open (see plan.md).
+- Next: Phase 5 (remote connectivity, TLS and SSH tunnelling).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -40,6 +41,7 @@ npm run check          # format, ESLint, design check, Vitest, build, clippy, ca
 npm run test           # Vitest unit tests
 npm run format         # Prettier + rustfmt
 npm run lint:fix       # ESLint autofix
+npm run test:integration  # driver tests against MySQL/Postgres/SQL Server in Docker
 npm run tauri build    # release .app/.dmg (slow: LTO)
 ```
 
@@ -64,7 +66,13 @@ Run `npm run check` after every meaningful change and before calling work done.
 - `src/lib/tauri/` — the only place that calls `invoke`. Add new command
   wrappers to `commands.js`; errors arrive as `{ kind, message }`.
 - `src/styles/tokens.css` — the only place colours, type, radii and shadows are defined.
-- `src-tauri/src/commands/` — Tauri commands, one module per area.
+- `src-tauri/src/commands/` — thin async Tauri commands, one module per area.
+  SQLite/Keychain work goes through `AppState::blocking`.
+- `src-tauri/src/database/` — driver contract (`DatabaseSession`), one
+  session type per engine, result values and error mapping (`error.rs`).
+- `src-tauri/src/connections.rs` — live connections and their states.
+- `src-tauri/src/profiles/` — profile validation and storage.
+- `src-tauri/tests/drivers.rs` — integration tests against real databases.
 - `src-tauri/migrations/` — versioned SQLite schema migrations.
 - `src-tauri/capabilities/default.json` — keep to least privilege.
 
@@ -99,3 +107,7 @@ Run `npm run check` after every meaningful change and before calling work done.
 - App-generated SQL uses parameters and engine-specific identifier quoting.
 - Never log passwords, connection strings, keys or tokens.
 - A strict CSP is set in `tauri.conf.json`; don't loosen it without a recorded reason.
+- Never weaken a connection's TLS setting automatically. Only the user picks
+  Encrypt Without Verifying or Off, and only for that connection.
+- Each live connection is one database session; never put a pool behind a
+  query editor.

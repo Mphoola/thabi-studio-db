@@ -4,7 +4,7 @@ import { useDialogs } from "./useDialogs.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
-import { toUserMessage } from "../lib/errors.js";
+import { toUserDetail } from "../lib/errors.js";
 
 /**
  * App-wide commands. Shortcuts follow macOS conventions and are reserved
@@ -22,9 +22,11 @@ export function useAppCommands() {
     if (!profile) return;
     try {
       await connections.connect(profile.id);
-      toasts.success(`Connected to ${profile.name}`);
     } catch (error) {
-      toasts.error("Couldn't connect to database", toUserMessage(error));
+      toasts.error(
+        `Couldn’t connect to “${profile.name}”`,
+        toUserDetail(error),
+      );
     }
   }
 
@@ -33,9 +35,11 @@ export function useAppCommands() {
     if (!profile) return;
     try {
       await connections.disconnect(profile.id);
-      toasts.success(`Disconnected from ${profile.name}`);
     } catch (error) {
-      toasts.error("Couldn't disconnect from database", toUserMessage(error));
+      toasts.error(
+        `Couldn’t disconnect from “${profile.name}”`,
+        toUserDetail(error),
+      );
     }
   }
 

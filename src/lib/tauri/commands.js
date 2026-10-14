@@ -41,8 +41,9 @@ export function selectConnectionProfile(id) {
   return call("select_connection_profile", { id });
 }
 
-export function testConnectionProfile(id) {
-  return call("test_connection_profile", { id });
+/** Tests unsaved form values; `profileId` lets an edited profile reuse its saved password. */
+export function testConnectionInput(input, profileId = null) {
+  return call("test_connection_input", { input, profileId });
 }
 
 export function connectConnectionProfile(id) {
@@ -53,6 +54,16 @@ export function disconnectConnectionProfile(id) {
   return call("disconnect_connection_profile", { id });
 }
 
-export function listConnectedProfiles() {
-  return call("list_connected_profiles");
+/** @returns {Promise<Array<{ profileId: string, connectionId: string, state: "connecting" | "connected" | "closing", server: { engine: string, version: string } | null }>>} */
+export function listConnections() {
+  return call("list_connections");
+}
+
+export function listDatabases(id) {
+  return call("list_databases", { id });
+}
+
+/** Runs SQL on the profile's session. Keeps at most 1,000 rows. */
+export function runQuery(id, sql) {
+  return call("run_query", { id, sql });
 }

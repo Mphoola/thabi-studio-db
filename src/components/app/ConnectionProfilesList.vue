@@ -4,7 +4,7 @@ import { Copy, Pencil, Trash2 } from "lucide-vue-next";
 import { confirm } from "../../composables/useConfirm.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useToasts } from "../../composables/useToasts.js";
-import { toUserMessage } from "../../lib/errors.js";
+import { toUserDetail, toUserMessage } from "../../lib/errors.js";
 import { environmentFor } from "../../lib/environments.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
@@ -24,10 +24,9 @@ async function duplicate(profile) {
   try {
     const warning = await store.duplicate(profile.id);
     if (warning)
-      toasts.error("Profile duplicated with a Keychain warning", warning);
-    else toasts.success("Connection profile duplicated");
+      toasts.error("Duplicated, but Keychain needs attention", warning);
   } catch (error) {
-    toasts.error("Couldn't duplicate connection profile", toUserMessage(error));
+    toasts.error(`Couldn’t duplicate “${profile.name}”`, toUserMessage(error));
   }
 }
 
@@ -35,7 +34,7 @@ async function remove(profile) {
   const confirmed = await confirm({
     title: `Delete “${profile.name}”?`,
     message:
-      "Any active database connection will be closed, and its saved database and SSH passwords will be removed from Keychain. This can't be undone.",
+      "Its saved password is also removed from your keychain. This can't be undone.",
     confirmLabel: "Delete",
     destructive: true,
   });
@@ -43,9 +42,8 @@ async function remove(profile) {
 
   try {
     await store.remove(profile.id);
-    toasts.success("Connection profile deleted");
   } catch (error) {
-    toasts.error("Couldn't delete connection profile", toUserMessage(error));
+    toasts.error(`Couldn’t delete “${profile.name}”`, toUserMessage(error));
   }
 }
 
@@ -53,27 +51,26 @@ async function select(profile) {
   try {
     await store.select(profile.id);
   } catch (error) {
-    toasts.error("Couldn't select connection profile", toUserMessage(error));
+    toasts.error(`Couldn’t select “${profile.name}”`, toUserMessage(error));
   }
 }
 
 async function toggleConnection(profile) {
+  const wasConnected = store.isConnected(profile.id);
   markBusy(profile.id, true);
   try {
-    if (store.isConnected(profile.id)) {
+    if (wasConnected) {
       await store.disconnect(profile.id);
-      toasts.success(`Disconnected from ${profile.name}`);
     } else {
       await store.select(profile.id);
       await store.connect(profile.id);
-      toasts.success(`Connected to ${profile.name}`);
     }
   } catch (error) {
     toasts.error(
-      store.isConnected(profile.id)
-        ? "Couldn't disconnect from database"
-        : "Couldn't connect to database",
-      toUserMessage(error),
+      wasConnected
+        ? `Couldn’t disconnect from “${profile.name}”`
+        : `Couldn’t connect to “${profile.name}”`,
+      toUserDetail(error),
     );
   } finally {
     markBusy(profile.id, false);
@@ -103,17 +100,22 @@ async function toggleConnection(profile) {
             {{ environmentFor(profile.environment).label }}
           </span>
           <span
-            v-if="store.selectedProfile.value?.id === profile.id"
-            class="text-xs text-fg-subtle"
+            v-if="store.isConnected(profile.id)"
+            class="truncate text-xs text-success-text"
           >
-            Selected ·
-            {{ store.isConnected(profile.id) ? "Connected" : "Not connected" }}
+            Connected · {{ store.statusFor(profile.id)?.server?.version }}
           </span>
           <span
-            v-else-if="store.isConnected(profile.id)"
-            class="text-xs text-success-text"
+            v-else-if="store.statusFor(profile.id)?.state === 'connecting'"
+            class="text-xs text-fg-subtle"
           >
-            Connected
+            Connecting…
+          </span>
+          <span
+            v-else-if="store.selectedProfile.value?.id === profile.id"
+            class="text-xs text-fg-subtle"
+          >
+            Selected
           </span>
         </div>
         <span class="truncate font-mono text-sm text-fg-muted">

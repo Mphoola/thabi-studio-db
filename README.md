@@ -5,8 +5,9 @@ PostgreSQL and Microsoft SQL Server databases. Connections go directly from
 your Mac to your database servers; there is no account, telemetry or cloud
 service.
 
-> Status: early development. Connection profiles and preferences persist
-> locally; database connections and query features are not implemented yet.
+> Status: early development. You can save connections, test them and
+> connect to MySQL, PostgreSQL and SQL Server. The explorer and query editor
+> are not built yet.
 > See [`plan.md`](plan.md) for the roadmap.
 
 ## Prerequisites (macOS)
@@ -29,15 +30,24 @@ Later runs start in seconds.
 
 ## Scripts
 
-| Command               | What it does                                             |
-| --------------------- | -------------------------------------------------------- |
-| `npm run tauri dev`   | Run the desktop app with hot reload                      |
-| `npm run check`       | Format check, ESLint, frontend build, clippy, Rust tests |
-| `npm run format`      | Format JS/Vue/CSS with Prettier and Rust with rustfmt    |
-| `npm run lint`        | ESLint (`npm run lint:fix` to autofix)                   |
-| `npm run check:rust`  | `cargo clippy` with warnings as errors                   |
-| `npm run test:rust`   | `cargo test`                                             |
-| `npm run tauri build` | Build a release `.app` / `.dmg` into `src-tauri/target`  |
+| Command                    | What it does                                                    |
+| -------------------------- | --------------------------------------------------------------- |
+| `npm run tauri dev`        | Run the desktop app with hot reload                             |
+| `npm run check`            | Format check, ESLint, frontend build, clippy, Rust tests        |
+| `npm run format`           | Format JS/Vue/CSS with Prettier and Rust with rustfmt           |
+| `npm run lint`             | ESLint (`npm run lint:fix` to autofix)                          |
+| `npm run check:rust`       | `cargo clippy` with warnings as errors                          |
+| `npm run test:rust`        | `cargo test`                                                    |
+| `npm run test:integration` | Driver tests against MySQL, PostgreSQL and SQL Server in Docker |
+| `npm run tauri build`      | Build a release `.app` / `.dmg` into `src-tauri/target`         |
+
+## Integration tests
+
+`npm run test:integration` starts PostgreSQL 16, MySQL 8.4 and SQL Server
+2022 in Docker (bound to 127.0.0.1), generates a throwaway password in
+`tests/integration/.env` (git-ignored), and runs `src-tauri/tests/drivers.rs`.
+It needs Docker Desktop; SQL Server runs under Rosetta on Apple Silicon.
+Stop the databases with `scripts/integration-tests.sh down`.
 
 ## Project structure
 

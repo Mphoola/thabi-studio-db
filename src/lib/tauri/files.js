@@ -1,0 +1,12 @@
+import { open } from "@tauri-apps/plugin-dialog";
+
+/** Native file picker for a PEM CA certificate. Resolves to a path or null. */
+export async function pickCaCertificate() {
+  const path = await open({
+    title: "Choose CA Certificate",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Certificates", extensions: ["pem", "crt", "cer"] }],
+  });
+  return typeof path === "string" ? path : null;
+}

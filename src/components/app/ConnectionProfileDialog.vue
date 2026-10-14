@@ -5,17 +5,18 @@ import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
+import { suggestedTlsMode } from "../../lib/tls.js";
 import {
   defaultPortFor,
   validateConnectionProfile,
 } from "../../lib/connectionValidation.js";
 import BaseButton from "../common/BaseButton.vue";
 import BaseDialog from "../common/BaseDialog.vue";
-import CheckboxInput from "../common/CheckboxInput.vue";
-import PasswordInput from "../common/PasswordInput.vue";
 import SelectInput from "../common/SelectInput.vue";
 import TextInput from "../common/TextInput.vue";
 import ConnectionTestAction from "./ConnectionTestAction.vue";
+import ConnectionTestResult from "./ConnectionTestResult.vue";
+import DatabaseFields from "./DatabaseFields.vue";
 import SshProfileFields from "./SshProfileFields.vue";
 
 const store = useConnectionProfiles();
@@ -23,6 +24,10 @@ const dialogs = useDialogs();
 const toasts = useToasts();
 const fields = ref({});
 const saving = ref(false);
+const testResult = ref(null);
+// Until the user picks a TLS setting, it follows the host (see lib/tls.js).
+const tlsTouched = ref(false);
+
 const defaults = () => ({
   name: "",
   environment: "local",
@@ -33,6 +38,8 @@ const defaults = () => ({
   username: "",
   databasePassword: "",
   clearDatabasePassword: false,
+  tlsMode: suggestedTlsMode("localhost"),
+  tlsCaPath: "",
   sshEnabled: false,
   sshHost: "",
   sshPort: "22",
@@ -51,15 +58,6 @@ const editingProfile = computed(
       (profile) => profile.id === store.editingId.value,
     ) ?? null,
 );
-const title = computed(() =>
-  editingProfile.value ? "Edit Connection" : "New Connection",
-);
-
-const drivers = [
-  { value: "postgres", label: "PostgreSQL" },
-  { value: "mysql", label: "MySQL" },
-  { value: "sqlserver", label: "SQL Server" },
-];
 const environmentOptions = ENVIRONMENTS.map(({ value, label }) => ({
   value,
   label,
@@ -68,29 +66,32 @@ const environmentOptions = ENVIRONMENTS.map(({ value, label }) => ({
 function resetForm() {
   Object.assign(form, defaults());
   fields.value = {};
-  if (!editingProfile.value) return;
+  testResult.value = null;
+  tlsTouched.value = false;
+  const profile = editingProfile.value;
+  if (!profile) return;
+  tlsTouched.value = true;
   Object.assign(form, {
-    name: editingProfile.value.name,
-    environment: editingProfile.value.environment,
-    driver: editingProfile.value.driver,
-    host: editingProfile.value.host,
-    port: String(editingProfile.value.port),
-    databaseName: editingProfile.value.databaseName,
-    username: editingProfile.value.username,
-    sshEnabled: editingProfile.value.sshEnabled,
-    sshHost: editingProfile.value.sshHost,
-    sshPort: String(editingProfile.value.sshPort),
-    sshUsername: editingProfile.value.sshUsername,
+    name: profile.name,
+    environment: profile.environment,
+    driver: profile.driver,
+    host: profile.host,
+    port: String(profile.port),
+    databaseName: profile.databaseName,
+    username: profile.username,
+    tlsMode: profile.tlsMode,
+    tlsCaPath: profile.tlsCaPath,
+    sshEnabled: profile.sshEnabled,
+    sshHost: profile.sshHost,
+    sshPort: String(profile.sshPort),
+    sshUsername: profile.sshUsername,
   });
 }
 
 watch(
   () => [open.value, store.editingId.value],
-  ([isOpen]) => {
-    if (isOpen) resetForm();
-  },
+  ([isOpen]) => isOpen && resetForm(),
 );
-
 watch(
   () => form.driver,
   (next, previous) => {
@@ -98,45 +99,51 @@ watch(
       form.port = defaultPortFor(next);
   },
 );
-
 watch(
-  () => form.sshEnabled,
-  (enabled) => {
-    if (!enabled) form.sshPassword = "";
+  () => form.host,
+  (host) => {
+    if (!tlsTouched.value) form.tlsMode = suggestedTlsMode(host);
   },
 );
+watch(
+  () => form.sshEnabled,
+  (enabled) => !enabled && (form.sshPassword = ""),
+);
+// A test result describes the values it ran with; clear it when they change.
+watch(
+  () => JSON.stringify(form),
+  () => (testResult.value = null),
+);
+
+/** The request body for Rust, or null (with field errors) when invalid. */
+function buildInput() {
+  fields.value = validateConnectionProfile(form);
+  if (Object.keys(fields.value).length) return null;
+  return {
+    ...form,
+    sshPassword: form.sshEnabled ? form.sshPassword : "",
+  };
+}
+
+function onTestResult(result) {
+  if (result && !result.ok && result.error?.kind === "validation") {
+    fields.value = result.error.fields ?? {};
+    return;
+  }
+  testResult.value = result;
+}
 
 async function save() {
-  fields.value = validateConnectionProfile(form);
-  if (Object.keys(fields.value).length) return;
-
+  const input = buildInput();
+  if (!input) return;
   saving.value = true;
   try {
-    const warning = await store.save({
-      name: form.name,
-      environment: form.environment,
-      driver: form.driver,
-      host: form.host,
-      port: form.port,
-      databaseName: form.databaseName,
-      username: form.username,
-      databasePassword: form.databasePassword,
-      clearDatabasePassword: form.clearDatabasePassword,
-      sshEnabled: form.sshEnabled,
-      sshHost: form.sshHost,
-      sshPort: form.sshPort,
-      sshUsername: form.sshUsername,
-      sshPassword: form.sshEnabled ? form.sshPassword : "",
-      clearSshPassword: form.clearSshPassword,
-    });
-    if (warning) toasts.error("Profile saved with a Keychain warning", warning);
-    else toasts.success("Connection profile saved");
+    const warning = await store.save(input);
+    if (warning) toasts.error("Saved, but Keychain needs attention", warning);
   } catch (error) {
-    if (error?.kind === "validation" && error.fields) {
+    if (error?.kind === "validation" && error.fields)
       fields.value = error.fields;
-    } else {
-      toasts.error("Couldn't save connection profile", toUserMessage(error));
-    }
+    else toasts.error("Couldn't save the connection", toUserMessage(error));
   } finally {
     saving.value = false;
   }
@@ -144,17 +151,21 @@ async function save() {
 </script>
 
 <template>
-  <BaseDialog v-model:open="open" size="lg" :title="title">
+  <BaseDialog
+    v-model:open="open"
+    size="lg"
+    :title="editingProfile ? 'Edit Connection' : 'New Connection'"
+  >
     <form
       id="connection-profile-form"
-      class="flex max-h-[min(62vh,560px)] flex-col gap-4 overflow-y-auto"
+      class="flex max-h-[min(62vh,600px)] flex-col gap-4 overflow-y-auto"
       @submit.prevent="save"
     >
       <div class="grid grid-cols-2 gap-3">
         <TextInput
           v-model="form.name"
-          label="Connection name"
-          placeholder="Production"
+          label="Name"
+          placeholder="Orders (local)"
           :error="fields.name"
         />
         <SelectInput
@@ -164,77 +175,28 @@ async function save() {
           :error="fields.environment"
         />
       </div>
-
-      <section class="flex flex-col gap-3">
-        <h3 class="text-sm font-semibold text-fg">Database</h3>
-        <div class="grid grid-cols-2 gap-3">
-          <SelectInput
-            v-model="form.driver"
-            label="Database type"
-            :options="drivers"
-            :error="fields.driver"
-          />
-          <TextInput
-            v-model="form.host"
-            label="Host"
-            placeholder="localhost"
-            :error="fields.host"
-            autocomplete="url"
-          />
-          <TextInput
-            v-model="form.port"
-            label="Port"
-            input-mode="numeric"
-            :error="fields.port"
-            mono
-          />
-          <TextInput
-            v-model="form.databaseName"
-            label="Database"
-            hint="Optional. You can choose one after connecting."
-            :error="fields.databaseName"
-          />
-          <TextInput
-            v-model="form.username"
-            label="User name"
-            :error="fields.username"
-            autocomplete="username"
-          />
-          <PasswordInput
-            v-model="form.databasePassword"
-            label="Password"
-            :hint="
-              editingProfile?.hasDatabasePassword
-                ? 'Saved in Keychain. Leave blank to keep it.'
-                : 'Optional. Stored in Keychain, never in the profile database.'
-            "
-            :error="fields.databasePassword"
-          />
-        </div>
-        <CheckboxInput
-          v-if="editingProfile?.hasDatabasePassword"
-          v-model="form.clearDatabasePassword"
-          label="Remove saved database password"
-        />
-        <p class="text-sm text-fg-subtle">
-          Username and password authentication only. TLS certificate
-          verification is on by default; more options arrive with database
-          drivers.
-        </p>
-      </section>
-
+      <DatabaseFields
+        v-model:form="form"
+        :fields="fields"
+        :has-saved-password="!!editingProfile?.hasDatabasePassword"
+        @tls-touched="tlsTouched = true"
+      />
       <SshProfileFields
         v-model:form="form"
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasSshPassword"
       />
+      <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>
     <template #footer>
-      <BaseButton @click="open = false">Cancel</BaseButton>
       <ConnectionTestAction
-        :profile-id="editingProfile?.id"
-        :disabled="!editingProfile || !store.nativeAvailable"
+        class="mr-auto"
+        :build-input="buildInput"
+        :profile-id="editingProfile?.id ?? null"
+        :disabled="!store.nativeAvailable"
+        @result="onTestResult"
       />
+      <BaseButton @click="open = false">Cancel</BaseButton>
       <BaseButton
         variant="primary"
         type="submit"
