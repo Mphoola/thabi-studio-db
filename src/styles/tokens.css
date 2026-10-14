@@ -1,0 +1,122 @@
+/*
+ * Thabi Studio design tokens. This is the only place colours, type,
+ * radii and shadows are defined. Raw values live on :root (light) and
+ * [data-theme="dark"]; @theme exposes them to Tailwind as utilities such
+ * as bg-canvas, text-fg-muted and border-line.
+ */
+
+:root {
+  color-scheme: light;
+
+  --canvas: #f6f6f7;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --sidebar: #eeeef0;
+  --line: #e2e2e6;
+  --line-strong: #cfcfd5;
+
+  --fg: #1c1c1f;
+  --fg-muted: #5f5f68;
+  --fg-subtle: #8b8b94;
+
+  --accent: #2f6fed;
+  --accent-hover: #2a62d4;
+  --accent-fg: #ffffff;
+  --accent-subtle: rgb(47 111 237 / 0.16);
+
+  --danger: #d1343d;
+  --danger-subtle: rgb(209 52 61 / 0.12);
+  --success: #1f8a4c;
+  --success-subtle: rgb(31 138 76 / 0.12);
+  --warning: #b26b00;
+  --warning-subtle: rgb(178 107 0 / 0.12);
+
+  --focus: rgb(47 111 237 / 0.6);
+  --overlay: rgb(20 20 24 / 0.32);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #1b1b1e;
+  --surface: #232327;
+  --surface-raised: #2b2b30;
+  --sidebar: #202024;
+  --line: #34343a;
+  --line-strong: #45454d;
+
+  --fg: #ececef;
+  --fg-muted: #a5a5ae;
+  --fg-subtle: #75757e;
+
+  --accent: #4c86f5;
+  --accent-hover: #6396f7;
+  --accent-fg: #ffffff;
+  --accent-subtle: rgb(76 134 245 / 0.24);
+
+  --danger: #f0616a;
+  --danger-subtle: rgb(240 97 106 / 0.16);
+  --success: #45c07a;
+  --success-subtle: rgb(69 192 122 / 0.16);
+  --warning: #e8a33d;
+  --warning-subtle: rgb(232 163 61 / 0.16);
+
+  --focus: rgb(99 150 247 / 0.7);
+  --overlay: rgb(0 0 0 / 0.5);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-sidebar: var(--sidebar);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-focus: var(--focus);
+  --color-overlay: var(--overlay);
+}
+
+@theme {
+  /* Native macOS system fonts; nothing is fetched from the network. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui,
+    sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Desktop-density type scale (13px body, like native Mac apps). */
+  --text-xs: 11px;
+  --text-xs--line-height: 14px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 18px;
+  --text-lg: 15px;
+  --text-lg--line-height: 20px;
+  --text-xl: 18px;
+  --text-xl--line-height: 24px;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 28px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --shadow-popover:
+    0 0 0 1px rgb(0 0 0 / 0.06), 0 8px 24px -6px rgb(0 0 0 / 0.2);
+  --shadow-dialog:
+    0 0 0 1px rgb(0 0 0 / 0.08), 0 24px 64px -12px rgb(0 0 0 / 0.35);
+}

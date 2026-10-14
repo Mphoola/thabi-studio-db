@@ -1,0 +1,16 @@
+/**
+ * Turns anything thrown (Error, string, structured IPC error) into a short
+ * message that is safe to show. Rust is responsible for sanitising its own
+ * errors; this only picks the readable part.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function toUserMessage(error) {
+  if (!error) return "An unknown error occurred.";
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && "message" in error && error.message) {
+    return String(error.message);
+  }
+  return "An unknown error occurred.";
+}

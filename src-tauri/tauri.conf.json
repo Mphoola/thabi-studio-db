@@ -12,13 +12,17 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Thabi Studio",
-        "width": 800,
-        "height": 600
+        "width": 1200,
+        "height": 780,
+        "minWidth": 860,
+        "minHeight": 560,
+        "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {

@@ -1,0 +1,44 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/*
+ * Dark mode follows the `data-theme` attribute on <html>, which
+ * src/composables/useTheme.js keeps in sync with the system or the
+ * user's choice. Components should rely on the semantic tokens below
+ * rather than on `dark:` variants wherever possible.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    color: var(--color-fg);
+    background: var(--color-canvas);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply min-h-screen overflow-hidden select-none;
+    cursor: default;
+  }
+
+  /* Text the user may want to copy stays selectable. */
+  input,
+  textarea,
+  [contenteditable],
+  .selectable {
+    @apply select-text;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--color-accent-subtle);
+  }
+}

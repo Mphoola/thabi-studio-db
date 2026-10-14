@@ -787,7 +787,15 @@ The MVP is complete when all of the following are true:
 
 Update this section as work progresses.
 
-- [ ] Phase 1 — Project scaffold and engineering baseline
+- [x] Phase 1 — Project scaffold and engineering baseline (2026-10-14)
+  - [x] Tauri 2 + Vue 3 (JavaScript) + Tailwind v4 scaffold; `npm run tauri dev` launches on macOS
+  - [x] `npm run check` passes: Prettier, ESLint, Vite build, clippy (`-D warnings`), `cargo test`
+  - [x] Clean copy of the repo installs with `npm ci` and passes `npm run check`
+  - [x] App shell, `ErrorBoundary`, toast and confirm/dialog primitives
+  - [x] Design tokens with light/dark themes following macOS appearance
+  - [x] `CLAUDE.md`, `README.md`, `docs/decisions/0001-phase-1-baseline.md`
+  - [x] Template demo command and unused opener plugin removed; strict CSP set
+  - Note: CSP is verified against a release build in Phase 10
 - [ ] Phase 2 — Product shell and design system
 - [ ] Phase 3 — Local persistence and connection profiles
 - [ ] Phase 4 — Database driver proof of concept and connection lifecycle
