@@ -17,6 +17,7 @@ import DropdownMenu from "../common/DropdownMenu.vue";
 import EmptyState from "../common/EmptyState.vue";
 import IconButton from "../common/IconButton.vue";
 import InlineAlert from "../common/InlineAlert.vue";
+import PasswordInput from "../common/PasswordInput.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SelectInput from "../common/SelectInput.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
@@ -28,6 +29,7 @@ import TextInput from "../common/TextInput.vue";
 const toasts = useToasts();
 const host = ref("db.internal");
 const port = ref("70000");
+const password = ref("");
 const engine = ref("postgres");
 const tls = ref(true);
 const remember = ref(false);
@@ -110,6 +112,11 @@ async function askDelete() {
         />
         <TextInput label="Filter" placeholder="Filter tables" :icon="Search" />
         <TextInput label="Disabled" placeholder="Not editable" disabled />
+        <PasswordInput
+          v-model="password"
+          label="Password"
+          hint="Stored securely in Keychain."
+        />
       </div>
     </section>
 

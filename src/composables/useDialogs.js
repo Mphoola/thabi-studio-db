@@ -2,7 +2,9 @@ import { ref } from "vue";
 
 /** App-level dialogs, opened from commands. One open at a time. */
 const open = ref(
-  /** @type {null | "about" | "settings" | "shortcuts" | "palette"} */ (null),
+  /** @type {null | "about" | "settings" | "shortcuts" | "palette" | "connection"} */ (
+    null
+  ),
 );
 
 export function useDialogs() {

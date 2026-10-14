@@ -16,7 +16,10 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 - Phase 1 (scaffold and engineering baseline): complete.
 - Phase 2 (product shell and design system): complete. Layout, principles,
   copy and shortcuts live in `docs/design/workspace.md`; follow them.
-- Next: Phase 3 (local persistence and connection profiles).
+- Phase 3 (local persistence and connection profiles): complete. SQLite profile
+  and preference storage is in place; passwords use Keychain. Profiles are not
+  live connections and driver testing is deferred to Phase 4.
+- Next: Phase 4 (database driver proof of concept and connection lifecycle).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -61,6 +64,7 @@ Run `npm run check` after every meaningful change and before calling work done.
   wrappers to `commands.js`; errors arrive as `{ kind, message }`.
 - `src/styles/tokens.css` — the only place colours, type, radii and shadows are defined.
 - `src-tauri/src/commands/` — Tauri commands, one module per area.
+- `src-tauri/migrations/` — versioned SQLite schema migrations.
 - `src-tauri/capabilities/default.json` — keep to least privilege.
 
 ## Coding rules

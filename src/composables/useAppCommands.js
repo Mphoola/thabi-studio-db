@@ -1,4 +1,5 @@
 import { useCommandRegistration } from "./useCommands.js";
+import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useDialogs } from "./useDialogs.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
@@ -9,10 +10,19 @@ import { useTheme } from "./useTheme.js";
  */
 export function useAppCommands() {
   const dialogs = useDialogs();
+  const connections = useConnectionProfiles();
   const layout = useLayout();
   const theme = useTheme();
 
   const commands = [
+    {
+      id: "connections.new",
+      title: "New Connection…",
+      group: "Connections",
+      shortcut: "Mod+N",
+      enabled: () => connections.nativeAvailable,
+      run: connections.openNew,
+    },
     {
       id: "app.commandPalette",
       title: "Open Anything",

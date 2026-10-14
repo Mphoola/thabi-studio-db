@@ -1,7 +1,10 @@
 <script setup>
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
+import { environmentFor } from "../../lib/environments.js";
 import { useAppInfo } from "../../composables/useAppInfo.js";
 
 const { info, error } = useAppInfo();
+const { selectedProfile } = useConnectionProfiles();
 </script>
 
 <template>
@@ -9,8 +12,19 @@ const { info, error } = useAppInfo();
     class="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
   >
     <span class="flex items-center gap-1.5">
-      <span class="size-2 rounded-full bg-tag-gray" aria-hidden="true" />
-      No connection
+      <span
+        class="size-2 rounded-full"
+        :class="
+          selectedProfile
+            ? environmentFor(selectedProfile.environment).dotClass
+            : 'bg-tag-gray'
+        "
+        aria-hidden="true"
+      />
+      <template v-if="selectedProfile">
+        {{ selectedProfile.name }} · Not connected
+      </template>
+      <template v-else>No connection</template>
     </span>
     <span class="ml-auto" />
     <span v-if="info">v{{ info.version }}</span>

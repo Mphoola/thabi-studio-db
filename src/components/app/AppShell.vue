@@ -1,5 +1,6 @@
 <script setup>
-import { defineAsyncComponent } from "vue";
+import { defineAsyncComponent, onMounted } from "vue";
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useAppCommands } from "../../composables/useAppCommands.js";
 import { useDialogs } from "../../composables/useDialogs.js";
 import { useLayout } from "../../composables/useLayout.js";
@@ -11,6 +12,9 @@ import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StatusBar from "./StatusBar.vue";
 import TitleBar from "./TitleBar.vue";
 import WelcomeView from "./WelcomeView.vue";
+import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
+import { useToasts } from "../../composables/useToasts.js";
+import { toUserMessage } from "../../lib/errors.js";
 
 // The component gallery is only bundled in development builds.
 const ComponentGallery = import.meta.env.DEV
@@ -20,6 +24,14 @@ const ComponentGallery = import.meta.env.DEV
 useAppCommands();
 const { sidebarOpen, mainView } = useLayout();
 const dialogs = useDialogs();
+const connections = useConnectionProfiles();
+const toasts = useToasts();
+
+onMounted(() => {
+  connections.load().catch((error) => {
+    toasts.error("Saved connections couldn't be loaded", toUserMessage(error));
+  });
+});
 
 function dialogModel(name) {
   return {
@@ -45,6 +57,7 @@ function dialogModel(name) {
     <StatusBar />
 
     <AboutDialog v-bind="dialogModel('about')" />
+    <ConnectionProfileDialog v-bind="dialogModel('connection')" />
     <SettingsDialog v-bind="dialogModel('settings')" />
     <ShortcutsDialog v-bind="dialogModel('shortcuts')" />
     <CommandPalette v-bind="dialogModel('palette')" />

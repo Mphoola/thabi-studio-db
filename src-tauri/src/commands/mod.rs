@@ -3,3 +3,5 @@
 //! `capabilities/`.
 
 pub mod app;
+pub mod connection_profiles;
+pub mod settings;

@@ -1,18 +1,37 @@
 <script setup>
+import { computed } from "vue";
 import { vTooltip } from "../../composables/useTooltip.js";
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
+import { environmentFor } from "../../lib/environments.js";
 
-// Phase 3 replaces this with the connection switcher (⇧⌘K). Until saved
-// connections exist it only states that nothing is connected.
+const { selectedProfile } = useConnectionProfiles();
+const environment = computed(() =>
+  selectedProfile.value
+    ? environmentFor(selectedProfile.value.environment)
+    : null,
+);
 </script>
 
 <template>
   <div
-    v-tooltip="'Saved connections arrive in the next build'"
+    v-tooltip="
+      selectedProfile
+        ? 'This profile is selected but not connected'
+        : 'No connection profile is selected'
+    "
     class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted"
     role="status"
     tabindex="0"
   >
-    <span class="size-2 rounded-full bg-tag-gray" aria-hidden="true" />
-    No connection
+    <span
+      class="size-2 rounded-full"
+      :class="environment?.dotClass ?? 'bg-tag-gray'"
+      aria-hidden="true"
+    />
+    <template v-if="selectedProfile">
+      <span class="max-w-36 truncate">{{ selectedProfile.name }}</span>
+      <span class="text-fg-subtle">Not connected</span>
+    </template>
+    <span v-else>No connection</span>
   </div>
 </template>

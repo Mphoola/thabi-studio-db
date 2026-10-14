@@ -14,6 +14,8 @@ const props = defineProps({
   mono: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
   id: { type: String, default: "" },
+  autocomplete: { type: String, default: "off" },
+  inputMode: { type: String, default: "" },
 });
 
 const model = defineModel({ type: [String, Number], default: "" });
@@ -38,6 +40,8 @@ const inputId = props.id || autoId;
         :type="type"
         :placeholder="placeholder"
         :disabled="disabled"
+        :autocomplete="autocomplete"
+        :inputmode="inputMode || undefined"
         :aria-invalid="!!error || undefined"
         :aria-describedby="describedBy(inputId, { error, hint })"
         :class="[
@@ -47,7 +51,6 @@ const inputId = props.id || autoId;
           mono && 'font-mono',
         ]"
         spellcheck="false"
-        autocomplete="off"
       />
     </div>
   </FormField>

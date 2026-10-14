@@ -344,32 +344,32 @@ Tasks:
 
 Tasks:
 
-- Add SQLite migrations for connection profile metadata and app settings.
-- Add create, edit, duplicate, delete, list, and select profile operations.
-- Build a connection form that adapts to MySQL, PostgreSQL, and SQL Server defaults without assuming identical options.
-- Validate required fields, ports, hostnames, database names, and supported authentication options.
-- Provide show/hide password controls and safe password-field behaviour.
-- Integrate OS-backed secure storage for passwords and supported SSH secrets.
-- Store opaque secret references rather than secret values in SQLite.
-- Handle credential update, removal, missing-secret, and secure-store access failures.
-- Add connection labels, optional colour/icon, and recent connection timestamp if useful.
-- Ensure deleting a profile can close its active connection and remove its associated stored credentials after confirmation.
-- Implement a “Test connection” UI state, but do not report success until a real driver test exists in later phases.
+- [x] Add versioned SQLite migrations for connection profile metadata and app settings.
+- [x] Add create, edit, duplicate, delete, list, and select profile operations.
+- [x] Build a connection form with MySQL, PostgreSQL, and SQL Server port defaults; offer only supported password authentication.
+- [x] Validate required fields, ports, hostnames, database names, and supported authentication options in both frontend and Rust.
+- [x] Provide show/hide password controls and safe password-field behaviour.
+- [x] Integrate OS-backed secure storage for database and SSH passwords.
+- [x] Store opaque secret references rather than secret values in SQLite.
+- [x] Handle credential update, removal, missing-secret, and secure-store access failures.
+- [x] Add environment labels and colours to profiles.
+- [x] Confirm profile deletion, remove associated credentials, and clear selected-profile state. No live connections exist in this phase; disconnect integration is deferred until Phase 4 introduces connection lifecycle.
+- [x] Show a disabled “Test Connection” state; do not report success before a real driver exists.
 
 **Deliverables:**
 
-- Persistent connection manager.
-- Database-specific connection forms.
-- Secure credential-store abstraction.
-- SQLite migrations and repository tests.
+- [x] Persistent connection manager.
+- [x] Database-specific connection forms.
+- [x] Secure credential-store abstraction.
+- [x] SQLite migrations and repository tests.
 
 **Exit criteria:**
 
-- Profiles survive app restart.
-- Secrets are not present in SQLite records or logs.
-- Invalid forms show clear, field-specific errors.
-- CRUD and migration tests pass.
-- No fake connection-success state is presented.
+- [x] Profiles and selection survive reopening the SQLite database.
+- [x] Secrets are not present in SQLite profile records or command responses; errors are sanitised and credential values are not logged.
+- [x] Invalid forms show clear, field-specific errors.
+- [x] CRUD and forward-migration tests pass, including the in-progress v1 schema upgrade.
+- [x] No fake connection-success state is presented.
 
 ### Phase 4 — Database driver proof of concept and connection lifecycle
 
@@ -386,6 +386,7 @@ Tasks:
 - Model connection lifecycle states: disconnected, connecting, connected, reconnecting if supported, closing, and error.
 - Return structured, sanitised errors to the frontend.
 - Keep live connections in Rust behind stable connection IDs. Do not send connection objects or secrets to Vue.
+- Integrate profile deletion with the connection lifecycle so an active connection is closed before its saved credentials are removed.
 - Add connection testing through the real selected driver.
 - Verify connections against local development databases and at least one remote environment per supported engine where available.
 - Document required environment variables or test configuration without committing credentials.
@@ -805,8 +806,14 @@ Update this section as work progresses.
   - [x] Keyboard: visible focus, labelled controls, arrow-key menus and segmented controls, keyboard-resizable sidebar
   - [x] Narrow windows hide the sidebar below 1000px; ⌘1 toggles it
   - [x] All components under 250 lines; Vitest covers shortcut and fuzzy logic
-  - Note: theme and layout preferences use localStorage until SQLite settings land in Phase 3
-- [ ] Phase 3 — Local persistence and connection profiles
+  - Note: theme and layout preferences initially used localStorage; Phase 3 migrated them into SQLite.
+- [x] Phase 3 — Local persistence and connection profiles (2026-10-14)
+  - [x] Versioned SQLite migrations persist profiles and preferences; legacy theme/layout preferences migrate once
+  - [x] Create, edit, duplicate, delete, list and select database-specific connection profiles
+  - [x] Store database and SSH passwords in the OS credential store with opaque SQLite references
+  - [x] Field-specific validation, password visibility controls and explicit disabled test-connection state
+  - [x] CRUD, restart-persistence, secure-secret-boundary and forward-migration tests
+  - Note: no live database connections exist yet; profile deletion will close one after Phase 4 adds connection lifecycle
 - [ ] Phase 4 — Database driver proof of concept and connection lifecycle
 - [ ] Phase 5 — Remote connectivity, TLS, and SSH tunnelling
 - [ ] Phase 6 — Database explorer and metadata

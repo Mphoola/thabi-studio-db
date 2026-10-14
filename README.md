@@ -5,8 +5,9 @@ PostgreSQL and Microsoft SQL Server databases. Connections go directly from
 your Mac to your database servers; there is no account, telemetry or cloud
 service.
 
-> Status: early development. The app shell runs, but database features are
-> not implemented yet. See [`plan.md`](plan.md) for the roadmap.
+> Status: early development. Connection profiles and preferences persist
+> locally; database connections and query features are not implemented yet.
+> See [`plan.md`](plan.md) for the roadmap.
 
 ## Prerequisites (macOS)
 
@@ -47,7 +48,9 @@ src/                 Vue 3 frontend (JavaScript)
   composables/       Shared state (theme, toasts, confirm, app info)
   lib/tauri/         Wrappers around Rust commands
   styles/            Tailwind entry and design tokens
-src-tauri/           Rust backend (Tauri 2)
+src-tauri/           Rust backend (Tauri 2), SQLite migrations, Keychain access
+                     Profile and preference metadata are in app data;
+                     database and SSH passwords are in the OS credential store.
 docs/decisions/      Architecture decision records
 plan.md              MVP plan and progress tracker
 CLAUDE.md            Working notes for Claude Code
