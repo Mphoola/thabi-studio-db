@@ -13,6 +13,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_history_saved_tabs.sql"),
     include_str!("../migrations/0006_saved_query_folders.sql"),
     include_str!("../migrations/0007_safe_mode.sql"),
+    include_str!("../migrations/0008_connection_groups.sql"),
 ];
 
 /// The migration files in order, for tests that need a schema from before the

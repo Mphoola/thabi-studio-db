@@ -7,10 +7,12 @@ import {
   duplicateConnectionProfile,
   listConnections,
   listConnectionProfiles,
+  reorderConnectionProfiles,
   selectConnectionProfile,
   testConnectionInput,
   updateConnectionProfile,
 } from "../lib/tauri/commands.js";
+import { sortProfiles } from "../lib/connectionGroups.js";
 import { isTauri } from "../lib/tauri/ipc.js";
 import { applyLocalAppSetting, useAppSettings } from "./useAppSettings.js";
 import { useDialogs } from "./useDialogs.js";
@@ -75,17 +77,11 @@ export function useConnectionProfiles() {
     const result = editingId.value
       ? await updateConnectionProfile(editingId.value, input)
       : await createConnectionProfile(input);
-    const index = profiles.value.findIndex(
-      (profile) => profile.id === result.profile.id,
+    profiles.value = sortProfiles(
+      profiles.value.map((profile) =>
+        profile.id === result.profile.id ? result.profile : profile,
+      ),
     );
-    profiles.value =
-      index < 0
-        ? [...profiles.value, result.profile].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          )
-        : profiles.value.map((profile) =>
-            profile.id === result.profile.id ? result.profile : profile,
-          );
     // Rust closes the old connection when a profile's settings change.
     if (editingId.value) setStatus(result.profile.id, null);
     dialogs.close();
@@ -94,10 +90,16 @@ export function useConnectionProfiles() {
 
   async function duplicate(id) {
     const result = await duplicateConnectionProfile(id);
-    profiles.value = [...profiles.value, result.profile].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    profiles.value = sortProfiles([...profiles.value, result.profile]);
     return result.warning;
+  }
+
+  /**
+   * Remembers a drag: `ids` is the group's new order. Rust returns the list
+   * in its canonical order, which is what the page then shows.
+   */
+  async function reorder(ids) {
+    profiles.value = await reorderConnectionProfiles(ids);
   }
 
   async function select(id) {
@@ -164,6 +166,7 @@ export function useConnectionProfiles() {
     openEdit,
     save,
     duplicate,
+    reorder,
     select,
     remove,
     test,

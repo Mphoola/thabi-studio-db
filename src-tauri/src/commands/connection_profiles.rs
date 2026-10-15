@@ -77,3 +77,24 @@ pub async fn select_connection_profile(
         .blocking(move |connection, _| profiles::select_profile(connection, &id))
         .await
 }
+
+/// Saves the order the user dragged connections into. Ids that no longer exist
+/// are ignored, so a stale list can't fail the whole reorder.
+#[tauri::command]
+pub async fn reorder_connection_profiles(
+    ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ConnectionProfile>, AppError> {
+    if ids.len() > 1_000 {
+        return Err(AppError::new(
+            "validation",
+            "Too many connections to reorder.",
+        ));
+    }
+    state
+        .blocking(move |connection, _| {
+            profiles::reorder_profiles(connection, &ids)?;
+            profiles::list_profiles(connection)
+        })
+        .await
+}

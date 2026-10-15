@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 pub use repository::{
     connect_params, connect_params_for_input, create_profile, delete_profile, duplicate_profile,
-    list_profiles, mark_connected, select_profile, update_validated_profile,
+    list_profiles, mark_connected, reorder_profiles, select_profile, update_validated_profile,
 };
 pub use validation::{ValidatedProfile, validate};
 
@@ -41,6 +41,12 @@ pub struct ConnectionProfile {
     pub has_ssh_key_passphrase: bool,
     /// "off", "confirm-writes", "confirm-everything" or "read-only".
     pub safe_mode: String,
+    /// User-named group, or "" to stay in its environment group.
+    pub group_name: String,
+    /// Tag token name for a custom colour, or "" to use the environment's.
+    pub colour: String,
+    /// Manual order inside the group; ties fall back to the name.
+    pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -94,6 +100,10 @@ pub struct ProfileInput {
     pub clear_ssh_key_passphrase: bool,
     #[serde(default = "default_safe_mode")]
     pub safe_mode: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub colour: String,
 }
 
 #[derive(Debug, Serialize)]

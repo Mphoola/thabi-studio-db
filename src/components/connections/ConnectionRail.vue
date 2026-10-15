@@ -2,8 +2,10 @@
 import { computed, ref } from "vue";
 import { Database, Pencil, Plus, Unplug } from "lucide-vue-next";
 import { runCommand } from "../../composables/useCommands.js";
+import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionActions } from "../../composables/useConnectionActions.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
+import { colourDotClass } from "../../lib/connectionGroups.js";
 import { environmentFor } from "../../lib/environments.js";
 import { formatShortcut } from "../../lib/shortcuts.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
@@ -80,7 +82,7 @@ function run(id) {
           :class="
             store.statusFor(profile.id)?.state === 'connecting'
               ? 'animate-pulse bg-fg-subtle'
-              : environmentFor(profile.environment).dotClass
+              : colourDotClass(profile)
           "
           aria-hidden="true"
         />

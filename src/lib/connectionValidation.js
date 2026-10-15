@@ -7,6 +7,18 @@ const SAFE_MODES = new Set([
   "confirm-everything",
   "read-only",
 ]);
+/** Tag tokens only; Rust checks the same list. */
+const SAFE_COLOURS = new Set([
+  "",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "teal",
+  "blue",
+  "purple",
+  "gray",
+]);
 const ENVIRONMENTS = new Set([
   "local",
   "development",
@@ -108,6 +120,11 @@ export function validateConnectionProfile(profile) {
     errors.tlsMode = "Choose a TLS setting.";
   if (!SAFE_MODES.has(profile.safeMode ?? "off"))
     errors.safeMode = "Choose a safe mode.";
+  const groupName = String(profile.groupName ?? "").trim();
+  if ([...groupName].length > 60 || hasControlCharacters(groupName))
+    errors.groupName = "Use a group name of 60 characters or fewer.";
+  if (!SAFE_COLOURS.has(profile.colour ?? ""))
+    errors.colour = "Choose one of the available colours.";
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (

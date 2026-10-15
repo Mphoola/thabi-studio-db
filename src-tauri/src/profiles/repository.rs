@@ -53,6 +53,9 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         has_database_password: row.get::<_, i64>("has_database_password")? != 0,
         has_ssh_password: row.get::<_, i64>("has_ssh_password")? != 0,
         safe_mode: row.get("safe_mode")?,
+        group_name: row.get("group_name")?,
+        colour: row.get("colour")?,
+        sort_order: row.get("sort_order")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -63,8 +66,8 @@ fn profile_columns() -> &'static str {
     "id, name, environment, driver, host, port, database_name, username,
      auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
-     has_ssh_key_passphrase, safe_mode, created_at, updated_at,
-     last_connected_at"
+     has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
+     created_at, updated_at, last_connected_at"
 }
 
 fn get_profile(connection: &Connection, id: &str) -> Result<ConnectionProfile, AppError> {
@@ -367,6 +370,7 @@ fn insert_profile(
     profile: &ValidatedProfile,
     credential_key: Option<&str>,
     bundle: &CredentialBundle,
+    sort_order: i64,
 ) -> Result<(), AppError> {
     connection
         .execute(
@@ -374,10 +378,11 @@ fn insert_profile(
                 id, name, environment, driver, host, port, database_name, username,
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
-                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode
+                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
+                group_name, colour, sort_order
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24
              )",
             params![
                 id,
@@ -401,6 +406,9 @@ fn insert_profile(
                 profile.ssh_key_path,
                 bundle.ssh_key_passphrase.is_some(),
                 profile.safe_mode,
+                profile.group_name,
+                profile.colour,
+                sort_order,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -410,7 +418,9 @@ fn insert_profile(
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ConnectionProfile>, AppError> {
     let mut statement = connection
         .prepare(&format!(
-            "SELECT {} FROM connection_profiles ORDER BY name COLLATE NOCASE, id",
+            "SELECT {} FROM connection_profiles
+             ORDER BY (group_name = ''), group_name COLLATE NOCASE, sort_order,
+                      name COLLATE NOCASE, id",
             profile_columns()
         ))
         .map_err(|_| AppError::storage())?;
@@ -420,6 +430,36 @@ pub fn list_profiles(connection: &Connection) -> Result<Vec<ConnectionProfile>, 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::storage())?;
     Ok(profiles)
+}
+
+/// Sets the manual order from the ids in the order given. Unknown ids are
+/// ignored; profiles left out of the list keep their current number, so the
+/// ordering stays stable when the user reorders one group at a time.
+pub fn reorder_profiles(connection: &mut Connection, ids: &[String]) -> Result<(), AppError> {
+    let transaction = connection.transaction().map_err(|_| AppError::storage())?;
+    for (index, id) in ids.iter().enumerate() {
+        transaction
+            .execute(
+                "UPDATE connection_profiles SET sort_order = ?2, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![id, index as i64],
+            )
+            .map_err(|_| AppError::storage())?;
+    }
+    transaction.commit().map_err(|_| AppError::storage())?;
+    Ok(())
+}
+
+/// A new connection goes to the end of its group so it appears last there.
+fn next_sort_order(connection: &Connection, group_name: &str) -> Result<i64, AppError> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM connection_profiles
+             WHERE group_name = ?1 COLLATE NOCASE",
+            [group_name],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::storage())
 }
 
 pub fn create_profile(
@@ -446,6 +486,7 @@ pub fn create_profile(
         &profile,
         credential_key.as_deref(),
         &bundle,
+        next_sort_order(connection, &profile.group_name)?,
     ) {
         if credential_key
             .as_deref()
@@ -527,6 +568,7 @@ pub fn update_validated_profile(
             has_database_password = ?14, has_ssh_password = ?15,
             tls_mode = ?16, tls_ca_path = ?17, ssh_auth_mode = ?18, ssh_key_path = ?19,
             has_ssh_key_passphrase = ?20, safe_mode = ?21,
+            group_name = ?22, colour = ?23,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -551,6 +593,8 @@ pub fn update_validated_profile(
             profile.ssh_key_path,
             bundle.ssh_key_passphrase.is_some(),
             profile.safe_mode,
+            profile.group_name,
+            profile.colour,
         ],
     );
     if update_result.is_err() {
@@ -628,6 +672,8 @@ pub fn duplicate_profile(
         ssh_key_passphrase: bundle.ssh_key_passphrase.clone(),
         clear_ssh_key_passphrase: false,
         safe_mode: source.safe_mode.clone(),
+        group_name: source.group_name.clone(),
+        colour: source.colour.clone(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -649,6 +695,7 @@ pub fn duplicate_profile(
         &profile,
         credential_key.as_deref(),
         &bundle,
+        next_sort_order(connection, &profile.group_name)?,
     ) {
         if credential_key
             .as_deref()
@@ -1080,14 +1127,18 @@ mod tests {
     #[test]
     fn production_profiles_start_on_confirm_writes_and_others_on_off() {
         let mut connection = Connection::open_in_memory().unwrap();
-        // An older database upgraded by migration 0007 keeps today's behaviour.
+        // A database from before safe modes existed, with a Production profile
+        // already in it: upgrading it must keep today's behaviour.
         let migrations = crate::storage::all_migrations();
-        let older = migrations.len() - 1;
+        let before_safe_mode = migrations
+            .iter()
+            .position(|sql| sql.contains("ADD COLUMN safe_mode"))
+            .expect("the safe mode migration is registered");
         connection
-            .execute_batch(&migrations[..older].join("\n"))
+            .execute_batch(&migrations[..before_safe_mode].join("\n"))
             .unwrap();
         connection
-            .pragma_update(None, "user_version", older as i64)
+            .pragma_update(None, "user_version", before_safe_mode as i64)
             .unwrap();
         connection
             .execute(
@@ -1104,6 +1155,77 @@ mod tests {
         let credentials = TestCredentials::default();
         let created = create_profile(&connection, &credentials, input()).unwrap();
         assert_eq!(created.profile.safe_mode, "off");
+    }
+
+    #[test]
+    fn groups_and_colours_round_trip_and_dragging_reorders() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut work = input();
+        work.name = "Work laptop".into();
+        work.group_name = "Work".into();
+        work.colour = "purple".into();
+        let first = create_profile(&connection, &credentials, work).unwrap();
+        assert_eq!(first.profile.group_name, "Work");
+        assert_eq!(first.profile.colour, "purple");
+
+        let mut home = input();
+        home.name = "Home box".into();
+        home.group_name = "work".into(); // Same group, different case.
+        home.colour = "green".into();
+        let second = create_profile(&connection, &credentials, home).unwrap();
+
+        let mut loose = input();
+        loose.name = "Scratch".into();
+        let third = create_profile(&connection, &credentials, loose).unwrap();
+        assert_eq!(third.profile.group_name, "");
+
+        // Both land in the same group, ordered by creation, ungrouped last.
+        let listed = list_profiles(&connection).unwrap();
+        assert_eq!(
+            listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Work laptop", "Home box", "Scratch"]
+        );
+
+        // Dragging Home box above Work laptop is remembered.
+        let ids = vec![second.profile.id.clone(), first.profile.id.clone()];
+        reorder_profiles(&mut connection, &ids).unwrap();
+        let listed = list_profiles(&connection).unwrap();
+        assert_eq!(
+            listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Home box", "Work laptop", "Scratch"]
+        );
+
+        // An unknown id in the list is ignored rather than failing the reorder.
+        let ids = vec!["nope".to_owned(), third.profile.id.clone()];
+        reorder_profiles(&mut connection, &ids).unwrap();
+        assert_eq!(list_profiles(&connection).unwrap().len(), 3);
+
+        // The copy keeps the group and colour as they were written.
+        let copy = duplicate_profile(&connection, &credentials, &second.profile.id).unwrap();
+        assert_eq!(copy.profile.group_name, "work");
+        assert_eq!(copy.profile.colour, "green");
+    }
+
+    #[test]
+    fn an_unknown_colour_or_long_group_name_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut bad_colour = input();
+        bad_colour.colour = "chartreuse".into();
+        let error = create_profile(&connection, &credentials, bad_colour)
+            .expect_err("unknown colour should be rejected");
+        assert!(error.fields.unwrap().contains_key("colour"));
+
+        let mut long_group = input();
+        long_group.group_name = "x".repeat(61);
+        let error = create_profile(&connection, &credentials, long_group)
+            .expect_err("a long group name should be rejected");
+        assert!(error.fields.unwrap().contains_key("groupName"));
     }
 
     #[test]

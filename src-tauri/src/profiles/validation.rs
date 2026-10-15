@@ -25,7 +25,14 @@ pub struct ValidatedProfile {
     pub clear_ssh_password: bool,
     pub clear_ssh_key_passphrase: bool,
     pub safe_mode: String,
+    pub group_name: String,
+    pub colour: String,
 }
+
+/// Tag tokens a connection may be coloured with (`tag-*` in tokens.css).
+pub const COLOURS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray",
+];
 
 /// Largest CA certificate file accepted (a bundle is a few hundred KB at most).
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
@@ -119,6 +126,23 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
     ) {
         fields.insert("safeMode".into(), "Choose a safe mode.".into());
     }
+
+    // The group name is shown as a heading and compared case-insensitively,
+    // so it only needs to be short, single-line and free of control characters.
+    let group_name = input.group_name.trim().to_owned();
+    if group_name.chars().count() > 60 || group_name.chars().any(char::is_control) {
+        fields.insert(
+            "groupName".into(),
+            "Use a group name of 60 characters or fewer.".into(),
+        );
+    }
+    let colour = input.colour.trim().to_owned();
+    if !colour.is_empty() && !COLOURS.contains(&colour.as_str()) {
+        fields.insert(
+            "colour".into(),
+            "Choose one of the available colours.".into(),
+        );
+    }
     let ssh_key_path = if ssh_auth_mode == "key" {
         let path = input.ssh_key_path.trim().to_owned();
         if input.ssh_enabled
@@ -197,6 +221,8 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
         safe_mode,
+        group_name,
+        colour,
     })
 }
 
@@ -319,6 +345,8 @@ pub(crate) mod tests {
             ssh_key_passphrase: None,
             clear_ssh_key_passphrase: false,
             safe_mode: "off".into(),
+            group_name: String::new(),
+            colour: String::new(),
         }
     }
 

@@ -1300,7 +1300,7 @@ Update this section as work progresses.
   - [x] Replaces the Production-only check: destructive statements still ask, and Production types the database name
   - [x] Read-only refused in the app and on the server (`SET SESSION TRANSACTION READ ONLY`, `default_transaction_read_only`); SQL Server documented as app-only
   - [x] Staged edits follow the mode; a read-only connection can't be edited
-  - [ ] Connection groups and custom colours
+  - [x] Connection groups and custom colours (`docs/decisions/0017-connection-groups.md`)
   - [ ] `~/.ssh/config`, "ask every time" secrets, SSH keep-alive
   - [ ] Startup commands, mutual TLS, per-connection timeout and row limit
   - [ ] Import/export without secrets, multiple windows, reconnect

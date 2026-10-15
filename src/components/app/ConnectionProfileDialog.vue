@@ -6,6 +6,7 @@ import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
+import { COLOURS } from "../../lib/connectionGroups.js";
 import { SAFE_MODES, defaultSafeMode } from "../../lib/sqlSafety.js";
 import { suggestedTlsMode } from "../../lib/tls.js";
 import {
@@ -57,6 +58,8 @@ const defaults = () => ({
   sshKeyPassphrase: "",
   clearSshKeyPassphrase: false,
   safeMode: defaultSafeMode("local"),
+  groupName: "",
+  colour: "",
 });
 const form = reactive(defaults());
 const open = computed({
@@ -106,6 +109,8 @@ function resetForm() {
     sshAuthMode: profile.sshAuthMode,
     sshKeyPath: profile.sshKeyPath,
     safeMode: profile.safeMode ?? defaultSafeMode(profile.environment),
+    groupName: profile.groupName ?? "",
+    colour: profile.colour ?? "",
   });
 }
 
@@ -239,6 +244,22 @@ async function save() {
         :has-saved-password="!!editingProfile?.hasSshPassword"
         :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
       />
+      <div class="grid grid-cols-2 gap-3">
+        <TextInput
+          v-model="form.groupName"
+          label="Group"
+          placeholder="Work"
+          :error="fields.groupName"
+          hint="Leave empty to keep it with its environment."
+        />
+        <SelectInput
+          v-model="form.colour"
+          label="Colour"
+          :options="COLOURS"
+          :error="fields.colour"
+          hint="Overrides the environment colour."
+        />
+      </div>
       <SelectInput
         v-model="form.safeMode"
         label="Safe Mode"

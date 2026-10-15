@@ -68,6 +68,7 @@ pub fn run() {
             commands::connection_profiles::duplicate_connection_profile,
             commands::connection_profiles::delete_connection_profile,
             commands::connection_profiles::select_connection_profile,
+            commands::connection_profiles::reorder_connection_profiles,
             commands::connections::test_connection_input,
             commands::connections::connect_connection_profile,
             commands::connections::disconnect_connection_profile,

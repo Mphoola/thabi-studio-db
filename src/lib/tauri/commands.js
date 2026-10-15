@@ -41,6 +41,11 @@ export function selectConnectionProfile(id) {
   return call("select_connection_profile", { id });
 }
 
+/** Saves the order the user dragged connections into; returns the new list. */
+export function reorderConnectionProfiles(ids) {
+  return call("reorder_connection_profiles", { ids });
+}
+
 /** Tests unsaved form values; `profileId` lets an edited profile reuse its saved password. */
 export function testConnectionInput(input, profileId = null) {
   return call("test_connection_input", { input, profileId });

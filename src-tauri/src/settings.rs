@@ -184,6 +184,28 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             .filter(|seconds| *seconds <= 24 * 60 * 60)
             .ok_or_else(|| AppError::new("validation", "Choose a query timeout."))?
             .to_string(),
+        // Which connection groups are folded away on the connections page.
+        "collapsed_groups" => {
+            let groups = value
+                .as_array()
+                .filter(|groups| groups.len() <= 100)
+                .ok_or_else(|| AppError::new("validation", "Choose which groups are collapsed."))?;
+            let mut names = Vec::with_capacity(groups.len());
+            for group in groups {
+                let name = group.as_str().unwrap_or_default();
+                if name.is_empty()
+                    || name.chars().count() > 60
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(AppError::new(
+                        "validation",
+                        "Choose which groups are collapsed.",
+                    ));
+                }
+                names.push(name.to_owned());
+            }
+            serde_json::to_string(&names).map_err(|_| AppError::storage())?
+        }
         _ => {
             return Err(AppError::new(
                 "validation",
