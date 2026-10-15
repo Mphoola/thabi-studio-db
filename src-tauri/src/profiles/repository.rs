@@ -52,6 +52,7 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         has_ssh_key_passphrase: row.get::<_, i64>("has_ssh_key_passphrase")? != 0,
         has_database_password: row.get::<_, i64>("has_database_password")? != 0,
         has_ssh_password: row.get::<_, i64>("has_ssh_password")? != 0,
+        safe_mode: row.get("safe_mode")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -62,7 +63,7 @@ fn profile_columns() -> &'static str {
     "id, name, environment, driver, host, port, database_name, username,
      auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
-     has_ssh_key_passphrase, created_at, updated_at,
+     has_ssh_key_passphrase, safe_mode, created_at, updated_at,
      last_connected_at"
 }
 
@@ -141,6 +142,7 @@ fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectPa
         ca_path: Some(PathBuf::from(target.tls_ca_path)).filter(|_| !target.tls_ca_path.is_empty()),
         ssh: None,
         connect_to: None,
+        read_only: false,
     })
 }
 
@@ -216,6 +218,7 @@ pub fn connect_params(
         bundle.database_password,
     )?;
     params.ssh = ssh;
+    params.read_only = profile.safe_mode == "read-only";
     Ok((profile, params))
 }
 
@@ -371,10 +374,10 @@ fn insert_profile(
                 id, name, environment, driver, host, port, database_name, username,
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
-                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase
+                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20
+                ?18, ?19, ?20, ?21
              )",
             params![
                 id,
@@ -397,6 +400,7 @@ fn insert_profile(
                 profile.ssh_auth_mode,
                 profile.ssh_key_path,
                 bundle.ssh_key_passphrase.is_some(),
+                profile.safe_mode,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -522,7 +526,7 @@ pub fn update_validated_profile(
             ssh_port = ?11, ssh_username = ?12, credential_key = ?13,
             has_database_password = ?14, has_ssh_password = ?15,
             tls_mode = ?16, tls_ca_path = ?17, ssh_auth_mode = ?18, ssh_key_path = ?19,
-            has_ssh_key_passphrase = ?20,
+            has_ssh_key_passphrase = ?20, safe_mode = ?21,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -546,6 +550,7 @@ pub fn update_validated_profile(
             profile.ssh_auth_mode,
             profile.ssh_key_path,
             bundle.ssh_key_passphrase.is_some(),
+            profile.safe_mode,
         ],
     );
     if update_result.is_err() {
@@ -622,6 +627,7 @@ pub fn duplicate_profile(
         clear_ssh_password: false,
         ssh_key_passphrase: bundle.ssh_key_passphrase.clone(),
         clear_ssh_key_passphrase: false,
+        safe_mode: source.safe_mode.clone(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -1045,5 +1051,71 @@ mod tests {
             connect_params(&connection, &credentials, &saved.profile.id).unwrap();
         assert!(profile.last_connected_at.is_some());
         assert_eq!(params.tls, TlsMode::EncryptOnly);
+    }
+
+    #[test]
+    fn safe_mode_is_stored_on_the_profile_and_drives_read_only_sessions() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut create = input();
+        create.safe_mode = "read-only".into();
+        let saved = create_profile(&connection, &credentials, create.clone()).unwrap();
+        assert_eq!(saved.profile.safe_mode, "read-only");
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(params.read_only);
+
+        // A copy keeps the mode, and so does an edit that changes it.
+        let copy = duplicate_profile(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(copy.profile.safe_mode, "read-only");
+
+        create.safe_mode = "confirm-writes".into();
+        let updated = update_profile(&connection, &credentials, &saved.profile.id, create).unwrap();
+        assert_eq!(updated.profile.safe_mode, "confirm-writes");
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(!params.read_only);
+    }
+
+    #[test]
+    fn production_profiles_start_on_confirm_writes_and_others_on_off() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        // An older database upgraded by migration 0007 keeps today's behaviour.
+        let migrations = crate::storage::all_migrations();
+        let older = migrations.len() - 1;
+        connection
+            .execute_batch(&migrations[..older].join("\n"))
+            .unwrap();
+        connection
+            .pragma_update(None, "user_version", older as i64)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO connection_profiles (id, name, environment, driver, host, port, username)
+                 VALUES ('prod', 'Production', 'production', 'postgres', 'localhost', 5432, 'user')",
+                [],
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+
+        let migrated = get_profile(&connection, "prod").unwrap();
+        assert_eq!(migrated.safe_mode, "confirm-writes");
+
+        let credentials = TestCredentials::default();
+        let created = create_profile(&connection, &credentials, input()).unwrap();
+        assert_eq!(created.profile.safe_mode, "off");
+    }
+
+    #[test]
+    fn an_unknown_safe_mode_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut create = input();
+        create.safe_mode = "yolo".into();
+        let error = create_profile(&connection, &credentials, create)
+            .expect_err("unknown safe mode should be rejected");
+        assert_eq!(error.kind, "validation");
+        assert!(error.fields.unwrap().contains_key("safeMode"));
     }
 }

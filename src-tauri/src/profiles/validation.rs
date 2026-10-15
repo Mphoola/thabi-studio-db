@@ -24,6 +24,7 @@ pub struct ValidatedProfile {
     pub clear_database_password: bool,
     pub clear_ssh_password: bool,
     pub clear_ssh_key_passphrase: bool,
+    pub safe_mode: String,
 }
 
 /// Largest CA certificate file accepted (a bundle is a few hundred KB at most).
@@ -111,6 +112,13 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
     if !matches!(ssh_auth_mode.as_str(), "password" | "key" | "agent") {
         fields.insert("sshAuthMode".into(), "Choose how to sign in to SSH.".into());
     }
+    let safe_mode = input.safe_mode.trim().to_owned();
+    if !matches!(
+        safe_mode.as_str(),
+        "off" | "confirm-writes" | "confirm-everything" | "read-only"
+    ) {
+        fields.insert("safeMode".into(), "Choose a safe mode.".into());
+    }
     let ssh_key_path = if ssh_auth_mode == "key" {
         let path = input.ssh_key_path.trim().to_owned();
         if input.ssh_enabled
@@ -188,6 +196,7 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
+        safe_mode,
     })
 }
 
@@ -309,6 +318,7 @@ pub(crate) mod tests {
             clear_ssh_password: false,
             ssh_key_passphrase: None,
             clear_ssh_key_passphrase: false,
+            safe_mode: "off".into(),
         }
     }
 

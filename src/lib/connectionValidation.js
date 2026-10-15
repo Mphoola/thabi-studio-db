@@ -1,6 +1,12 @@
 const DRIVERS = new Set(["mysql", "postgres", "sqlserver"]);
 const DEFAULT_PORTS = { mysql: "3306", postgres: "5432", sqlserver: "1433" };
 const TLS_MODES = new Set(["verify-full", "require", "disable"]);
+const SAFE_MODES = new Set([
+  "off",
+  "confirm-writes",
+  "confirm-everything",
+  "read-only",
+]);
 const ENVIRONMENTS = new Set([
   "local",
   "development",
@@ -100,6 +106,8 @@ export function validateConnectionProfile(profile) {
   if (hostMessage) errors.host = hostMessage;
   if (!TLS_MODES.has(profile.tlsMode ?? "verify-full"))
     errors.tlsMode = "Choose a TLS setting.";
+  if (!SAFE_MODES.has(profile.safeMode ?? "off"))
+    errors.safeMode = "Choose a safe mode.";
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (

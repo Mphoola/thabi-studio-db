@@ -6,6 +6,39 @@ import { stripComments } from "./sqlStatements.js";
  * safeguard against common mistakes, not a security boundary.
  */
 
+/** The four safe modes a connection can be set to (plan.md §7b, Phase 11). */
+export const SAFE_MODES = [
+  {
+    value: "off",
+    label: "Off",
+    hint: "Run statements without asking.",
+  },
+  {
+    value: "confirm-writes",
+    label: "Confirm Writes",
+    hint: "Ask before a statement can change data or schema.",
+  },
+  {
+    value: "confirm-everything",
+    label: "Confirm Everything",
+    hint: "Ask before every statement runs.",
+  },
+  {
+    value: "read-only",
+    label: "Read-only",
+    hint: "Refuse statements that can change data or schema.",
+  },
+];
+
+/** The mode a new profile starts on: Production asks, everything else doesn't. */
+export function defaultSafeMode(environment) {
+  return environment === "production" ? "confirm-writes" : "off";
+}
+
+export function safeModeFor(value) {
+  return SAFE_MODES.find((mode) => mode.value === value) ?? SAFE_MODES[0];
+}
+
 const READ_ONLY = new Set([
   "SELECT",
   "SHOW",
@@ -89,14 +122,50 @@ function findRisk(upper, sql) {
   return null;
 }
 
+/** True when any statement can change data or schema. */
+export function changesData(statements) {
+  return statements.map(classifyStatement).some((c) => c.changesData);
+}
+
+/**
+ * Why the statements can't run at all, or null when they can. A read-only
+ * connection refuses anything that could change data or schema; the server
+ * enforces the same rule where it can, but this is what holds on SQL Server.
+ *
+ * @param {string[]} statements
+ * @param {string} safeMode
+ * @returns {string | null}
+ */
+export function writeBlockFor(statements, safeMode) {
+  if (safeMode !== "read-only") return null;
+  return changesData(statements)
+    ? "This connection is read-only. Statements that can change data or schema were not run."
+    : null;
+}
+
 /**
  * What to ask before running, or null to run straight away.
+ *
+ * A destructive statement asks in every mode except read-only, which refuses
+ * it outright; on Production the database name has to be typed to confirm.
+ * Otherwise the safe mode decides: confirm-everything asks about every
+ * statement, confirm-writes only about the ones that change data.
+ *
  * @param {string[]} statements
- * @param {{ environment: string, database: string | null, connection: string }} context
+ * @param {{ safeMode?: string, environment?: string, database: string | null, connection: string }} context
  */
 export function confirmationFor(statements, context) {
+  const {
+    safeMode = "off",
+    environment = "local",
+    database,
+    connection,
+  } = context;
   const classified = statements.map(classifyStatement);
   const risky = classified.find((c) => c.risk)?.risk;
+  // Naming the database is what makes a Production confirmation deliberate.
+  const requireText = environment === "production" ? database : null;
+
   if (risky?.kind === "no-where") {
     const action = risky.verb === "UPDATE" ? "Update" : "Delete";
     return {
@@ -104,6 +173,7 @@ export function confirmationFor(statements, context) {
       message: `This ${risky.verb} has no WHERE clause.`,
       confirmLabel: `${action} All Rows`,
       destructive: true,
+      requireText,
     };
   }
   if (risky) {
@@ -115,18 +185,66 @@ export function confirmationFor(statements, context) {
         : "This deletes every row. It can't be undone.",
       confirmLabel: drop ? "Drop" : "Truncate",
       destructive: true,
+      requireText,
     };
   }
-  if (
-    context.environment === "production" &&
-    classified.some((c) => c.changesData)
-  ) {
-    const where = context.database ? `“${context.database}”` : "this database";
+
+  const where = database ? `“${database}”` : "this database";
+  if (safeMode === "confirm-everything") {
     return {
-      title: "Run on Production?",
-      message: `This statement can change data in ${where} on “${context.connection}”.`,
+      title: "Run this statement?",
+      message: `“${connection}” asks before every statement runs. It runs in ${where}.`,
+      confirmLabel: "Run",
+    };
+  }
+  if (safeMode === "confirm-writes" && classified.some((c) => c.changesData)) {
+    return {
+      title:
+        environment === "production"
+          ? "Run on Production?"
+          : "Run this statement?",
+      message: `This statement can change data in ${where} on “${connection}”.`,
       confirmLabel: "Run",
       destructive: true,
+    };
+  }
+  return null;
+}
+
+/**
+ * The question to ask before applying staged changes to a table, or null to
+ * apply straight away. Follows the connection's safe mode the same way
+ * statements do, and always asks before deleting rows.
+ *
+ * @param {{ total: number, deleted: number }} summary
+ * @param {{ safeMode?: string, environment?: string, connection: string, table: string }} context
+ */
+export function applyConfirmationFor(summary, context) {
+  const {
+    safeMode = "off",
+    environment = "local",
+    connection,
+    table,
+  } = context;
+  const { total, deleted } = summary;
+  if (
+    safeMode === "confirm-everything" ||
+    (safeMode === "confirm-writes" && !deleted)
+  ) {
+    return {
+      title: `Apply ${total} ${total === 1 ? "change" : "changes"} to “${table}”?`,
+      message: `They run in one transaction on “${connection}”.`,
+      confirmLabel: "Apply Changes",
+      destructive: deleted > 0,
+    };
+  }
+  if (deleted) {
+    return {
+      title: `Delete ${deleted} ${deleted === 1 ? "row" : "rows"} from “${table}”?`,
+      message: `All staged changes are applied together on “${connection}”. This can't be undone.`,
+      confirmLabel: "Delete and Apply",
+      destructive: true,
+      requireText: environment === "production" ? table : null,
     };
   }
   return null;

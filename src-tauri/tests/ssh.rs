@@ -50,6 +50,7 @@ fn database(engine: Engine, ssh: SshParams) -> ConnectParams {
         ca_path: None,
         ssh: Some(ssh),
         connect_to: None,
+        read_only: false,
     }
 }
 

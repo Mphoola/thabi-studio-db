@@ -39,6 +39,7 @@ fn params(engine: Engine) -> ConnectParams {
         ca_path: None,
         ssh: None,
         connect_to: None,
+        read_only: false,
     }
 }
 
@@ -428,4 +429,95 @@ async fn mysql_row_edits() {
 #[ignore]
 async fn sqlserver_row_edits() {
     applies_row_edits(Engine::SqlServer, "master", "dbo").await;
+}
+
+/// Safe mode "read-only": on MySQL and PostgreSQL the server itself refuses
+/// the write on a read-only session. SQL Server has no session equivalent, so
+/// there the app check is the only guard (the UI says so) and the write is
+/// expected to succeed — the test records that difference rather than hiding it.
+async fn read_only_sessions_refuse_writes(engine: Engine) {
+    let setup = QueryTab::default();
+    let p = params(engine);
+    let name = "thabi_readonly_it";
+    let drop = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{name}') IS NOT NULL DROP TABLE {name}"),
+        _ => format!("DROP TABLE IF EXISTS {name}"),
+    };
+    setup.run(&p, None, &drop, 1, None).await.unwrap();
+    setup
+        .run(
+            &p,
+            None,
+            &format!("CREATE TABLE {name} (id INT PRIMARY KEY)"),
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+    setup
+        .run(&p, None, &format!("INSERT INTO {name} VALUES (1)"), 1, None)
+        .await
+        .unwrap();
+
+    let mut ro = params(engine);
+    ro.read_only = true;
+    let tab = QueryTab::default();
+    let write = tab
+        .run(
+            &ro,
+            None,
+            &format!("INSERT INTO {name} VALUES (2)"),
+            10,
+            None,
+        )
+        .await;
+
+    if engine == Engine::SqlServer {
+        // No server-side guard here; the app blocks it before it is sent.
+        write.expect("SQL Server cannot enforce read-only sessions");
+    } else {
+        let error = write.expect_err("a read-only session must refuse the write");
+        assert_eq!(error.kind, "server", "{engine:?}: {}", error.message);
+        // The server's own wording, kept in the detail for the user to read.
+        let detail =
+            format!("{}{}", error.message, error.detail.unwrap_or_default()).to_lowercase();
+        assert!(
+            detail.contains("read-only") || detail.contains("read only"),
+            "{engine:?}: unexpected server error {detail:?}",
+        );
+    }
+
+    // Reading still works on a read-only session. Only where the server
+    // enforced the mode is the table left unchanged.
+    let read = tab
+        .run(&ro, None, &format!("SELECT id FROM {name}"), 10, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        read.rows.len(),
+        if engine == Engine::SqlServer { 2 } else { 1 },
+        "{engine:?}"
+    );
+
+    setup.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.close().await;
+    setup.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_read_only_session() {
+    read_only_sessions_refuse_writes(Engine::Postgres).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_read_only_session() {
+    read_only_sessions_refuse_writes(Engine::MySql).await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_has_no_read_only_session() {
+    read_only_sessions_refuse_writes(Engine::SqlServer).await;
 }

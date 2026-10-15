@@ -28,6 +28,7 @@ fn params(engine: Engine, tls: TlsMode) -> ConnectParams {
         ca_path: None,
         ssh: None,
         connect_to: None,
+        read_only: false,
     }
 }
 

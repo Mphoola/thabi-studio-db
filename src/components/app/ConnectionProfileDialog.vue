@@ -6,6 +6,7 @@ import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
+import { SAFE_MODES, defaultSafeMode } from "../../lib/sqlSafety.js";
 import { suggestedTlsMode } from "../../lib/tls.js";
 import {
   defaultPortFor,
@@ -29,6 +30,9 @@ const saving = ref(false);
 const testResult = ref(null);
 // Until the user picks a TLS setting, it follows the host (see lib/tls.js).
 const tlsTouched = ref(false);
+// The safe mode follows the environment until the user picks one (Plan §7b:
+// Production starts on "Confirm Writes").
+const safeModeTouched = ref(false);
 
 const defaults = () => ({
   name: "",
@@ -52,6 +56,7 @@ const defaults = () => ({
   sshKeyPath: "",
   sshKeyPassphrase: "",
   clearSshKeyPassphrase: false,
+  safeMode: defaultSafeMode("local"),
 });
 const form = reactive(defaults());
 const open = computed({
@@ -68,15 +73,22 @@ const environmentOptions = ENVIRONMENTS.map(({ value, label }) => ({
   value,
   label,
 }));
+const safeModeOptions = SAFE_MODES.map(({ value, label, hint }) => ({
+  value,
+  label,
+  hint,
+}));
 
 function resetForm() {
   Object.assign(form, defaults());
   fields.value = {};
   testResult.value = null;
   tlsTouched.value = false;
+  safeModeTouched.value = false;
   const profile = editingProfile.value;
   if (!profile) return;
   tlsTouched.value = true;
+  safeModeTouched.value = true;
   Object.assign(form, {
     name: profile.name,
     environment: profile.environment,
@@ -93,6 +105,7 @@ function resetForm() {
     sshUsername: profile.sshUsername,
     sshAuthMode: profile.sshAuthMode,
     sshKeyPath: profile.sshKeyPath,
+    safeMode: profile.safeMode ?? defaultSafeMode(profile.environment),
   });
 }
 
@@ -111,6 +124,14 @@ watch(
   () => form.host,
   (host) => {
     if (!tlsTouched.value) form.tlsMode = suggestedTlsMode(host);
+  },
+);
+watch(
+  () => form.environment,
+  (environment, previous) => {
+    if (safeModeTouched.value && form.safeMode !== defaultSafeMode(previous))
+      return;
+    form.safeMode = defaultSafeMode(environment);
   },
 );
 watch(
@@ -217,6 +238,18 @@ async function save() {
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasSshPassword"
         :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
+      />
+      <SelectInput
+        v-model="form.safeMode"
+        label="Safe Mode"
+        :options="safeModeOptions"
+        :error="fields.safeMode"
+        :hint="
+          form.safeMode === 'read-only'
+            ? 'Writes are refused in Thabi Studio, and on the server where it supports it (SQL Server has no session setting, so only the app stops them).'
+            : 'How much Thabi Studio asks before running statements and saving edits on this connection.'
+        "
+        @update:model-value="safeModeTouched = true"
       />
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>

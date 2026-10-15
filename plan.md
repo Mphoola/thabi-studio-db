@@ -1290,12 +1290,20 @@ Update this section as work progresses.
   - [x] Open query tabs restored after quitting; editor font size and history preferences
   - [x] Privacy note in About and `docs/PRIVACY.md`; accessibility pass
   - [x] Saved-query folders; SSH keyboard-interactive and legacy PEM keys; connection rail; table row filters
-- [x] Phase 9b — Inline data editing, added as its own milestone (2026-10-15, branch `phase-9b-inline-editing`, not committed)
+- [x] Phase 9b — Inline data editing, added as its own milestone (2026-10-15, branch `phase-9b-inline-editing`, merged into `main`)
   - [x] Edit cells, Set to NULL, delete rows and add rows on tables with a primary key; staged until applied
   - [x] Review the exact SQL; apply all changes in one transaction; each must change exactly one row or nothing is saved
   - [x] Asks before deleting rows and before any change on Production; integration-tested on all three engines
-- [ ] Phase 10 — Testing, packaging, documentation, and MVP release
-- [ ] Phase 11 — Connections, safety modes and workspace
+- [ ] Phase 10 — Testing, packaging, documentation, and MVP release (deferred until signing options exist; only a Mac is available for clean-install tests)
+- [ ] Phase 11 — Connections, safety modes and workspace (branch `phase-11-connections-safety`)
+  - [x] Safe mode per connection: off, confirm writes, confirm everything, read-only (`docs/decisions/0016-safe-modes.md`)
+  - [x] Replaces the Production-only check: destructive statements still ask, and Production types the database name
+  - [x] Read-only refused in the app and on the server (`SET SESSION TRANSACTION READ ONLY`, `default_transaction_read_only`); SQL Server documented as app-only
+  - [x] Staged edits follow the mode; a read-only connection can't be edited
+  - [ ] Connection groups and custom colours
+  - [ ] `~/.ssh/config`, "ask every time" secrets, SSH keep-alive
+  - [ ] Startup commands, mutual TLS, per-connection timeout and row limit
+  - [ ] Import/export without secrets, multiple windows, reconnect
 - [ ] Phase 12 — Table data and results power-ups
 - [ ] Phase 13 — Smart SQL editor
 - [ ] Phase 14 — Schema and object management

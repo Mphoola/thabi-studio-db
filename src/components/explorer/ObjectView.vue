@@ -139,7 +139,7 @@ const location = computed(() =>
         label="Object view"
       />
       <IconButton
-        v-if="tab === 'data' && editor.enabled.value && columns.length"
+        v-if="tab === 'data' && editing.editable.value && columns.length"
         :icon="Plus"
         label="Add Row"
         @click="addingRow = true"
@@ -197,10 +197,10 @@ const location = computed(() =>
       class="min-h-0 flex-1"
       :source="previewSource"
       :result="current.value"
-      :editor="editor.enabled.value ? editor : null"
+      :editor="editing.editable.value ? editor : null"
       :note="
         editing.readOnlyReason.value ||
-        (editor.enabled.value ? 'Double-click a cell to edit' : '')
+        (editing.editable.value ? 'Double-click a cell to edit' : '')
       "
     />
     <StructureView

@@ -4,6 +4,7 @@ import { useConnectionProfiles } from "../../composables/useConnectionProfiles.j
 import { useRowEdits } from "../../composables/useRowEdits.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
+import { applyConfirmationFor } from "../../lib/sqlSafety.js";
 import {
   applyRowChanges,
   describeObject,
@@ -30,9 +31,16 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
 
   const editor = useRowEdits(tab, columns, primaryKey);
   const isTable = computed(() => node.value?.kind === "table");
+  const profile = computed(
+    () => store.profiles.value.find((p) => p.id === profileId.value) ?? null,
+  );
+  /** A read-only connection can't be edited through the app. */
+  const readOnlyMode = computed(() => profile.value?.safeMode === "read-only");
   /** Why rows can't be edited, or "" when they can. */
   const readOnlyReason = computed(() => {
     if (!isTable.value) return "Read-only: views can't be edited here";
+    if (readOnlyMode.value)
+      return "Read-only: this connection's safe mode is Read-only";
     if (!keyChecked.value) return "";
     return editor.enabled.value
       ? ""
@@ -110,24 +118,16 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   }
 
   async function confirmApply() {
-    const { total, deleted } = editor.summary.value;
-    const profile = store.profiles.value.find((p) => p.id === profileId.value);
-    if (profile?.environment === "production")
-      return confirm({
-        title: `Apply ${plural(total, "change")} on Production?`,
-        message: `They run in one transaction on “${node.value.name}” in “${profile.name}”.`,
-        confirmLabel: "Apply Changes",
-        destructive: true,
-      });
-    if (deleted)
-      return confirm({
-        title: `Delete ${plural(deleted, "row")} from “${node.value.name}”?`,
-        message:
-          "All staged changes are applied together. This can't be undone.",
-        confirmLabel: "Delete and Apply",
-        destructive: true,
-      });
-    return true;
+    // Read-only connections never get as far as asking: nothing is sent.
+    if (readOnlyMode.value) return false;
+    const summary = editor.summary.value;
+    const question = applyConfirmationFor(summary, {
+      safeMode: profile.value?.safeMode,
+      environment: profile.value?.environment,
+      connection: profile.value?.name ?? "this connection",
+      table: node.value.name,
+    });
+    return question ? confirm(question) : true;
   }
 
   async function apply() {
@@ -169,8 +169,12 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
     editor.discard();
   }
 
+  /** Rows can be edited: a table with a key, on a connection that allows it. */
+  const editable = computed(() => !readOnlyMode.value && editor.enabled.value);
+
   return {
     editor,
+    editable,
     readOnlyReason,
     applying,
     preview,

@@ -102,6 +102,20 @@ pub struct ConnectParams {
     /// Where to open the TCP connection when it differs from host:port
     /// (the local end of an SSH tunnel). Set by `Session::connect`.
     pub connect_to: Option<SocketAddr>,
+    /// Ask the server to refuse writes for this session (safe mode
+    /// "read-only"). The app checks too; this is the backstop for engines
+    /// that can set it.
+    pub read_only: bool,
+}
+
+/// The session statement that makes a session read-only, per engine. SQL
+/// Server has no session equivalent, so it returns `None`.
+fn read_only_statement(engine: Engine) -> Option<&'static str> {
+    match engine {
+        Engine::MySql => Some("SET SESSION TRANSACTION READ ONLY"),
+        Engine::Postgres => Some("SET default_transaction_read_only = on"),
+        Engine::SqlServer => None,
+    }
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -116,6 +130,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("tls", &self.tls)
             .field("ca_path", &self.ca_path)
             .field("ssh", &self.ssh)
+            .field("read_only", &self.read_only)
             .finish()
     }
 }
@@ -214,8 +229,26 @@ impl Session {
     /// typo in the host name gets its own message. With a tunnel the
     /// database host only has to resolve on the SSH server.
     pub async fn connect(params: &ConnectParams) -> Result<Self, AppError> {
-        let Some(ssh) = &params.ssh else {
-            return tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let mut session = (if let Some(ssh) = &params.ssh {
+            tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, async {
+                let tunnel = crate::ssh::open_tunnel(ssh, &params.host, params.port).await?;
+                let mut through = params.clone();
+                through.connect_to = Some(tunnel.local_addr());
+                match Driver::connect(&through).await {
+                    Ok(driver) => Ok(Self {
+                        driver,
+                        tunnel: Some(tunnel),
+                    }),
+                    Err(error) => {
+                        tunnel.close().await;
+                        Err(error)
+                    }
+                }
+            })
+            .await
+            .map_err(|_| error::timed_out(&params.host, params.port))?
+        } else {
+            tokio::time::timeout(CONNECT_TIMEOUT, async {
                 error::check_host_resolves(&params.host, params.port).await?;
                 Ok(Self {
                     driver: Driver::connect(params).await?,
@@ -223,26 +256,10 @@ impl Session {
                 })
             })
             .await
-            .map_err(|_| error::timed_out(&params.host, params.port))?;
-        };
-
-        tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, async {
-            let tunnel = crate::ssh::open_tunnel(ssh, &params.host, params.port).await?;
-            let mut through = params.clone();
-            through.connect_to = Some(tunnel.local_addr());
-            match Driver::connect(&through).await {
-                Ok(driver) => Ok(Self {
-                    driver,
-                    tunnel: Some(tunnel),
-                }),
-                Err(error) => {
-                    tunnel.close().await;
-                    Err(error)
-                }
-            }
-        })
-        .await
-        .map_err(|_| error::timed_out(&params.host, params.port))?
+            .map_err(|_| error::timed_out(&params.host, params.port))?
+        })?;
+        apply_read_only(&mut session, params).await?;
+        Ok(session)
     }
 
     /// How another session can cancel this one's running statement.
@@ -366,6 +383,19 @@ pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Res
     result
 }
 
+/// Runs the engine's read-only session statement when the connection asks
+/// for one. SQL Server has no session equivalent, so it is skipped; the app
+/// check is the only guard there and the UI says so.
+async fn apply_read_only(session: &mut Session, params: &ConnectParams) -> Result<(), AppError> {
+    if !params.read_only {
+        return Ok(());
+    }
+    match read_only_statement(params.engine) {
+        Some(sql) => session.execute(sql, 1).await.map(|_| ()),
+        None => Ok(()),
+    }
+}
+
 /// SQL that reads up to `limit` rows of a table or view, fully quoted.
 /// `filter` is a WHERE clause from `filter::where_clause` ("" for none).
 pub fn object_data_sql(
@@ -433,8 +463,16 @@ mod tests {
             ca_path: None,
             ssh: None,
             connect_to: None,
+            read_only: false,
         };
         assert!(!format!("{params:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn read_only_statement_covers_engines_that_can() {
+        assert!(read_only_statement(Engine::MySql).is_some());
+        assert!(read_only_statement(Engine::Postgres).is_some());
+        assert_eq!(read_only_statement(Engine::SqlServer), None);
     }
 
     #[test]

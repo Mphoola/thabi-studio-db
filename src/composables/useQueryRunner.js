@@ -1,11 +1,12 @@
 import { cancelStatement, runStatement } from "../lib/tauri/commands.js";
-import { confirmationFor } from "../lib/sqlSafety.js";
+import { confirmationFor, writeBlockFor } from "../lib/sqlSafety.js";
 import { useTarget } from "../lib/sqlStatements.js";
 import { confirm } from "./useConfirm.js";
 import { useAppSettings } from "./useAppSettings.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useLibrary } from "./useLibrary.js";
+import { useToasts } from "./useToasts.js";
 
 /**
  * Runs statements for a query tab, one after another, on the tab's own
@@ -19,6 +20,7 @@ import { useLibrary } from "./useLibrary.js";
 export function useQueryRunner() {
   const store = useConnectionProfiles();
   const hostKeys = useHostKeyTrust();
+  const toasts = useToasts();
   const { settings } = useAppSettings();
 
   async function ensureConnected(profileId) {
@@ -39,7 +41,15 @@ export function useQueryRunner() {
         message: "Choose a connection for this tab first.",
       };
 
+    // A read-only connection refuses these before anything is sent.
+    const blocked = writeBlockFor(statements, profile.safeMode);
+    if (blocked) {
+      toasts.error(`“${profile.name}” is read-only`, blocked);
+      return;
+    }
+
     const question = confirmationFor(statements, {
+      safeMode: profile.safeMode,
       environment: profile.environment,
       database: tab.database,
       connection: profile.name,

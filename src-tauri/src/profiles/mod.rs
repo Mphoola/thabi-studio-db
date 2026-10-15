@@ -39,6 +39,8 @@ pub struct ConnectionProfile {
     pub has_database_password: bool,
     pub has_ssh_password: bool,
     pub has_ssh_key_passphrase: bool,
+    /// "off", "confirm-writes", "confirm-everything" or "read-only".
+    pub safe_mode: String,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -46,6 +48,10 @@ pub struct ConnectionProfile {
 
 fn default_tls_mode() -> String {
     "verify-full".into()
+}
+
+fn default_safe_mode() -> String {
+    "off".into()
 }
 
 fn default_ssh_auth_mode() -> String {
@@ -86,6 +92,8 @@ pub struct ProfileInput {
     pub ssh_key_passphrase: Option<String>,
     #[serde(default)]
     pub clear_ssh_key_passphrase: bool,
+    #[serde(default = "default_safe_mode")]
+    pub safe_mode: String,
 }
 
 #[derive(Debug, Serialize)]
