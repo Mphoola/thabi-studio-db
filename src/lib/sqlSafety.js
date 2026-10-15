@@ -11,22 +11,22 @@ export const SAFE_MODES = [
   {
     value: "off",
     label: "Off",
-    hint: "Run statements without asking.",
+    hint: "Runs statements without asking. Destructive statements still ask.",
   },
   {
     value: "confirm-writes",
     label: "Confirm Writes",
-    hint: "Ask before a statement can change data or schema.",
+    hint: "Asks before a statement can change data or schema, and before saving edits.",
   },
   {
     value: "confirm-everything",
     label: "Confirm Everything",
-    hint: "Ask before every statement runs.",
+    hint: "Asks before every statement runs, including plain SELECTs.",
   },
   {
     value: "read-only",
     label: "Read-only",
-    hint: "Refuse statements that can change data or schema.",
+    hint: "Refuses anything that can change data or schema — in Thabi Studio, and on the server too on MySQL and PostgreSQL. SQL Server has no session setting, so there only Thabi Studio stops it.",
   },
 ];
 

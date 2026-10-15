@@ -6,6 +6,7 @@ import { useConnectionProfiles } from "../../composables/useConnectionProfiles.j
 import { colourDotClass } from "../../lib/connectionGroups.js";
 import { fuzzyFilter } from "../../lib/fuzzy.js";
 import EngineBadge from "./EngineBadge.vue";
+import SafeModeBadge from "./SafeModeBadge.vue";
 
 /** Quick connection switcher (⇧⌘K): type, pick, connected. */
 const open = defineModel("open", { type: Boolean, default: false });
@@ -114,6 +115,7 @@ function onKeydown(event) {
           aria-hidden="true"
         />
         <span class="truncate font-medium">{{ profile.name }}</span>
+        <SafeModeBadge :safe-mode="profile.safeMode" />
         <EngineBadge :driver="profile.driver" compact />
         <span class="ml-auto truncate font-mono text-xs text-fg-subtle">{{
           profile.host

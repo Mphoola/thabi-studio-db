@@ -1,10 +1,10 @@
 <script setup>
 import { computed } from "vue";
-import { Lock, ShieldAlert, ShieldCheck } from "lucide-vue-next";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
 import { runCommand } from "../../composables/useCommands.js";
+import SafeModeBadge from "../connections/SafeModeBadge.vue";
 
 const store = useConnectionProfiles();
 const { selectedProfile } = store;
@@ -23,22 +23,6 @@ const tooltip = computed(() => {
   if (status.value?.state === "connecting") return "Connecting…";
   return "Not connected";
 });
-
-// Only modes that change what Thabi Studio does are shown; "off" is silent.
-const SAFE_MODE_MARKS = {
-  "confirm-writes": {
-    icon: ShieldCheck,
-    label: "Asks before statements that change data",
-  },
-  "confirm-everything": {
-    icon: ShieldAlert,
-    label: "Asks before every statement",
-  },
-  "read-only": { icon: Lock, label: "Read-only: writes are refused" },
-};
-const safeMode = computed(
-  () => SAFE_MODE_MARKS[selectedProfile.value?.safeMode] ?? null,
-);
 </script>
 
 <template>
@@ -54,14 +38,7 @@ const safeMode = computed(
       aria-hidden="true"
     />
     <template v-if="selectedProfile">
-      <span
-        v-if="safeMode"
-        v-tooltip="safeMode.label"
-        class="flex text-fg-subtle"
-        aria-hidden="true"
-      >
-        <component :is="safeMode.icon" :size="14" :stroke-width="1.75" />
-      </span>
+      <SafeModeBadge :safe-mode="selectedProfile.safeMode" />
       <span class="max-w-36 truncate">{{ selectedProfile.name }}</span>
       <span :class="connected ? 'text-success-text' : 'text-fg-subtle'">
         {{ connected ? "Connected" : "Not connected" }}

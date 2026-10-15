@@ -19,6 +19,7 @@ import { isLoopbackHost } from "../../lib/tls.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 import EngineBadge from "./EngineBadge.vue";
+import SafeModeBadge from "./SafeModeBadge.vue";
 
 /** One saved connection. Double-click or Return connects. */
 const props = defineProps({
@@ -133,6 +134,11 @@ function onKeydown(event) {
         >
           <Waypoints :size="12" :stroke-width="1.75" aria-hidden="true" /> SSH
         </span>
+        <SafeModeBadge
+          :safe-mode="profile.safeMode"
+          class="text-xs"
+          with-label
+        />
         <span v-if="lastUsed" class="ml-auto shrink-0 text-xs text-fg-subtle">
           {{ lastUsed }}
         </span>

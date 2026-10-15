@@ -7,7 +7,7 @@ import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
 import { COLOURS } from "../../lib/connectionGroups.js";
-import { SAFE_MODES, defaultSafeMode } from "../../lib/sqlSafety.js";
+import { defaultSafeMode } from "../../lib/sqlSafety.js";
 import { suggestedTlsMode } from "../../lib/tls.js";
 import {
   defaultPortFor,
@@ -20,6 +20,7 @@ import TextInput from "../common/TextInput.vue";
 import ConnectionTestAction from "./ConnectionTestAction.vue";
 import ConnectionTestResult from "./ConnectionTestResult.vue";
 import DatabaseFields from "./DatabaseFields.vue";
+import SafetyFields from "./SafetyFields.vue";
 import SshProfileFields from "./SshProfileFields.vue";
 import ConnectionUrlField from "../connections/ConnectionUrlField.vue";
 
@@ -75,11 +76,6 @@ const editingProfile = computed(
 const environmentOptions = ENVIRONMENTS.map(({ value, label }) => ({
   value,
   label,
-}));
-const safeModeOptions = SAFE_MODES.map(({ value, label, hint }) => ({
-  value,
-  label,
-  hint,
 }));
 
 function resetForm() {
@@ -231,19 +227,6 @@ async function save() {
           :error="fields.environment"
         />
       </div>
-      <DatabaseFields
-        v-model:form="form"
-        :fields="fields"
-        :has-saved-password="!!editingProfile?.hasDatabasePassword"
-        :via-ssh="form.sshEnabled"
-        @tls-touched="tlsTouched = true"
-      />
-      <SshProfileFields
-        v-model:form="form"
-        :fields="fields"
-        :has-saved-password="!!editingProfile?.hasSshPassword"
-        :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
-      />
       <div class="grid grid-cols-2 gap-3">
         <TextInput
           v-model="form.groupName"
@@ -260,17 +243,23 @@ async function save() {
           hint="Overrides the environment colour."
         />
       </div>
-      <SelectInput
-        v-model="form.safeMode"
-        label="Safe Mode"
-        :options="safeModeOptions"
-        :error="fields.safeMode"
-        :hint="
-          form.safeMode === 'read-only'
-            ? 'Writes are refused in Thabi Studio, and on the server where it supports it (SQL Server has no session setting, so only the app stops them).'
-            : 'How much Thabi Studio asks before running statements and saving edits on this connection.'
-        "
-        @update:model-value="safeModeTouched = true"
+      <SafetyFields
+        v-model:form="form"
+        :fields="fields"
+        @changed="safeModeTouched = true"
+      />
+      <DatabaseFields
+        v-model:form="form"
+        :fields="fields"
+        :has-saved-password="!!editingProfile?.hasDatabasePassword"
+        :via-ssh="form.sshEnabled"
+        @tls-touched="tlsTouched = true"
+      />
+      <SshProfileFields
+        v-model:form="form"
+        :fields="fields"
+        :has-saved-password="!!editingProfile?.hasSshPassword"
+        :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
       />
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>
