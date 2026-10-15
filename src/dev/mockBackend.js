@@ -265,6 +265,78 @@ handlers.cancel_statement = () => {
 };
 handlers.close_query_tab = () => null;
 
+// History and saved queries, kept in memory for the session.
+const historyStore = [];
+const savedStore = [];
+const originalRun = handlers.run_statement;
+handlers.run_statement = async (args) => {
+  const started = Date.now();
+  const entry = {
+    id: historyStore.length + 1,
+    profileId: "sample",
+    connectionName: "Sample (mock)",
+    databaseName: args.database ?? "shop",
+    queryText: args.sql,
+    startedAt: new Date().toISOString(),
+    durationMs: 0,
+    status: "completed",
+    rowCount: null,
+    errorSummary: null,
+  };
+  try {
+    const result = await originalRun(args);
+    entry.rowCount = result.totalRows ?? result.rowsAffected ?? null;
+    return result;
+  } catch (error) {
+    entry.status = error.kind === "query_cancelled" ? "cancelled" : "failed";
+    entry.errorSummary = error.detail ?? error.message;
+    throw error;
+  } finally {
+    entry.durationMs = Date.now() - started;
+    historyStore.unshift(entry);
+  }
+};
+handlers.list_history = ({ search }) =>
+  historyStore.filter((h) =>
+    h.queryText.toLowerCase().includes((search ?? "").toLowerCase()),
+  );
+handlers.delete_history_entry = ({ id }) => {
+  historyStore.splice(
+    historyStore.findIndex((h) => h.id === id),
+    1,
+  );
+};
+handlers.clear_history = () => historyStore.splice(0).length;
+handlers.list_saved_queries = () => savedStore;
+handlers.save_query = ({ input }) => {
+  if (!input.name.trim())
+    throw {
+      kind: "validation",
+      message: "Check the highlighted fields.",
+      fields: { name: "Enter a name of up to 120 characters." },
+    };
+  let saved = savedStore.find((q) => q.id === input.id);
+  if (!saved) {
+    saved = { id: `s${savedStore.length + 1}`, createdAt: "", updatedAt: "" };
+    savedStore.push(saved);
+  }
+  Object.assign(saved, {
+    name: input.name.trim(),
+    queryText: input.queryText,
+    profileId: input.profileId ?? null,
+    notes: input.notes ?? "",
+  });
+  return saved;
+};
+handlers.delete_saved_query = ({ id }) => {
+  savedStore.splice(
+    savedStore.findIndex((q) => q.id === id),
+    1,
+  );
+};
+handlers.save_workspace_tabs = () => null;
+handlers.load_workspace_tabs = () => [];
+
 export function installMockBackend() {
   mockIPC(
     (command, args) => {

@@ -1,10 +1,10 @@
 <script setup>
-import { words } from "../../lib/platform.js";
 import { Bookmark, History, ListTree } from "lucide-vue-next";
 import { useLayout } from "../../composables/useLayout.js";
-import EmptyState from "../common/EmptyState.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import ExplorerPanel from "../explorer/ExplorerPanel.vue";
+import HistoryPanel from "../library/HistoryPanel.vue";
+import SavedPanel from "../library/SavedPanel.vue";
 import SidebarResizer from "./SidebarResizer.vue";
 
 const { sidebarWidth, sidebarView } = useLayout();
@@ -14,19 +14,6 @@ const views = [
   { value: "saved", label: "Saved", icon: Bookmark },
   { value: "history", label: "History", icon: History },
 ];
-
-const empty = {
-  saved: {
-    icon: Bookmark,
-    title: "No saved queries",
-    description: "Queries you save show up here for any connection.",
-  },
-  history: {
-    icon: History,
-    title: "No query history",
-    description: `Queries you run are listed here. History stays on ${words.computer}.`,
-  },
-};
 </script>
 
 <template>
@@ -51,13 +38,8 @@ const empty = {
       class="min-h-0 flex-1 overflow-auto"
     >
       <ExplorerPanel v-if="sidebarView === 'explorer'" />
-      <EmptyState
-        v-else
-        size="sm"
-        :icon="empty[sidebarView].icon"
-        :title="empty[sidebarView].title"
-        :description="empty[sidebarView].description"
-      />
+      <SavedPanel v-else-if="sidebarView === 'saved'" />
+      <HistoryPanel v-else />
     </div>
     <SidebarResizer />
   </aside>

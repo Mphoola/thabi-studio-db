@@ -9,14 +9,14 @@ import { tags } from "@lezer/highlight";
 export const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
-    fontSize: "12.5px",
+    fontSize: "var(--editor-font-size, 13px)",
     backgroundColor: "var(--canvas)",
     color: "var(--fg)",
   },
   ".cm-scroller": {
     fontFamily:
       "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)",
-    lineHeight: "20px",
+    lineHeight: "1.55",
   },
   ".cm-content": { caretColor: "var(--accent)", padding: "8px 0" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },

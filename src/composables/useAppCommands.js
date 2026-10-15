@@ -4,6 +4,7 @@ import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
 import { useExplorer } from "./useExplorer.js";
 import { useTabs } from "./useTabs.js";
+import { useQuerySave } from "./useQuerySave.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
@@ -20,6 +21,7 @@ export function useAppCommands() {
   const explorer = useExplorer();
   const workspace = useTabs();
   const queryTabActive = () => workspace.active.value?.type === "query";
+  const saver = useQuerySave();
   const theme = useTheme();
   const toasts = useToasts();
   const hostKeys = useHostKeyTrust();
@@ -128,6 +130,22 @@ export function useAppCommands() {
       shortcut: "Mod+W",
       enabled: () => Boolean(workspace.active.value),
       run: () => workspace.close(),
+    },
+    {
+      id: "query.save",
+      title: "Save Query",
+      group: "Query",
+      shortcut: "Mod+S",
+      enabled: queryTabActive,
+      run: () => saver.saveActive(),
+    },
+    {
+      id: "query.focusEditor",
+      title: "Focus Editor",
+      group: "Query",
+      shortcut: "Mod+E",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.focus(),
     },
     {
       id: "query.run",

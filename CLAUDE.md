@@ -30,10 +30,12 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   `docs/decisions/0009-sql-editor.md`.
 - Phase 8 (results grid): committed on `phase-8-results-grid`. Read
   `docs/decisions/0010-results-grid.md`.
-- Connections page and table data improvements: on
-  `connections-and-table-data`, not committed (the user tests first). Read
-  `docs/decisions/0011-connections-page-and-table-data.md`.
-- Next: Phase 9 (history, saved queries, polish).
+- Connections page and table data improvements: committed on
+  `connections-and-table-data` (`docs/decisions/0011`).
+- Cross-platform support and Phase 9 (history, saved queries, recovery):
+  on `phase-9-history-saved-queries`, not committed (the user tests first).
+  Read `docs/decisions/0012-cross-platform.md` and `0013-history-saved-queries.md`.
+- Next: Phase 10 (testing, packaging for all three platforms, release).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -92,6 +94,8 @@ Run `npm run check` after every meaningful change and before calling work done.
 - `src-tauri/src/queries.rs` — query-tab sessions, cancel and timeout.
 - `src-tauri/src/menu.rs` — native menu bar; items forward command ids.
 - `src-tauri/src/results.rs` — kept results: paging, sorting, copy, CSV export.
+- `src-tauri/src/library.rs` — query history, saved queries, open-tab recovery.
+- `src/components/library/` — History and Saved panels, Save Query dialog.
 - `src/components/grid/` — virtualised results grid and value inspector.
 - `src/components/connections/` — connections page, rows, switcher, URL field.
   Never load a whole result into the webview; use a grid source.

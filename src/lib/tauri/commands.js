@@ -148,3 +148,37 @@ export function openObjectData(id, tabId, { database, schema, name, maxRows }) {
     maxRows,
   });
 }
+
+export function listHistory({ search = "", limit = 100, offset = 0 } = {}) {
+  return call("list_history", { search, limit, offset });
+}
+
+export function deleteHistoryEntry(id) {
+  return call("delete_history_entry", { id });
+}
+
+/** @returns {Promise<number>} entries removed */
+export function clearHistory() {
+  return call("clear_history");
+}
+
+export function listSavedQueries() {
+  return call("list_saved_queries");
+}
+
+/** input: { id?, name, queryText, profileId?, notes? } */
+export function saveQuery(input) {
+  return call("save_query", { input });
+}
+
+export function deleteSavedQuery(id) {
+  return call("delete_saved_query", { id });
+}
+
+export function saveWorkspaceTabs(tabs) {
+  return call("save_workspace_tabs", { tabs });
+}
+
+export function loadWorkspaceTabs() {
+  return call("load_workspace_tabs");
+}

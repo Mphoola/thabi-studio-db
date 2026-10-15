@@ -19,6 +19,8 @@ const WorkspaceView = defineAsyncComponent(
 import { runCommand } from "../../composables/useCommands.js";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
 import ConnectionSwitcher from "../connections/ConnectionSwitcher.vue";
+import SaveQueryDialog from "../library/SaveQueryDialog.vue";
+import { startTabPersistence } from "../../composables/useTabPersistence.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { onConnectionClosed, onMenuCommand } from "../../lib/tauri/events.js";
@@ -52,9 +54,16 @@ function onClosed({ profileId, reason }) {
 }
 
 onMounted(async () => {
-  connections.load().catch((error) => {
-    toasts.error("Saved connections couldn’t be loaded", toUserMessage(error));
-  });
+  connections
+    .load()
+    // Restore open query tabs once connections are known.
+    .then(() => startTabPersistence())
+    .catch((error) => {
+      toasts.error(
+        "Saved connections couldn’t be loaded",
+        toUserMessage(error),
+      );
+    });
   try {
     stopMenu = await onMenuCommand((id) => runCommand(id));
     stopListening = await onConnectionClosed(onClosed);
@@ -99,5 +108,6 @@ function dialogModel(name) {
     <ShortcutsDialog v-bind="dialogModel('shortcuts')" />
     <CommandPalette v-bind="dialogModel('palette')" />
     <ConnectionSwitcher v-bind="dialogModel('switcher')" />
+    <SaveQueryDialog v-bind="dialogModel('saveQuery')" />
   </div>
 </template>

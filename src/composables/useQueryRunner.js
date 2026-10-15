@@ -5,6 +5,7 @@ import { confirm } from "./useConfirm.js";
 import { useAppSettings } from "./useAppSettings.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
+import { useLibrary } from "./useLibrary.js";
 
 /**
  * Runs statements for a query tab, one after another, on the tab's own
@@ -92,6 +93,9 @@ export function useQueryRunner() {
     } finally {
       tab.running = false;
       tab.startedAt = null;
+      useLibrary()
+        .refreshHistory()
+        .catch(() => {});
     }
   }
 

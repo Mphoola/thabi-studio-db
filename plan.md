@@ -555,34 +555,34 @@ Tasks:
 
 Tasks:
 
-- Persist query history with timestamp, connection, duration, status, and sanitised error summary.
-- Add history search and re-open-in-editor action.
-- Add saved queries with names and optional notes.
-- Add a clear-history action and history retention setting.
-- Add app preferences for theme, editor font size, default result page size, and query timeout where supported.
-- Add keyboard shortcuts for new query tab, run query, close tab, focus editor, and refresh explorer.
-- Add connection health/status indicators.
-- Add confirmation for dangerous actions and clear target-context display.
-- Ensure destructive-operation warnings are helpful without becoming a constant nuisance.
-- Add unsaved query recovery only if it can be implemented reliably; otherwise warn before closing unsaved tabs.
-- Review accessibility, keyboard navigation, focus management, and error wording.
-- Polish empty states and onboarding hints.
-- Add a privacy note explaining that connections and queries are local, where history is stored, and what is or is not transmitted by the app.
+- [x] Persist query history with timestamp, connection, duration, status, and sanitised error summary.
+- [x] Add history search and re-open-in-editor action.
+- [x] Add saved queries with names and optional notes.
+- [x] Add a clear-history action and history retention setting.
+- [x] Add app preferences for theme, editor font size, default result page size, and query timeout where supported.
+- [x] Add keyboard shortcuts for new query tab, run query, close tab, focus editor, and refresh explorer.
+- [x] Add connection health/status indicators.
+- [x] Add confirmation for dangerous actions and clear target-context display.
+- [x] Ensure destructive-operation warnings are helpful without becoming a constant nuisance.
+- [x] Add unsaved query recovery only if it can be implemented reliably; otherwise warn before closing unsaved tabs.
+- [x] Review accessibility, keyboard navigation, focus management, and error wording.
+- [x] Polish empty states and onboarding hints.
+- [x] Add a privacy note explaining that connections and queries are local, where history is stored, and what is or is not transmitted by the app.
 
 **Deliverables:**
 
-- History and saved-query features.
-- Settings.
-- Keyboard navigation.
-- Security and usability polish.
+- [x] History and saved-query features.
+- [x] Settings.
+- [x] Keyboard navigation.
+- [x] Security and usability polish.
 
 **Exit criteria:**
 
-- History persists and can be cleared.
-- Saved queries can be edited and re-opened.
-- Sensitive values are not added to diagnostic logs.
-- Important workflows are usable without a mouse.
-- Privacy documentation matches actual app behaviour.
+- [x] History persists and can be cleared.
+- [x] Saved queries can be edited and re-opened.
+- [x] Sensitive values are not added to diagnostic logs.
+- [x] Important workflows are usable without a mouse.
+- [x] Privacy documentation matches actual app behaviour.
 
 ### Phase 10 — Testing, packaging, documentation, and MVP release
 
@@ -853,7 +853,11 @@ Update this section as work progresses.
   - [x] Explorer and query tabs scoped to a connection's saved database; USE follows
   - [x] 39 integration tests pass
 - [x] Extra (2026-10-15, branch `connections-and-table-data`, not committed): table data in the full grid with export; connections page grouped by environment with search, richer rows, recent connections, quick switcher (⇧⌘K) and connection URL paste (`docs/decisions/0011`)
-- [ ] Phase 9 — Query history, saved queries, polish, and safeguards
+- [x] Phase 9 — Query history, saved queries, polish, and safeguards (2026-10-15, branch `phase-9-history-saved-queries`, not committed)
+  - [x] Cross-platform (macOS, Windows, Linux): credential stores, window chrome, menus, SSH agent, wording, CI for all three
+  - [x] Query history (recorded per run, searchable, retention, clear) and saved queries (⌘S)
+  - [x] Open query tabs restored after quitting; editor font size and history preferences
+  - [x] Privacy note in About and `docs/PRIVACY.md`; accessibility pass
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release
 
 **Final principle:** Build the smallest genuinely reliable database client first. A polished connection flow, accurate query results, safe credential handling, and dependable remote access are more valuable than many incomplete features.

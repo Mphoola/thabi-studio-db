@@ -132,6 +132,14 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     );
     menus.push(
         SubmenuBuilder::new(app, "Query")
+            .item(&item(app, "query.save", "Save Query", Some("CmdOrCtrl+S"))?)
+            .item(&item(
+                app,
+                "query.focusEditor",
+                "Focus Editor",
+                Some("CmdOrCtrl+E"),
+            )?)
+            .separator()
             .item(&item(
                 app,
                 "query.run",

@@ -33,29 +33,58 @@ export function useTabs() {
     layout.mainView.value = "workspace";
   }
 
-  function newQuery({ sql = "", database = null } = {}) {
-    const profile = store.selectedProfile.value;
+  /**
+   * Opens a new query tab. `savedSql` is what "unsaved" is measured against:
+   * the saved query's text, or nothing for a new tab.
+   */
+  function newQuery({
+    sql = "",
+    database = null,
+    title = null,
+    profileId = undefined,
+    savedQueryId = null,
+    savedSql = null,
+    id = null,
+    activate = true,
+  } = {}) {
+    const profile =
+      profileId === undefined
+        ? store.selectedProfile.value
+        : (store.profiles.value.find((p) => p.id === profileId) ?? null);
     const number = tabs.value.filter((t) => t.type === "query").length + 1;
     const tab = reactive({
-      id: newId(),
+      id: id ?? newId(),
       type: "query",
-      title: `Query ${number}`,
-      profileId: profile?.id ?? null,
+      title: title ?? `Query ${number}`,
+      profileId: profileId === undefined ? (profile?.id ?? null) : profileId,
       database:
         database ??
         (profile ? store.statusFor(profile.id)?.server?.database : null) ??
         profile?.databaseName ??
         null,
       sql,
-      savedSql: sql,
+      savedSql: savedSql ?? (savedQueryId ? sql : ""),
+      savedQueryId,
       running: false,
       startedAt: null,
       runs: [],
       activeRun: 0,
     });
     tabs.value.push(tab);
-    show(tab);
+    if (activate) show(tab);
     return tab;
+  }
+
+  /** Opens a saved query, or switches to its tab if it's already open. */
+  function openSaved(query) {
+    const open = tabs.value.find((t) => t.savedQueryId === query.id);
+    if (open) return show(open);
+    return newQuery({
+      sql: query.queryText,
+      title: query.name,
+      savedQueryId: query.id,
+      profileId: query.profileId ?? undefined,
+    });
   }
 
   function openObject(node, view = "data") {
@@ -100,7 +129,8 @@ export function useTabs() {
     } else if (isDirty(tab)) {
       const ok = await confirm({
         title: `Close “${tab.title}”?`,
-        message: "Its SQL isn't saved anywhere and will be lost.",
+        message:
+          "Its changes aren't saved and will be lost. Save it first with Save Query if you want to keep it.",
         confirmLabel: "Close",
         destructive: true,
       });
@@ -130,6 +160,7 @@ export function useTabs() {
     active,
     show,
     newQuery,
+    openSaved,
     openObject,
     close,
     isDirty,
