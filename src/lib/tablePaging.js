@@ -73,3 +73,27 @@ export function describeRows(page, pageSize, total, estimated) {
   const end = Math.min(last, total);
   return `Rows ${first.toLocaleString()}–${end.toLocaleString()} of ${about}${total.toLocaleString()}`;
 }
+
+/**
+ * What the pager needs, from the grid's paging state and the source.
+ *
+ * The grid is not there yet when a table is first rendered, so every value has
+ * an answer that is not an error. Resolving them here rather than in a template
+ * is what lets that be tested: this boundary has been read wrong twice, once
+ * for treating a number as a call and once for the reverse, and neither was
+ * caught by lint, the build or any test.
+ *
+ * @param {object|null} paging the grid's paging state, or null before it mounts
+ * @param {object} source the grid's source: `total`, `estimated`, `pageSize`
+ * @param {number} fallbackPageSize used while the grid has not answered
+ */
+export function pagerProps(paging, source, fallbackPageSize) {
+  return {
+    page: paging?.page ?? 0,
+    pageSize: paging?.pageSize ?? source?.pageSize ?? fallbackPageSize,
+    total: source?.total ?? null,
+    estimated: Boolean(source?.estimated),
+    // A short page is the end of the table; until one is seen, assume more.
+    hasMore: paging?.hasMore ?? true,
+  };
+}

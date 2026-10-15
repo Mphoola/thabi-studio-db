@@ -13,7 +13,7 @@ import ResultView from "../grid/ResultView.vue";
 import TablePager from "../grid/TablePager.vue";
 import { columnLayoutRef } from "../../composables/useColumns.js";
 import { tableSource } from "../../lib/gridSources.js";
-import { tablePageSize } from "../../lib/tablePaging.js";
+import { pagerProps, tablePageSize } from "../../lib/tablePaging.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
 import AddRowDialog from "./AddRowDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
@@ -34,13 +34,14 @@ const profile = computed(() => {
 const pageSize = computed(() => tablePageSize(profile.value));
 const node = computed(() => props.tab.node);
 const gridView = ref(null);
-/** The page on screen, and what is left to reach. */
-const paging = computed(() => ({
-  page: gridView.value?.page ?? 0,
-  // The view hands these over as plain values; only `goToPage` is a call.
-  pageSize: gridView.value?.pageSize ?? pageSize.value,
-  hasMore: gridView.value?.hasMore() ?? false,
-}));
+/** What the pager shows; see lib/tablePaging.js. */
+const pager = computed(() =>
+  pagerProps(
+    gridView.value?.paging ?? null,
+    previewSource.value,
+    pageSize.value,
+  ),
+);
 const goToPage = (index) => gridView.value?.goToPage(index);
 const tab = computed({
   get: () => props.tab.view ?? "data",
@@ -245,11 +246,11 @@ const location = computed(() =>
         "
       />
       <TablePager
-        :page="paging.page"
-        :page-size="paging.pageSize"
-        :total="previewSource.total"
-        :estimated="previewSource.estimated"
-        :has-more="paging.hasMore"
+        :page="pager.page"
+        :page-size="pager.pageSize"
+        :total="pager.total"
+        :estimated="pager.estimated"
+        :has-more="pager.hasMore"
         class="h-7 shrink-0 border-t border-line bg-toolbar px-3"
         @go="goToPage"
       />

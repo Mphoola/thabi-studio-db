@@ -6,6 +6,7 @@ import {
   describeRows,
   pageCount,
   pageOf,
+  pagerProps,
   tablePageSize,
 } from "../../src/lib/tablePaging.js";
 
@@ -87,5 +88,63 @@ describe("what the pager says", () => {
   it("does not claim a total it does not know", () => {
     expect(describeRows(0, 1_000, UNKNOWN_TOTAL, true)).toBe("Rows 1–");
     expect(describeRows(0, 1_000, Infinity, false)).toBe("Rows 1–");
+  });
+});
+
+/**
+ * The pager's inputs cross from the grid, which does not exist yet when a table
+ * is first rendered. Every value has to have an answer that is not an error:
+ * this boundary has been read wrong twice, and neither mistake was caught by
+ * lint, the build or a test.
+ */
+describe("the pager survives a grid that is not there yet", () => {
+  const source = { total: 1_100_000, estimated: true, pageSize: 1_000 };
+
+  it("answers from the grid when it is mounted", () => {
+    expect(
+      pagerProps({ page: 7, pageSize: 1_000, hasMore: false }, source, 500),
+    ).toEqual({
+      page: 7,
+      pageSize: 1_000,
+      total: 1_100_000,
+      estimated: true,
+      hasMore: false,
+    });
+  });
+
+  it("answers before the grid mounts, without calling anything", () => {
+    const props = pagerProps(null, source, 500);
+    expect(props).toEqual({
+      page: 0,
+      pageSize: 1_000,
+      total: 1_100_000,
+      estimated: true,
+      // Nothing has been read yet, so the next button stays available.
+      hasMore: true,
+    });
+    for (const value of Object.values(props))
+      expect(typeof value).not.toBe("function");
+  });
+
+  it("answers when the grid reports the end of the table", () => {
+    // The grid reports hasMore as a plain false, not as something to call.
+    const props = pagerProps(
+      { page: 3, pageSize: 1_000, hasMore: false },
+      source,
+      500,
+    );
+    expect(props.hasMore).toBe(false);
+    expect(props.page).toBe(3);
+  });
+
+  it("answers before there is a source at all", () => {
+    const props = pagerProps(null, null, 1_000);
+    expect(props).toEqual({
+      page: 0,
+      pageSize: 1_000,
+      total: null,
+      estimated: false,
+      hasMore: true,
+    });
   });
 });

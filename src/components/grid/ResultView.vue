@@ -41,12 +41,18 @@ const grid = ref(null);
 /**
  * Paging, for a caller that puts the pager somewhere other than here — a table
  * view does, since a query result is capped and pages through what it fetched.
+ *
+ * One object rather than three properties: these cross between components, and
+ * a caller that reads one of them wrongly is not caught by anything. They travel
+ * together so they cannot be mixed up or half-read.
  */
-const page = computed(() => grid.value?.page ?? 0);
-const pageSize = computed(() => grid.value?.pageSize() ?? PAGE_SIZE);
-const hasMore = computed(() => grid.value?.hasMore() ?? false);
+const paging = computed(() => ({
+  page: grid.value?.page ?? 0,
+  pageSize: grid.value?.pageSize() ?? PAGE_SIZE,
+  hasMore: grid.value?.hasMore() ?? false,
+}));
 const goToPage = (index) => grid.value?.goToPage(index);
-defineExpose({ page, pageSize, hasMore, goToPage });
+defineExpose({ paging, goToPage });
 
 const format = ref(null);
 const exportMenu = ref(null);
