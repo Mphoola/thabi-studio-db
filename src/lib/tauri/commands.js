@@ -60,8 +60,12 @@ export function testConnectionInput(input, profileId = null) {
 }
 
 /** `database` opens another database for this connection only. */
-export function connectConnectionProfile(id, database = null) {
-  return call("connect_connection_profile", { id, database });
+/**
+ * `secrets` are typed for this one connection when it asks every time:
+ * { databasePassword?, sshPassword?, sshKeyPassphrase? }. Never saved.
+ */
+export function connectConnectionProfile(id, database = null, secrets = null) {
+  return call("connect_connection_profile", { id, database, secrets });
 }
 
 export function disconnectConnectionProfile(id) {

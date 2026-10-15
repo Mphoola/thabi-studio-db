@@ -6,8 +6,9 @@ mod validation;
 use serde::{Deserialize, Serialize};
 
 pub use repository::{
-    connect_params, connect_params_for_input, create_profile, delete_profile, duplicate_profile,
-    list_profiles, mark_connected, reorder_profiles, select_profile, update_validated_profile,
+    apply_one_off_secrets, connect_params, connect_params_for_input, create_profile,
+    delete_profile, duplicate_profile, list_profiles, mark_connected, reorder_profiles,
+    required_secret, select_profile, update_validated_profile,
 };
 pub use validation::{ValidatedProfile, validate};
 
@@ -47,6 +48,12 @@ pub struct ConnectionProfile {
     pub colour: String,
     /// Manual order inside the group; ties fall back to the name.
     pub sort_order: i64,
+    /// Secrets the user types at connect time instead of keeping saved.
+    pub ask_database_password: bool,
+    pub ask_ssh_password: bool,
+    pub ask_ssh_key_passphrase: bool,
+    /// Keep-alive interval for this connection's SSH session; 0 is the default.
+    pub ssh_keepalive_seconds: u32,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -104,6 +111,15 @@ pub struct ProfileInput {
     pub group_name: String,
     #[serde(default)]
     pub colour: String,
+    #[serde(default)]
+    pub ask_database_password: bool,
+    #[serde(default)]
+    pub ask_ssh_password: bool,
+    #[serde(default)]
+    pub ask_ssh_key_passphrase: bool,
+    /// Keep-alive interval in seconds; 0 uses the default.
+    #[serde(default)]
+    pub ssh_keepalive_seconds: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -61,6 +61,10 @@ const defaults = () => ({
   safeMode: defaultSafeMode("local"),
   groupName: "",
   colour: "",
+  askDatabasePassword: false,
+  askSshPassword: false,
+  askSshKeyPassphrase: false,
+  sshKeepaliveSeconds: "0",
 });
 const form = reactive(defaults());
 const open = computed({
@@ -107,6 +111,10 @@ function resetForm() {
     safeMode: profile.safeMode ?? defaultSafeMode(profile.environment),
     groupName: profile.groupName ?? "",
     colour: profile.colour ?? "",
+    askDatabasePassword: !!profile.askDatabasePassword,
+    askSshPassword: !!profile.askSshPassword,
+    askSshKeyPassphrase: !!profile.askSshKeyPassphrase,
+    sshKeepaliveSeconds: String(profile.sshKeepaliveSeconds ?? 0),
   });
 }
 
@@ -156,9 +164,16 @@ function buildInput() {
   const ssh = form.sshEnabled;
   return {
     ...form,
-    sshPassword: ssh && form.sshAuthMode === "password" ? form.sshPassword : "",
+    // A secret that is asked for each time is never sent to be saved.
+    databasePassword: form.askDatabasePassword ? "" : form.databasePassword,
+    sshPassword:
+      ssh && form.sshAuthMode === "password" && !form.askSshPassword
+        ? form.sshPassword
+        : "",
     sshKeyPassphrase:
-      ssh && form.sshAuthMode === "key" ? form.sshKeyPassphrase : "",
+      ssh && form.sshAuthMode === "key" && !form.askSshKeyPassphrase
+        ? form.sshKeyPassphrase
+        : "",
   };
 }
 

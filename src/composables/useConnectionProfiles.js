@@ -16,6 +16,7 @@ import { sortProfiles } from "../lib/connectionGroups.js";
 import { isTauri } from "../lib/tauri/ipc.js";
 import { applyLocalAppSetting, useAppSettings } from "./useAppSettings.js";
 import { useDialogs } from "./useDialogs.js";
+import { askForRequiredSecret } from "./useSecretPrompt.js";
 
 const profiles = ref([]);
 const loaded = ref(false);
@@ -121,10 +122,15 @@ export function useConnectionProfiles() {
     return testConnectionInput(input, profileId);
   }
 
-  async function connect(id, database = null) {
+  /**
+   * Opens a connection. A profile set to "Ask every time" keeps no secret, so
+   * Rust says which one it needs; the user types it and the attempt is
+   * retried. The value is used for this connection only and never stored.
+   */
+  async function connect(id, database = null, attempt = 0, secrets = {}) {
     setStatus(id, { profileId: id, state: "connecting", server: null });
     try {
-      setStatus(id, await connectConnectionProfile(id, database));
+      setStatus(id, await connectConnectionProfile(id, database, secrets));
       // Rust records the time too; mirror it so "last connected" updates now.
       const now = new Date().toISOString();
       profiles.value = profiles.value.map((p) =>
@@ -132,6 +138,15 @@ export function useConnectionProfiles() {
       );
     } catch (error) {
       setStatus(id, null);
+      // A profile may need two secrets (database and SSH); ask for each in turn.
+      if (error?.kind === "secret_required" && error.data && attempt < 3) {
+        const value = await askForRequiredSecret(error.data);
+        if (value === null) throw error;
+        return connect(id, database, attempt + 1, {
+          ...secrets,
+          [error.data.secret]: value,
+        });
+      }
       throw error;
     }
   }

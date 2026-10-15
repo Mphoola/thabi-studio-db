@@ -125,6 +125,20 @@ export function validateConnectionProfile(profile) {
     errors.groupName = "Use a group name of 60 characters or fewer.";
   if (!SAFE_COLOURS.has(profile.colour ?? ""))
     errors.colour = "Choose one of the available colours.";
+
+  const keepalive = Number(profile.sshKeepaliveSeconds || 0);
+  if (!Number.isInteger(keepalive) || keepalive < 0 || keepalive > 3600)
+    errors.sshKeepaliveSeconds =
+      "Choose a keep-alive from 0 to 3,600 seconds, or 0 for the default.";
+  if (profile.askDatabasePassword && profile.databasePassword)
+    errors.databasePassword =
+      "Choose to ask for the password each time, or enter one to save — not both.";
+  if (profile.askSshPassword && profile.sshPassword)
+    errors.sshPassword =
+      "Choose to ask for the SSH password each time, or enter one to save — not both.";
+  if (profile.askSshKeyPassphrase && profile.sshKeyPassphrase)
+    errors.sshKeyPassphrase =
+      "Choose to ask for the passphrase each time, or enter one to save — not both.";
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (

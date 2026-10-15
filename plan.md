@@ -1302,7 +1302,7 @@ Update this section as work progresses.
   - [x] Staged edits follow the mode; a read-only connection can't be edited
   - [x] Connection groups and custom colours (`docs/decisions/0017-connection-groups.md`)
   - [x] `~/.ssh/config`: Host aliases, IdentityFile and one ProxyJump hop, shown before use (`docs/decisions/0018-ssh-config.md`)
-  - [ ] "Ask every time" secrets, SSH keep-alive
+  - [x] "Ask every time" for the database password, SSH password and key passphrase, plus per-connection SSH keep-alive (`docs/decisions/0019-ask-every-time.md`)
   - [ ] Startup commands, mutual TLS, per-connection timeout and row limit
   - [ ] Import/export without secrets, multiple windows, reconnect
 - [ ] Phase 12 — Table data and results power-ups

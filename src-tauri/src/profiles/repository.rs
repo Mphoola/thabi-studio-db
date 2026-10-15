@@ -56,6 +56,11 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         group_name: row.get("group_name")?,
         colour: row.get("colour")?,
         sort_order: row.get("sort_order")?,
+        ask_database_password: row.get::<_, i64>("ask_database_password")? != 0,
+        ask_ssh_password: row.get::<_, i64>("ask_ssh_password")? != 0,
+        ask_ssh_key_passphrase: row.get::<_, i64>("ask_ssh_key_passphrase")? != 0,
+        ssh_keepalive_seconds: u32::try_from(row.get::<_, i64>("ssh_keepalive_seconds")?)
+            .unwrap_or(0),
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -67,7 +72,8 @@ fn profile_columns() -> &'static str {
      auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
      has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
-     created_at, updated_at, last_connected_at"
+     ask_database_password, ask_ssh_password, ask_ssh_key_passphrase,
+     ssh_keepalive_seconds, created_at, updated_at, last_connected_at"
 }
 
 fn get_profile(connection: &Connection, id: &str) -> Result<ConnectionProfile, AppError> {
@@ -158,6 +164,9 @@ struct SshTarget<'a> {
     key_path: &'a str,
     password: Option<String>,
     passphrase: Option<String>,
+    keepalive_seconds: u32,
+    /// The user types this password at connect time, so none is stored.
+    ask_ssh_password: bool,
 }
 
 /// Builds the params for a jump host named in `~/.ssh/config`. It signs in the
@@ -206,6 +215,7 @@ fn jump_params(
         auth,
         known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
         proxy_jump: None,
+        keepalive: None,
     })
 }
 
@@ -235,12 +245,17 @@ fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParam
     };
 
     let auth = match target.auth_mode {
-        "password" => SshAuth::Password(target.password.ok_or_else(|| {
-            AppError::new(
-                "ssh_credentials",
-                "Enter the SSH password in the connection settings.",
-            )
-        })?),
+        "password" => SshAuth::Password(match target.password {
+            Some(password) => password,
+            // Asked for at connect time: the command fills this in before use.
+            None if target.ask_ssh_password => String::new(),
+            None => {
+                return Err(AppError::new(
+                    "ssh_credentials",
+                    "Enter the SSH password in the connection settings.",
+                ));
+            }
+        }),
         "key" => SshAuth::KeyFile {
             path: PathBuf::from(&key_path),
             passphrase: target.passphrase,
@@ -259,6 +274,8 @@ fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParam
         auth,
         known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
         proxy_jump,
+        keepalive: (target.keepalive_seconds > 0)
+            .then(|| std::time::Duration::from_secs(target.keepalive_seconds as u64)),
     })
 }
 
@@ -281,6 +298,8 @@ pub fn connect_params(
                 key_path: &profile.ssh_key_path,
                 password: bundle.ssh_password.clone(),
                 passphrase: bundle.ssh_key_passphrase.clone(),
+                keepalive_seconds: profile.ssh_keepalive_seconds,
+                ask_ssh_password: profile.ask_ssh_password,
             },
         )?)
     } else {
@@ -348,6 +367,8 @@ pub fn connect_params_for_input(
                     input.clear_ssh_key_passphrase,
                     saved.ssh_key_passphrase,
                 ),
+                keepalive_seconds: input.ssh_keepalive_seconds,
+                ask_ssh_password: input.ask_ssh_password,
             },
         )?)
     } else {
@@ -367,6 +388,45 @@ pub fn connect_params_for_input(
     )?;
     params.ssh = ssh;
     Ok(params)
+}
+
+/// Puts secrets the user typed for this one connection into the parameters.
+/// They are used for this session only and are never written anywhere.
+pub fn apply_one_off_secrets(
+    params: &mut ConnectParams,
+    secrets: &crate::commands::connections::OneOffSecrets,
+) {
+    if let Some(password) = &secrets.database_password {
+        params.password = Some(password.clone());
+    }
+    let Some(ssh) = params.ssh.as_mut() else {
+        return;
+    };
+    if let Some(password) = &secrets.ssh_password {
+        ssh.auth = SshAuth::Password(password.clone());
+    }
+    if let Some(passphrase) = &secrets.ssh_key_passphrase
+        && let SshAuth::KeyFile {
+            passphrase: slot, ..
+        } = &mut ssh.auth
+    {
+        *slot = Some(passphrase.clone());
+    }
+}
+
+/// Secrets a profile asks the user for at connect time. The app refuses to
+/// connect until one is supplied, rather than trying without and reporting a
+/// confusing authentication failure.
+pub fn required_secret(profile: &ConnectionProfile) -> Option<&'static str> {
+    if profile.ask_database_password {
+        Some("databasePassword")
+    } else if profile.ask_ssh_password {
+        Some("sshPassword")
+    } else if profile.ask_ssh_key_passphrase {
+        Some("sshKeyPassphrase")
+    } else {
+        None
+    }
 }
 
 pub fn mark_connected(connection: &Connection, id: &str) -> Result<(), AppError> {
@@ -457,10 +517,11 @@ fn insert_profile(
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
                 ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
-                group_name, colour, sort_order
+                group_name, colour, sort_order, ask_database_password,
+                ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
              )",
             params![
                 id,
@@ -487,6 +548,10 @@ fn insert_profile(
                 profile.group_name,
                 profile.colour,
                 sort_order,
+                profile.ask_database_password,
+                profile.ask_ssh_password,
+                profile.ask_ssh_key_passphrase,
+                profile.ssh_keepalive_seconds,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -647,6 +712,8 @@ pub fn update_validated_profile(
             tls_mode = ?16, tls_ca_path = ?17, ssh_auth_mode = ?18, ssh_key_path = ?19,
             has_ssh_key_passphrase = ?20, safe_mode = ?21,
             group_name = ?22, colour = ?23,
+            ask_database_password = ?24, ask_ssh_password = ?25,
+            ask_ssh_key_passphrase = ?26, ssh_keepalive_seconds = ?27,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -673,6 +740,10 @@ pub fn update_validated_profile(
             profile.safe_mode,
             profile.group_name,
             profile.colour,
+            profile.ask_database_password,
+            profile.ask_ssh_password,
+            profile.ask_ssh_key_passphrase,
+            profile.ssh_keepalive_seconds,
         ],
     );
     if update_result.is_err() {
@@ -752,6 +823,10 @@ pub fn duplicate_profile(
         safe_mode: source.safe_mode.clone(),
         group_name: source.group_name.clone(),
         colour: source.colour.clone(),
+        ask_database_password: source.ask_database_password,
+        ask_ssh_password: source.ask_ssh_password,
+        ask_ssh_key_passphrase: source.ask_ssh_key_passphrase,
+        ssh_keepalive_seconds: source.ssh_keepalive_seconds.to_string(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -1285,6 +1360,129 @@ mod tests {
         let copy = duplicate_profile(&connection, &credentials, &second.profile.id).unwrap();
         assert_eq!(copy.profile.group_name, "work");
         assert_eq!(copy.profile.colour, "green");
+    }
+
+    /// A key file has to exist and be a regular file for validation to pass.
+    fn temp_key_file() -> String {
+        let path =
+            std::env::temp_dir().join(format!("thabi-studio-test-key-{}.pem", std::process::id()));
+        std::fs::write(&path, b"not-a-real-key").unwrap();
+        path.display().to_string()
+    }
+
+    #[test]
+    fn ask_every_time_keeps_nothing_in_the_credential_store() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut ask = input();
+        ask.name = "Typed each time".into();
+        // A password typed into the form while "ask" is on must not be kept.
+        ask.database_password = Some("typed-secret".into());
+        ask.ask_database_password = true;
+        ask.ssh_enabled = true;
+        ask.ssh_host = "bastion.example.com".into();
+        ask.ssh_username = "tunnel".into();
+        ask.ssh_password = Some("ssh-secret".into());
+        ask.ask_ssh_password = true;
+        ask.ssh_auth_mode = "key".into();
+        ask.ssh_key_path = temp_key_file();
+        ask.ssh_key_passphrase = Some("passphrase-secret".into());
+        ask.ask_ssh_key_passphrase = true;
+
+        let saved = create_profile(&connection, &credentials, ask).unwrap();
+        let profile = &saved.profile;
+        assert!(profile.ask_database_password);
+        assert!(profile.ask_ssh_password);
+        assert!(profile.ask_ssh_key_passphrase);
+        // Nothing was kept, and the profile says so rather than looking saved.
+        assert!(!profile.has_database_password);
+        assert!(!profile.has_ssh_password);
+        assert!(!profile.has_ssh_key_passphrase);
+        let stored: String = connection
+            .query_row(
+                "SELECT COALESCE(credential_key, '') FROM connection_profiles WHERE id = ?1",
+                [&profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "");
+        for (_, secret) in credentials.0.lock().unwrap().iter() {
+            assert!(!secret.contains("typed-secret"));
+            assert!(!secret.contains("ssh-secret"));
+            assert!(!secret.contains("passphrase-secret"));
+        }
+
+        // The app is told which secret it needs, and refuses without it.
+        assert_eq!(
+            required_secret(profile),
+            Some("databasePassword"),
+            "the first missing secret is asked for"
+        );
+        let (_, params) = connect_params(&connection, &credentials, &profile.id).unwrap();
+        assert!(params.password.is_none());
+        assert!(params.ssh.is_some(), "the profile still has SSH settings");
+    }
+
+    #[test]
+    fn one_off_secrets_reach_the_session_but_are_not_kept() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut ask = input();
+        ask.ssh_enabled = true;
+        ask.ssh_host = "bastion.example.com".into();
+        ask.ssh_username = "tunnel".into();
+        ask.ask_ssh_password = true;
+        let saved = create_profile(&connection, &credentials, ask.clone()).unwrap();
+
+        let (_, mut params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        let secrets = crate::commands::connections::OneOffSecrets {
+            database_password: Some("typed".into()),
+            ssh_password: Some("ssh-typed".into()),
+            ssh_key_passphrase: Some("key-typed".into()),
+        };
+        apply_one_off_secrets(&mut params, &secrets);
+        assert_eq!(params.password.as_deref(), Some("typed"));
+        match params.ssh.as_ref().map(|ssh| &ssh.auth) {
+            Some(SshAuth::Password(password)) => assert_eq!(password, "ssh-typed"),
+            _ => panic!("expected the typed SSH password"),
+        }
+
+        // Nothing was written: the stored record and the keyring are unchanged.
+        let (_, again) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(again.password.is_none());
+        let key: Option<String> = connection
+            .query_row(
+                "SELECT credential_key FROM connection_profiles WHERE id = ?1",
+                [&saved.profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn an_unknown_keep_alive_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut bad = input();
+        bad.ssh_keepalive_seconds = "99999".into();
+        let error = create_profile(&connection, &credentials, bad)
+            .expect_err("an unreasonable keep-alive should be rejected");
+        assert!(error.fields.unwrap().contains_key("sshKeepaliveSeconds"));
+
+        let mut good = input();
+        good.ssh_keepalive_seconds = "30".into();
+        assert_eq!(
+            create_profile(&connection, &credentials, good)
+                .unwrap()
+                .profile
+                .ssh_keepalive_seconds,
+            30
+        );
     }
 
     #[test]

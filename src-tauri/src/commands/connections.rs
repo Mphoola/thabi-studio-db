@@ -37,18 +37,58 @@ pub async fn test_connection_input(
 /// Connects a saved profile. `database` opens a different database than the
 /// profile's default for this connection only (PostgreSQL can only browse
 /// the database it is connected to); any open connection is replaced.
+/// Secrets the user typed for this one connection. They are used for this
+/// session only: never saved, never logged, and gone when it closes.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OneOffSecrets {
+    pub database_password: Option<String>,
+    pub ssh_password: Option<String>,
+    pub ssh_key_passphrase: Option<String>,
+}
+
+impl OneOffSecrets {
+    /// Whether the user has supplied the secret a profile asks for.
+    fn has(&self, secret: &str) -> bool {
+        match secret {
+            "databasePassword" => self.database_password.is_some(),
+            "sshPassword" => self.ssh_password.is_some(),
+            "sshKeyPassphrase" => self.ssh_key_passphrase.is_some(),
+            _ => true,
+        }
+    }
+}
+
+/// Says which secret the app needs before it can connect, without echoing it.
+fn secret_required(secret: &str, connection: &str) -> AppError {
+    AppError::new(
+        "secret_required",
+        format!("Enter the {secret} for “{connection}” to connect."),
+    )
+    .with_data(serde_json::json!({ "secret": secret, "connection": connection }))
+}
+
 #[tauri::command]
 pub async fn connect_connection_profile(
     id: String,
     database: Option<String>,
+    secrets: Option<OneOffSecrets>,
     state: State<'_, AppState>,
 ) -> Result<ConnectionStatus, AppError> {
     let lookup = id.clone();
-    let (_, mut params) = state
+    let (profile, mut params) = state
         .blocking(move |connection, credentials| {
             profiles::connect_params(connection, credentials, &lookup)
         })
         .await?;
+    let secrets = secrets.unwrap_or_default();
+    // A profile set to ask every time keeps nothing, so the app asks.
+    if let Some(secret) = profiles::required_secret(&profile)
+        && !secrets.has(secret)
+    {
+        return Err(secret_required(secret, &profile.name));
+    }
+    profiles::apply_one_off_secrets(&mut params, &secrets);
     if let Some(database) = database.filter(|d| !d.trim().is_empty()) {
         state.connections.disconnect(&id).await?;
         params.database = Some(database);

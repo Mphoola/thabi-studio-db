@@ -52,6 +52,8 @@ pub struct SshParams {
     /// One jump host to reach this server through, from `~/.ssh/config`.
     /// At most one hop: a chained ProxyJump isn't followed.
     pub proxy_jump: Option<Box<SshParams>>,
+    /// Keep-alive interval for this connection; `None` uses the default.
+    pub keepalive: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for SshParams {
@@ -71,6 +73,7 @@ impl std::fmt::Debug for SshParams {
                 "proxy_jump",
                 &self.proxy_jump.as_ref().map(|jump| jump.host.clone()),
             )
+            .field("keepalive", &self.keepalive)
             .finish()
     }
 }
@@ -225,7 +228,7 @@ async fn open_tunnel_at(
     via: Option<SocketAddr>,
 ) -> Result<Tunnel, AppError> {
     let config = Arc::new(client::Config {
-        keepalive_interval: Some(KEEPALIVE),
+        keepalive_interval: Some(params.keepalive.unwrap_or(KEEPALIVE)),
         keepalive_max: 3,
         nodelay: true,
         ..Default::default()

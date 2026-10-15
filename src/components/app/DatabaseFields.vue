@@ -61,16 +61,24 @@ const drivers = [
         :error="fields.username"
         autocomplete="username"
       />
-      <PasswordInput
-        v-model="form.databasePassword"
-        label="Password"
-        :hint="
-          hasSavedPassword
-            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
-            : `Optional. Saved in ${words.credentialStore}.`
-        "
-        :error="fields.databasePassword"
-      />
+      <div class="flex flex-col gap-1">
+        <PasswordInput
+          v-if="!form.askDatabasePassword"
+          v-model="form.databasePassword"
+          label="Password"
+          :hint="
+            hasSavedPassword
+              ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+              : `Optional. Saved in ${words.credentialStore}.`
+          "
+          :error="fields.databasePassword"
+        />
+        <CheckboxInput
+          v-model="form.askDatabasePassword"
+          label="Ask for the password each time"
+          :hint="`Nothing is saved; Thabi Studio asks when connecting.`"
+        />
+      </div>
       <TextInput
         v-model="form.databaseName"
         label="Database"

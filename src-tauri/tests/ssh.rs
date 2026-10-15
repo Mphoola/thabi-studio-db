@@ -20,6 +20,7 @@ fn ssh(auth: SshAuth, known_keys: Vec<KnownHost>) -> SshParams {
         auth,
         known_keys,
         proxy_jump: None,
+        keepalive: None,
     }
 }
 

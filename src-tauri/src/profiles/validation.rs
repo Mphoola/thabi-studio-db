@@ -27,6 +27,10 @@ pub struct ValidatedProfile {
     pub safe_mode: String,
     pub group_name: String,
     pub colour: String,
+    pub ask_database_password: bool,
+    pub ask_ssh_password: bool,
+    pub ask_ssh_key_passphrase: bool,
+    pub ssh_keepalive_seconds: u32,
 }
 
 /// Tag tokens a connection may be coloured with (`tag-*` in tokens.css).
@@ -194,6 +198,38 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         );
     }
 
+    let ssh_keepalive_seconds = match input.ssh_keepalive_seconds.trim() {
+        "" => 0,
+        value => match value.parse::<u32>() {
+            Ok(seconds) if seconds <= 3600 => seconds,
+            _ => {
+                fields.insert(
+                    "sshKeepaliveSeconds".into(),
+                    "Choose a keep-alive from 0 to 3,600 seconds, or 0 for the default.".into(),
+                );
+                0
+            }
+        },
+    };
+
+    // A secret that is asked for every time is never kept, so a typed or
+    // saved one has to be removed rather than quietly stored alongside.
+    let (database_password, ask_database_password) = if input.ask_database_password {
+        (None, true)
+    } else {
+        (input.database_password.filter(|v| !v.is_empty()), false)
+    };
+    let (ssh_password, ask_ssh_password) = if input.ask_ssh_password {
+        (None, true)
+    } else {
+        (input.ssh_password.filter(|v| !v.is_empty()), false)
+    };
+    let (ssh_key_passphrase, ask_ssh_key_passphrase) = if input.ask_ssh_key_passphrase {
+        (None, true)
+    } else {
+        (input.ssh_key_passphrase.filter(|v| !v.is_empty()), false)
+    };
+
     if !fields.is_empty() {
         return Err(AppError::validation(fields));
     }
@@ -214,9 +250,13 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         ssh_username,
         ssh_auth_mode,
         ssh_key_path,
-        database_password: input.database_password.filter(|value| !value.is_empty()),
-        ssh_password: input.ssh_password.filter(|value| !value.is_empty()),
-        ssh_key_passphrase: input.ssh_key_passphrase.filter(|value| !value.is_empty()),
+        database_password,
+        ssh_password,
+        ssh_key_passphrase,
+        ask_database_password,
+        ask_ssh_password,
+        ask_ssh_key_passphrase,
+        ssh_keepalive_seconds,
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
@@ -347,6 +387,10 @@ pub(crate) mod tests {
             safe_mode: "off".into(),
             group_name: String::new(),
             colour: String::new(),
+            ask_database_password: false,
+            ask_ssh_password: false,
+            ask_ssh_key_passphrase: false,
+            ssh_keepalive_seconds: "0".into(),
         }
     }
 
