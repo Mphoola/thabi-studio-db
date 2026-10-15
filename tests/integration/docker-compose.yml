@@ -60,3 +60,16 @@ services:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
       interval: 2s
       retries: 30
+
+  # A second bastion for the ProxyJump tests: it forwards on to the `sshd`
+  # service by name, both being on this network, so nothing extra is exposed.
+  sshd-jump:
+    build: ./sshd
+    environment:
+      SSH_PASSWORD: ${THABI_IT_PASSWORD:?run scripts/integration-tests.sh}
+      AUTHORIZED_KEYS: ${THABI_IT_AUTHORIZED_KEYS:?run scripts/integration-tests.sh}
+    ports: ["127.0.0.1:${THABI_IT_SSH_JUMP_PORT:-52223}:22"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      interval: 2s
+      retries: 30

@@ -1301,7 +1301,8 @@ Update this section as work progresses.
   - [x] Read-only refused in the app and on the server (`SET SESSION TRANSACTION READ ONLY`, `default_transaction_read_only`); SQL Server documented as app-only
   - [x] Staged edits follow the mode; a read-only connection can't be edited
   - [x] Connection groups and custom colours (`docs/decisions/0017-connection-groups.md`)
-  - [ ] `~/.ssh/config`, "ask every time" secrets, SSH keep-alive
+  - [x] `~/.ssh/config`: Host aliases, IdentityFile and one ProxyJump hop, shown before use (`docs/decisions/0018-ssh-config.md`)
+  - [ ] "Ask every time" secrets, SSH keep-alive
   - [ ] Startup commands, mutual TLS, per-connection timeout and row limit
   - [ ] Import/export without secrets, multiple windows, reconnect
 - [ ] Phase 12 — Table data and results power-ups

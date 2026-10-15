@@ -46,6 +46,14 @@ export function reorderConnectionProfiles(ids) {
   return call("reorder_connection_profiles", { ids });
 }
 
+/**
+ * What ~/.ssh/config says about a `Host` alias: { config, source }, or null.
+ * Only an exact alias match resolves; wildcards and Include are not followed.
+ */
+export function resolveSshAlias(alias) {
+  return call("resolve_ssh_alias", { alias });
+}
+
 /** Tests unsaved form values; `profileId` lets an edited profile reuse its saved password. */
 export function testConnectionInput(input, profileId = null) {
   return call("test_connection_input", { input, profileId });

@@ -10,6 +10,7 @@ import PasswordInput from "../common/PasswordInput.vue";
 import SelectInput from "../common/SelectInput.vue";
 import SwitchInput from "../common/SwitchInput.vue";
 import TextInput from "../common/TextInput.vue";
+import SshConfigHint from "./SshConfigHint.vue";
 
 const form = defineModel("form", { type: Object, required: true });
 
@@ -54,6 +55,7 @@ async function chooseKey() {
           :error="fields.sshPort"
           mono
         />
+        <SshConfigHint v-model:form="form" class="col-span-2" />
       </div>
       <TextInput
         v-model="form.sshUsername"

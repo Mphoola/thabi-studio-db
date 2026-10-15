@@ -160,7 +160,80 @@ struct SshTarget<'a> {
     passphrase: Option<String>,
 }
 
+/// Builds the params for a jump host named in `~/.ssh/config`. It signs in the
+/// same way the target does, which is what almost every ProxyJump setup uses.
+fn jump_params(
+    connection: &Connection,
+    alias: &str,
+    auth: &SshAuth,
+) -> Result<SshParams, AppError> {
+    let resolved = crate::ssh::config::resolve_user_alias(alias);
+    let host = resolved
+        .as_ref()
+        .and_then(|config| config.hostname.clone())
+        .unwrap_or_else(|| alias.to_owned());
+    let username = resolved
+        .as_ref()
+        .and_then(|config| config.user.clone())
+        .unwrap_or_else(|| match auth {
+            SshAuth::Password(_) | SshAuth::KeyFile { .. } => String::new(),
+            SshAuth::Agent => std::env::var("USER").unwrap_or_default(),
+        });
+    let port = resolved
+        .as_ref()
+        .and_then(|config| config.port)
+        .unwrap_or(22);
+    let auth = match auth {
+        SshAuth::Password(password) => SshAuth::Password(password.clone()),
+        SshAuth::KeyFile { path, passphrase } => {
+            // The jump host's own identity file wins when the config names one.
+            let path = resolved
+                .as_ref()
+                .and_then(|config| config.identity_file.clone())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| path.clone());
+            SshAuth::KeyFile {
+                path,
+                passphrase: passphrase.clone(),
+            }
+        }
+        SshAuth::Agent => SshAuth::Agent,
+    };
+    Ok(SshParams {
+        host: host.clone(),
+        port,
+        username,
+        auth,
+        known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
+        proxy_jump: None,
+    })
+}
+
 fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParams, AppError> {
+    // A `Host` alias in the user's own SSH config supplies the same settings
+    // ssh would use, including one ProxyJump hop.
+    let alias = crate::ssh::config::resolve_user_alias(target.host);
+    let host = alias
+        .as_ref()
+        .and_then(|config| config.hostname.clone())
+        .unwrap_or_else(|| target.host.to_owned());
+    let username = alias
+        .as_ref()
+        .and_then(|config| config.user.clone())
+        .unwrap_or_else(|| target.username.to_owned());
+    let port = alias
+        .as_ref()
+        .and_then(|config| config.port)
+        .unwrap_or(target.port);
+    let key_path = if target.auth_mode == "key" {
+        alias
+            .as_ref()
+            .and_then(|config| config.identity_file.clone())
+            .unwrap_or_else(|| target.key_path.to_owned())
+    } else {
+        target.key_path.to_owned()
+    };
+
     let auth = match target.auth_mode {
         "password" => SshAuth::Password(target.password.ok_or_else(|| {
             AppError::new(
@@ -169,18 +242,23 @@ fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParam
             )
         })?),
         "key" => SshAuth::KeyFile {
-            path: PathBuf::from(target.key_path),
+            path: PathBuf::from(&key_path),
             passphrase: target.passphrase,
         },
         "agent" => SshAuth::Agent,
         _ => return Err(AppError::new("validation", "Choose how to sign in to SSH.")),
     };
+    let proxy_jump = match alias.as_ref().map(|config| config.proxy_jump.clone()) {
+        Some(jump) if !jump.is_empty() => Some(Box::new(jump_params(connection, &jump, &auth)?)),
+        _ => None,
+    };
     Ok(SshParams {
-        host: target.host.to_owned(),
-        port: target.port,
-        username: target.username.to_owned(),
+        host: host.clone(),
+        port,
+        username,
         auth,
-        known_keys: crate::ssh::known_host_keys(connection, target.host, target.port)?,
+        known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
+        proxy_jump,
     })
 }
 

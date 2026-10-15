@@ -6,6 +6,7 @@
 //! accepts local connections and lives exactly as long as the database
 //! session that owns it.
 
+pub mod config;
 mod host_keys;
 mod legacy_pem;
 
@@ -48,6 +49,9 @@ pub struct SshParams {
     pub auth: SshAuth,
     /// Host keys already trusted for this server. Empty means "unknown".
     pub known_keys: Vec<KnownHost>,
+    /// One jump host to reach this server through, from `~/.ssh/config`.
+    /// At most one hop: a chained ProxyJump isn't followed.
+    pub proxy_jump: Option<Box<SshParams>>,
 }
 
 impl std::fmt::Debug for SshParams {
@@ -63,6 +67,10 @@ impl std::fmt::Debug for SshParams {
             .field("username", &self.username)
             .field("auth", &auth)
             .field("known_keys", &self.known_keys.len())
+            .field(
+                "proxy_jump",
+                &self.proxy_jump.as_ref().map(|jump| jump.host.clone()),
+            )
             .finish()
     }
 }
@@ -113,6 +121,8 @@ pub struct Tunnel {
     local_addr: SocketAddr,
     session: Arc<Handle<ClientHandler>>,
     accept_task: JoinHandle<()>,
+    /// The jump-host tunnel this one runs through, kept alive with it.
+    hop: Option<Box<Tunnel>>,
 }
 
 impl Tunnel {
@@ -131,6 +141,8 @@ impl Tunnel {
                 "en",
             )
             .await;
+        // Dropping the hop closes the jump session behind this one.
+        drop(self.hop);
     }
 }
 
@@ -158,12 +170,59 @@ fn ssh_io_error(params: &SshParams, error: &std::io::Error) -> AppError {
     AppError::new("ssh_connection", message).with_detail(Some(error.to_string()))
 }
 
-/// Opens an SSH session, authenticates and starts forwarding a local port
-/// to `target_host:target_port`.
+/// The socket address for a host that has already been resolved successfully.
+fn resolve_socket(host: &str, port: u16) -> Result<SocketAddr, AppError> {
+    use std::net::ToSocketAddrs;
+    format!("{host}:{port}")
+        .to_socket_addrs()
+        .map_err(|_| {
+            AppError::new(
+                "ssh_host_not_found",
+                format!("Couldn't find the SSH host “{host}”. Check the host name."),
+            )
+        })?
+        .next()
+        .ok_or_else(|| {
+            AppError::new(
+                "ssh_host_not_found",
+                format!("Couldn't find the SSH host “{host}”. Check the host name."),
+            )
+        })
+}
+
+/// Opens an SSH session, authenticates and starts forwarding a local port to
+/// `target_host:target_port`.
 pub async fn open_tunnel(
     params: &SshParams,
     target_host: &str,
     target_port: u16,
+) -> Result<Tunnel, AppError> {
+    // One ProxyJump hop, as `~/.ssh/config` allows: reach this SSH server
+    // through the jump host, then carry on to the database as usual.
+    let Some(jump) = &params.proxy_jump else {
+        return open_tunnel_at(params, target_host, target_port, None).await;
+    };
+    let hop = open_tunnel_at(jump, &params.host, params.port, None).await?;
+    match open_tunnel_at(params, target_host, target_port, Some(hop.local_addr())).await {
+        Ok(mut tunnel) => {
+            // The jump tunnel has to outlive this one.
+            tunnel.hop = Some(Box::new(hop));
+            Ok(tunnel)
+        }
+        Err(error) => {
+            hop.close().await;
+            Err(error)
+        }
+    }
+}
+
+/// Opens a tunnel to `target_host:target_port`. `via` is the local end of a
+/// jump tunnel when this server is only reachable through one.
+async fn open_tunnel_at(
+    params: &SshParams,
+    target_host: &str,
+    target_port: u16,
+    via: Option<SocketAddr>,
 ) -> Result<Tunnel, AppError> {
     let config = Arc::new(client::Config {
         keepalive_interval: Some(KEEPALIVE),
@@ -177,18 +236,24 @@ pub async fn open_tunnel(
         check: check.clone(),
     };
 
-    let address = crate::database::error::check_host_resolves(&params.host, params.port)
-        .await
-        .map_err(|_| {
-            AppError::new(
-                "ssh_host_not_found",
-                format!(
-                    "Couldn't find the SSH host “{}”. Check the host name.",
-                    params.host
-                ),
-            )
-        })
-        .map(|_| (params.host.clone(), params.port))?;
+    let address = match via {
+        // Already a local end of a tunnel, so no name to resolve.
+        Some(local) => local,
+        None => {
+            crate::database::error::check_host_resolves(&params.host, params.port)
+                .await
+                .map_err(|_| {
+                    AppError::new(
+                        "ssh_host_not_found",
+                        format!(
+                            "Couldn't find the SSH host “{}”. Check the host name.",
+                            params.host
+                        ),
+                    )
+                })?;
+            resolve_socket(&params.host, params.port)?
+        }
+    };
 
     let connected = tokio::time::timeout(SSH_CONNECT_TIMEOUT, async {
         let stream = tokio::net::TcpStream::connect(&address)
@@ -289,6 +354,7 @@ pub async fn open_tunnel(
         local_addr,
         session,
         accept_task,
+        hop: None,
     })
 }
 

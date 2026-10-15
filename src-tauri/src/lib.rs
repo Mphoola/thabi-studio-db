@@ -88,6 +88,7 @@ pub fn run() {
             commands::connections::copy_rows,
             commands::connections::export_csv,
             commands::connections::trust_ssh_host_key,
+            commands::connections::resolve_ssh_alias,
             commands::connections::forget_ssh_host_keys,
             commands::library::list_history,
             commands::library::delete_history_entry,

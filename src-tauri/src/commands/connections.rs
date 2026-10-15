@@ -407,6 +407,26 @@ pub async fn trust_ssh_host_key(
         .await
 }
 
+/// What `~/.ssh/config` says about a `Host` alias, and where it was read from.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedSshAlias {
+    config: crate::ssh::config::SshHostConfig,
+    source: String,
+}
+
+/// Looks up an SSH `Host` alias in the user's own config. Returns null when
+/// the alias isn't there, or when the config can't be read; the user is never
+/// stopped from typing a host by hand.
+#[tauri::command]
+pub async fn resolve_ssh_alias(alias: String) -> Option<ResolvedSshAlias> {
+    let config = crate::ssh::config::resolve_user_alias(&alias)?;
+    Some(ResolvedSshAlias {
+        config,
+        source: crate::ssh::config::user_config_label(),
+    })
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForgetHostKeysResult {
