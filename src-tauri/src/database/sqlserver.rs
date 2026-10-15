@@ -256,7 +256,17 @@ impl DatabaseSession for SqlServerSession {
                               ELSE '' END,
                             IIF(c.is_nullable = 1, 'true', 'false'),
                             dc.definition,
-                            CAST(ic.key_ordinal AS varchar(10))
+                            CAST(ic.key_ordinal AS varchar(10)),
+                            NULL,
+                            (SELECT TOP 1 CONCAT(rs.name, CHAR(31), ro.name, CHAR(31), rc.name)
+                             FROM {db}.sys.foreign_key_columns fkc
+                             JOIN {db}.sys.objects ro ON ro.object_id = fkc.referenced_object_id
+                             JOIN {db}.sys.schemas rs ON rs.schema_id = ro.schema_id
+                             JOIN {db}.sys.columns rc
+                               ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+                             WHERE fkc.parent_object_id = o.object_id AND fkc.parent_column_id = c.column_id
+                               AND (SELECT COUNT(*) FROM {db}.sys.foreign_key_columns x
+                                    WHERE x.constraint_object_id = fkc.constraint_object_id) = 1)
                      FROM {db}.sys.columns c
                      JOIN {db}.sys.objects o ON o.object_id = c.object_id
                      JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id

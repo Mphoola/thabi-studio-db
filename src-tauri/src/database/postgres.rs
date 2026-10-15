@@ -278,7 +278,17 @@ impl DatabaseSession for PgSession {
                         pg_get_expr(d.adbin, d.adrelid),
                         (SELECT k.ord::text
                          FROM pg_index i, unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
-                         WHERE i.indrelid = c.oid AND i.indisprimary AND k.attnum = a.attnum)
+                         WHERE i.indrelid = c.oid AND i.indisprimary AND k.attnum = a.attnum),
+                        (SELECT string_agg(e.enumlabel, chr(31) ORDER BY e.enumsortorder)
+                         FROM pg_enum e WHERE e.enumtypid = a.atttypid),
+                        (SELECT rn.nspname || chr(31) || rc.relname || chr(31) || ra.attname
+                         FROM pg_constraint con
+                         JOIN pg_class rc ON rc.oid = con.confrelid
+                         JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+                         JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = con.confkey[1]
+                         WHERE con.conrelid = c.oid AND con.contype = 'f'
+                           AND cardinality(con.conkey) = 1 AND con.conkey[1] = a.attnum
+                         LIMIT 1)
                  FROM pg_attribute a
                  JOIN pg_class c ON c.oid = a.attrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace

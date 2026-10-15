@@ -208,6 +208,52 @@ pub async fn preview_row_changes(
     database::edit::statements(params.engine, &target, &changes)
 }
 
+/// Values a foreign key column may take, from the referenced table,
+/// filtered by `search`. Runs on the table tab's session.
+#[tauri::command]
+pub async fn lookup_reference(
+    id: String,
+    tab_id: String,
+    database: String,
+    reference: database::metadata::ColumnRef,
+    search: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<database::edit::LookupRow>, AppError> {
+    use database::{Cell, edit};
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let engine = params.engine;
+    tab.with_session(&params, Some(database.clone()), async |s| {
+        let (db, schema) = match engine {
+            database::Engine::MySql => (reference.schema.as_str(), ""),
+            _ => (database.as_str(), reference.schema.as_str()),
+        };
+        let structure = s
+            .describe(db, schema, &reference.table, ObjectKind::Table)
+            .await?;
+        let label = edit::label_column(
+            &reference.column,
+            structure.columns.iter().map(|c| c.name.as_str()),
+        );
+        let sql = edit::lookup_sql(engine, &database, &reference, label, &search);
+        let result = s.execute(&sql, edit::LOOKUP_LIMIT).await?;
+        let text = |cell: &Cell| match cell {
+            Cell::Value(v) => Some(v.clone()),
+            _ => None,
+        };
+        Ok(result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                Some(edit::LookupRow {
+                    value: text(row.first()?)?,
+                    label: row.get(1).and_then(text),
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
 /// Applies staged row edits in one transaction on the table tab's session.
 /// All or nothing; returns how many statements ran.
 #[tauri::command]

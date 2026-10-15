@@ -126,6 +126,7 @@ const handlers = {
         nullable: true,
         default: null,
         primaryKey: null,
+        references: { schema: "public", table: "customers", column: "email" },
       },
       {
         name: "total",
@@ -136,10 +137,11 @@ const handlers = {
       },
       {
         name: "status",
-        dataType: "text",
+        dataType: "order_status",
         nullable: false,
-        default: "'pending'::text",
+        default: "'pending'::order_status",
         primaryKey: null,
+        enumValues: ["pending", "paid", "refunded"],
       },
     ],
     indexes:
@@ -271,6 +273,11 @@ handlers.preview_row_changes = ({ target, changes }) =>
     const set = c.set.map((v) => `"${v.column}" = '${v.value}'`).join(", ");
     return `UPDATE "${target.name}" SET ${set} WHERE ${where}`;
   });
+handlers.lookup_reference = ({ search }) =>
+  Array.from({ length: 40 }, (_, i) => ({
+    value: `customer${i}@example.com`,
+    label: `Customer ${i}`,
+  })).filter((r) => r.value.includes(search.trim().toLowerCase()));
 handlers.apply_row_changes = ({ changes }) => changes.length;
 
 handlers.cancel_statement = () => {

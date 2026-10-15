@@ -22,6 +22,20 @@ deleted rows are struck through, and a bar shows the counts with Discard,
 Review SQL… and Apply. The tab shows the unsaved dot and asks before
 closing. Binary cells can't be edited.
 
+## Enum and foreign key fields
+
+The table's structure now reports, per column, its enum values
+(PostgreSQL enum types, MySQL `ENUM`) and the column a single-column
+foreign key references. Editing such a cell opens a picker instead of free
+text: enums list their values; foreign keys search the referenced table
+(`lookup_reference`, first 50 matches, by key or by a readable column such
+as `name` or `title`, chosen by `edit::label_column`). Only listed values
+can be picked, so a foreign key can't be set to a row that doesn't exist
+(the database would also reject it on apply). NULL is offered when the
+column allows it. SQL Server has no enum type, so its CHECK-constraint
+lists stay free text. Lookups run on the table tab's session without
+replacing its kept results.
+
 ## How it is applied
 
 - Rows are identified by their primary key, so staged edits survive
@@ -50,6 +64,9 @@ closing. Binary cells can't be edited.
   caught (it changes 0 rows).
 
 ## Verified
+
+`enums_and_references` in `tests/drivers.rs` checks enum values, foreign
+key references and the labelled lookup on all three engines.
 
 Unit tests for SQL generation and the frontend edit state; integration
 tests (`*_row_edits` in `tests/queries.rs`) apply an update, delete and

@@ -215,6 +215,19 @@ impl QueryTab {
         Ok(())
     }
 
+    /// Runs app-generated reads (lookups) on the tab's session without
+    /// keeping a result, so the tab's grid results stay as they are.
+    pub async fn with_session<T>(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        work: impl AsyncFnOnce(&mut Session) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let mut guard = self.session.try_lock().map_err(|_| query_running())?;
+        self.open_session(&mut guard, params, database).await?;
+        work(guard.as_mut().expect("opened above")).await
+    }
+
     /// Runs staged row edits in one transaction. Every statement must change
     /// exactly one row; otherwise everything is rolled back and nothing is
     /// saved. If the rollback itself fails, the session is dropped, which

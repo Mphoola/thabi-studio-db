@@ -38,6 +38,66 @@ pub struct ColumnInfo {
     pub default: Option<String>,
     /// Position in the primary key (1-based), if part of it.
     pub primary_key: Option<u32>,
+    /// Allowed values of an enum column (PostgreSQL enum types, MySQL ENUM).
+    pub enum_values: Option<Vec<String>>,
+    /// The column a single-column foreign key points to.
+    pub references: Option<ColumnRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnRef {
+    /// Schema (PostgreSQL, SQL Server) or database (MySQL).
+    pub schema: String,
+    pub table: String,
+    pub column: String,
+}
+
+/// Separates list items in metadata query results (ASCII unit separator,
+/// which can't appear in names or enum labels in practice).
+pub(crate) const SEP: char = '\u{1f}';
+
+fn references(text: Option<String>) -> Option<ColumnRef> {
+    let text = text?;
+    let mut parts = text.split(SEP).map(str::to_owned);
+    Some(ColumnRef {
+        schema: parts.next()?,
+        table: parts.next()?,
+        column: parts.next()?,
+    })
+}
+
+/// Values of a MySQL `enum('a','b''c')` column type.
+fn mysql_enum(column_type: &str) -> Option<Vec<String>> {
+    let body = column_type
+        .strip_prefix("enum(")
+        .or_else(|| column_type.strip_prefix("ENUM("))?
+        .strip_suffix(')')?;
+    let mut values = Vec::new();
+    let mut chars = body.chars().peekable();
+    while chars.peek().is_some() {
+        if chars.next()? != '\'' {
+            return None;
+        }
+        let mut value = String::new();
+        loop {
+            match chars.next()? {
+                '\'' if chars.peek() == Some(&'\'') => {
+                    chars.next();
+                    value.push('\'');
+                }
+                '\'' => break,
+                '\\' => value.push(chars.next()?),
+                c => value.push(c),
+            }
+        }
+        values.push(value);
+        match chars.next() {
+            Some(',') | None => {}
+            _ => return None,
+        }
+    }
+    Some(values)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -65,17 +125,29 @@ pub type TextRows = Vec<Vec<Option<String>>>;
 pub(crate) fn column_rows(rows: TextRows) -> Vec<ColumnInfo> {
     rows.into_iter()
         .map(|mut row| {
-            row.resize(5, None);
+            row.resize(7, None);
             let mut cells = row.into_iter();
+            let name = cells.next().flatten().unwrap_or_default();
+            let data_type = cells.next().flatten().unwrap_or_default();
+            let nullable = matches!(
+                cells.next().flatten().as_deref(),
+                Some("true" | "YES" | "1")
+            );
+            let default = cells.next().flatten();
+            let primary_key = cells.next().flatten().and_then(|p| p.parse().ok());
+            let enum_values = cells
+                .next()
+                .flatten()
+                .map(|list| list.split(SEP).map(str::to_owned).collect())
+                .or_else(|| mysql_enum(&data_type));
             ColumnInfo {
-                name: cells.next().flatten().unwrap_or_default(),
-                data_type: cells.next().flatten().unwrap_or_default(),
-                nullable: matches!(
-                    cells.next().flatten().as_deref(),
-                    Some("true" | "YES" | "1")
-                ),
-                default: cells.next().flatten(),
-                primary_key: cells.next().flatten().and_then(|p| p.parse().ok()),
+                name,
+                data_type,
+                nullable,
+                default,
+                primary_key,
+                enum_values,
+                references: references(cells.next().flatten()),
             }
         })
         .collect()
@@ -150,6 +222,49 @@ mod tests {
         assert_eq!(columns[0].primary_key, Some(1));
         assert!(columns[1].nullable);
         assert_eq!(columns[1].primary_key, None);
+    }
+
+    #[test]
+    fn reads_enum_values_and_foreign_keys() {
+        let sep = SEP.to_string();
+        let columns = column_rows(vec![
+            vec![
+                Some("status".into()),
+                Some("order_status".into()),
+                Some("NO".into()),
+                None,
+                None,
+                Some(["new", "paid"].join(&sep)),
+                None,
+            ],
+            vec![
+                Some("kind".into()),
+                Some(r"enum('a','it''s','b\\c')".into()),
+                Some("YES".into()),
+                None,
+                None,
+                None,
+                Some(["shop", "customers", "id"].join(&sep)),
+            ],
+        ]);
+        assert_eq!(
+            columns[0].enum_values.as_deref(),
+            Some(&["new".to_owned(), "paid".to_owned()][..])
+        );
+        assert_eq!(columns[0].references, None);
+        assert_eq!(
+            columns[1].enum_values,
+            Some(vec!["a".into(), "it's".into(), r"b\c".into()])
+        );
+        assert_eq!(
+            columns[1].references,
+            Some(ColumnRef {
+                schema: "shop".into(),
+                table: "customers".into(),
+                column: "id".into(),
+            })
+        );
+        assert_eq!(mysql_enum("varchar(20)"), None);
     }
 
     #[test]

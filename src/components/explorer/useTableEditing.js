@@ -7,6 +7,7 @@ import { toUserDetail } from "../../lib/errors.js";
 import {
   applyRowChanges,
   describeObject,
+  lookupReference,
   previewRowChanges,
 } from "../../lib/tauri/commands.js";
 
@@ -22,6 +23,7 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   const store = useConnectionProfiles();
   const toasts = useToasts();
   const primaryKey = ref([]);
+  const columnInfo = ref(new Map()); // name -> structure column
   const keyChecked = ref(false);
   const applying = ref(false);
   const preview = ref(null); // statements shown in the review dialog
@@ -40,11 +42,13 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   async function loadKey() {
     keyChecked.value = false;
     primaryKey.value = [];
+    columnInfo.value = new Map();
     const target = node.value;
     if (!isTable.value || !profileId.value) return;
     try {
       const structure = await describeObject(profileId.value, target);
       if (node.value !== target) return;
+      columnInfo.value = new Map(structure.columns.map((c) => [c.name, c]));
       primaryKey.value = structure.columns
         .filter((c) => c.primaryKey)
         .sort((a, b) => a.primaryKey - b.primaryKey)
@@ -56,6 +60,35 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
     }
   }
   watch(node, loadKey, { immediate: true });
+
+  /** How a column is edited: a list of enum values, a foreign key lookup, or free text (null). */
+  editor.pickerFor = (col) => {
+    const info = columnInfo.value.get(columns.value[col]?.name);
+    if (info?.enumValues?.length)
+      return {
+        kind: "enum",
+        nullable: info.nullable,
+        search: async (text) =>
+          info.enumValues
+            .filter((v) => v.toLowerCase().includes(text.trim().toLowerCase()))
+            .map((value) => ({ value, label: null })),
+      };
+    if (info?.references)
+      return {
+        kind: "reference",
+        nullable: info.nullable,
+        table: info.references.table,
+        search: (text) =>
+          lookupReference(
+            profileId.value,
+            tab.id,
+            node.value.database,
+            info.references,
+            text,
+          ),
+      };
+    return null;
+  };
 
   const target = () => ({
     database: node.value.database,

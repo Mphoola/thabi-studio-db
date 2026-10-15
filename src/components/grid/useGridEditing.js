@@ -32,6 +32,7 @@ export function useGridEditing({
   }
 
   function endEdit(move = null) {
+    if (!editing.value) return;
     const { row, col } = editing.value;
     editing.value = null;
     const next = {

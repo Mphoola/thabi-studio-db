@@ -251,7 +251,18 @@ impl DatabaseSession for MySqlSession {
                               FROM information_schema.KEY_COLUMN_USAGE k
                               WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME
                                 AND k.COLUMN_NAME = c.COLUMN_NAME AND k.CONSTRAINT_NAME = 'PRIMARY')
-                             AS CHAR)
+                             AS CHAR),
+                        NULL,
+                        (SELECT CONVERT(CONCAT_WS(CHAR(31 USING utf8mb4), k.REFERENCED_TABLE_SCHEMA,
+                                          k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME) USING utf8mb4)
+                         FROM information_schema.KEY_COLUMN_USAGE k
+                         WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME
+                           AND k.COLUMN_NAME = c.COLUMN_NAME AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                           AND (SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE k2
+                                WHERE k2.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+                                  AND k2.TABLE_NAME = k.TABLE_NAME
+                                  AND k2.CONSTRAINT_NAME = k.CONSTRAINT_NAME) = 1
+                         LIMIT 1)
                  FROM information_schema.COLUMNS c
                  WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
                  ORDER BY c.ORDINAL_POSITION",

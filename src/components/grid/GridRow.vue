@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, ref, watch } from "vue";
 import { displayText } from "../../lib/gridText.js";
+import CellPicker from "./CellPicker.vue";
 
 /** One grid row. With an `editor`, shows staged edits and the cell editor. */
 const props = defineProps({
@@ -80,7 +81,15 @@ function onBlur() {
           role="gridcell"
           class="border-r border-line"
         >
+          <CellPicker
+            v-if="editor.pickerFor?.(col)"
+            :picker="editor.pickerFor(col)"
+            :initial="editor.valueOf(cells, col)"
+            @commit="(value, move) => emit('commit', value, move)"
+            @cancel="emit('cancel')"
+          />
           <textarea
+            v-else
             ref="input"
             v-model="draft"
             rows="1"

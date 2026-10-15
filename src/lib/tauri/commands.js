@@ -148,6 +148,14 @@ export function previewRowChanges(id, tabId, target, changes) {
   return call("preview_row_changes", { id, tabId, target, changes });
 }
 
+/**
+ * Values a foreign key column may take. reference: { schema, table, column }.
+ * @returns {Promise<{ value: string, label: string | null }[]>}
+ */
+export function lookupReference(id, tabId, database, reference, search) {
+  return call("lookup_reference", { id, tabId, database, reference, search });
+}
+
 /** Applies staged row edits in one transaction. @returns {Promise<number>} */
 export function applyRowChanges(id, tabId, target, changes) {
   return call("apply_row_changes", { id, tabId, target, changes });

@@ -198,9 +198,87 @@ async fn filters_rows(engine: Engine) {
     session.close().await.unwrap();
 }
 
+/// Enum values and foreign keys are reported, and a foreign key's values
+/// can be looked up (with a readable label) for the edit picker.
+async fn describes_enums_and_references(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    setup: &[&str],
+    expect_enum: bool,
+) {
+    use thabi_studio_lib::database::{
+        ObjectKind,
+        edit::{label_column, lookup_sql},
+    };
+    let mut session = open(engine).await;
+    for sql in setup {
+        session
+            .execute(sql, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{sql}: {}", e.message));
+    }
+    let (db, sch) = match engine {
+        Engine::MySql => (database, ""),
+        _ => (database, schema),
+    };
+    let child = session
+        .describe(db, sch, "thabi_child", ObjectKind::Table)
+        .await
+        .unwrap();
+    let country = child
+        .columns
+        .iter()
+        .find(|c| c.name == "country_id")
+        .unwrap();
+    let reference = country.references.clone().expect("foreign key reported");
+    assert_eq!(reference.table, "thabi_country");
+    assert_eq!(reference.column, "id");
+    let status = child.columns.iter().find(|c| c.name == "status").unwrap();
+    if expect_enum {
+        assert_eq!(status.enum_values, Some(vec!["new".into(), "paid".into()]));
+    }
+    let parent = session
+        .describe(db, sch, "thabi_country", ObjectKind::Table)
+        .await
+        .unwrap();
+    let label = label_column("id", parent.columns.iter().map(|c| c.name.as_str()));
+    assert_eq!(label, Some("name"));
+    let result = session
+        .execute(&lookup_sql(engine, database, &reference, label, "mal"), 50)
+        .await
+        .unwrap();
+    assert_eq!(
+        values(&result),
+        [vec![Some("2".to_owned()), Some("Malawi".to_owned())]]
+    );
+    session.close().await.unwrap();
+}
+
 mod postgres {
     use super::*;
     const E: Engine = Engine::Postgres;
+
+    #[tokio::test]
+    #[ignore]
+    async fn enums_and_references() {
+        describes_enums_and_references(
+            E,
+            "thabi_it",
+            "public",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "DROP TYPE IF EXISTS thabi_status",
+                "CREATE TYPE thabi_status AS ENUM ('new', 'paid')",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name text)",
+                "INSERT INTO thabi_country VALUES (1, 'Kenya'), (2, 'Malawi')",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, status thabi_status, country_id int REFERENCES thabi_country(id))",
+            ],
+            true,
+        )
+        .await;
+    }
 
     #[tokio::test]
     #[ignore]
@@ -292,6 +370,25 @@ mod mysql {
 
     #[tokio::test]
     #[ignore]
+    async fn enums_and_references() {
+        describes_enums_and_references(
+            E,
+            "thabi_it",
+            "",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name varchar(50))",
+                "INSERT INTO thabi_country VALUES (1, 'Kenya'), (2, 'Malawi')",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, status ENUM('new', 'paid'), country_id int, FOREIGN KEY (country_id) REFERENCES thabi_country(id))",
+            ],
+            true,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn filters() {
         filters_rows(E).await;
     }
@@ -363,6 +460,25 @@ mod mysql {
 mod sqlserver {
     use super::*;
     const E: Engine = Engine::SqlServer;
+
+    #[tokio::test]
+    #[ignore]
+    async fn enums_and_references() {
+        describes_enums_and_references(
+            E,
+            "master",
+            "dbo",
+            &[
+                "IF OBJECT_ID('thabi_child') IS NOT NULL DROP TABLE thabi_child",
+                "IF OBJECT_ID('thabi_country') IS NOT NULL DROP TABLE thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name nvarchar(50))",
+                "INSERT INTO thabi_country VALUES (1, N'Kenya'), (2, N'Malawi')",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, status varchar(10), country_id int REFERENCES thabi_country(id))",
+            ],
+            false,
+        )
+        .await;
+    }
 
     #[tokio::test]
     #[ignore]
