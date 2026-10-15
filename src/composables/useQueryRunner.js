@@ -1,4 +1,5 @@
 import { cancelStatement, runStatement } from "../lib/tauri/commands.js";
+import { limitsFor } from "../lib/limits.js";
 import { confirmationFor, writeBlockFor } from "../lib/sqlSafety.js";
 import { useTarget } from "../lib/sqlStatements.js";
 import { confirm } from "./useConfirm.js";
@@ -48,6 +49,7 @@ export function useQueryRunner() {
       return;
     }
 
+    const limits = limitsFor(profile, settings.value);
     const question = confirmationFor(statements, {
       safeMode: profile.safeMode,
       environment: profile.environment,
@@ -79,8 +81,8 @@ export function useQueryRunner() {
           entry.result = await runStatement(profile.id, tab.id, {
             database: tab.database,
             sql,
-            timeoutSeconds: settings.value.queryTimeoutSeconds || null,
-            maxRows: settings.value.maxResultRows || null,
+            timeoutSeconds: limits.timeoutSeconds,
+            maxRows: limits.maxRows,
           });
           entry.status = "completed";
           // `USE db` moved the tab's session; keep the picker in step.

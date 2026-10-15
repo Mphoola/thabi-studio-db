@@ -35,6 +35,8 @@ pub struct ValidatedProfile {
     pub ssh_keepalive_seconds: u32,
     /// The user's lines, normalised, for storing back on the profile.
     pub startup_commands: String,
+    pub query_timeout_seconds: u64,
+    pub max_result_rows: u64,
 }
 
 /// Longest a connection's startup command list may be.
@@ -315,6 +317,21 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         (input.ssh_key_passphrase.filter(|v| !v.is_empty()), false)
     };
 
+    let query_timeout_seconds = bound_limit(
+        &input.query_timeout_seconds,
+        "queryTimeoutSeconds",
+        24 * 60 * 60,
+        "Choose a query timeout from 0 to 86,400 seconds, or 0 for the app default.",
+        &mut fields,
+    );
+    let max_result_rows = bound_limit(
+        &input.max_result_rows,
+        "maxResultRows",
+        1_000_000,
+        "Choose how many rows to keep, from 0 to 1,000,000, or 0 for the app default.",
+        &mut fields,
+    );
+
     let read_only = input.safe_mode.trim() == "read-only";
     let startup = match startup_commands(&input.startup_commands, read_only) {
         Ok(commands) => commands,
@@ -354,6 +371,8 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         ask_ssh_key_passphrase,
         ssh_keepalive_seconds,
         startup_commands: startup.join("\n"),
+        query_timeout_seconds,
+        max_result_rows,
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
@@ -361,6 +380,26 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         group_name,
         colour,
     })
+}
+
+/// A numeric override: empty or "0" means "use the app default".
+fn bound_limit(
+    value: &str,
+    field: &str,
+    max: u64,
+    message: &'static str,
+    fields: &mut BTreeMap<String, String>,
+) -> u64 {
+    match value.trim() {
+        "" => 0,
+        text => match text.parse::<u64>() {
+            Ok(number) if number <= max => number,
+            _ => {
+                fields.insert(field.into(), message.into());
+                0
+            }
+        },
+    }
 }
 
 fn validate_port(value: &str, field: &str, fields: &mut BTreeMap<String, String>) -> u16 {
@@ -491,6 +530,8 @@ pub(crate) mod tests {
             ask_ssh_key_passphrase: false,
             ssh_keepalive_seconds: "0".into(),
             startup_commands: String::new(),
+            query_timeout_seconds: "0".into(),
+            max_result_rows: "0".into(),
         }
     }
 

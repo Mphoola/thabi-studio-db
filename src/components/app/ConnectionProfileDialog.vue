@@ -1,12 +1,14 @@
 <script setup>
 import { words } from "../../lib/platform.js";
 import { computed, nextTick, reactive, ref, watch } from "vue";
+import { useAppSettings } from "../../composables/useAppSettings.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
 import { COLOURS } from "../../lib/connectionGroups.js";
+import { describeLimit } from "../../lib/limits.js";
 import { defaultSafeMode } from "../../lib/sqlSafety.js";
 import { suggestedTlsMode } from "../../lib/tls.js";
 import {
@@ -25,6 +27,7 @@ import SshProfileFields from "./SshProfileFields.vue";
 import ConnectionUrlField from "../connections/ConnectionUrlField.vue";
 
 const store = useConnectionProfiles();
+const { settings } = useAppSettings();
 const dialogs = useDialogs();
 const toasts = useToasts();
 const fields = ref({});
@@ -68,6 +71,8 @@ const defaults = () => ({
   askSshKeyPassphrase: false,
   sshKeepaliveSeconds: "0",
   startupCommands: "",
+  queryTimeoutSeconds: "0",
+  maxResultRows: "0",
 });
 const form = reactive(defaults());
 const open = computed({
@@ -121,6 +126,8 @@ function resetForm() {
     askSshKeyPassphrase: !!profile.askSshKeyPassphrase,
     sshKeepaliveSeconds: String(profile.sshKeepaliveSeconds ?? 0),
     startupCommands: profile.startupCommands ?? "",
+    queryTimeoutSeconds: String(profile.queryTimeoutSeconds ?? 0),
+    maxResultRows: String(profile.maxResultRows ?? 0),
   });
 }
 
@@ -296,6 +303,26 @@ async function save() {
             : 'One per line. Run on every new session for this connection, including each query tab. If one fails, the connection is not opened.'
         "
       />
+      <div class="grid grid-cols-2 gap-3">
+        <TextInput
+          v-model="form.queryTimeoutSeconds"
+          label="Query timeout"
+          input-mode="numeric"
+          mono
+          placeholder="0"
+          :error="fields.queryTimeoutSeconds"
+          :hint="`0 uses the app default (${describeLimit(settings.queryTimeoutSeconds, 'seconds')}).`"
+        />
+        <TextInput
+          v-model="form.maxResultRows"
+          label="Rows kept per result"
+          input-mode="numeric"
+          mono
+          placeholder="0"
+          :error="fields.maxResultRows"
+          :hint="`0 uses the app default (${describeLimit(settings.maxResultRows, 'rows')}).`"
+        />
+      </div>
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>
     <template #footer>

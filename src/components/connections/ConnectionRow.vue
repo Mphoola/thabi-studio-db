@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
 import {
+  Clock,
   Copy,
   GripVertical,
   Lock,
@@ -14,6 +15,7 @@ import { useConnectionActions } from "../../composables/useConnectionActions.js"
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { colourDotClass } from "../../lib/connectionGroups.js";
+import { describeLimit, overridesDefaults } from "../../lib/limits.js";
 import { relativeTime } from "../../lib/relativeTime.js";
 import { isLoopbackHost } from "../../lib/tls.js";
 import BaseButton from "../common/BaseButton.vue";
@@ -56,6 +58,16 @@ const tls = computed(() => {
 const lastUsed = computed(() => relativeTime(props.profile.lastConnectedAt));
 /** Only a custom colour gets its own dot; otherwise the group carries it. */
 const customColour = computed(() => props.profile.colour || "");
+/** This connection's own timeout or row limit, when it overrides the app's. */
+const limits = computed(() => {
+  if (!overridesDefaults(props.profile)) return null;
+  const parts = [];
+  if (props.profile.queryTimeoutSeconds)
+    parts.push(describeLimit(props.profile.queryTimeoutSeconds, "seconds"));
+  if (props.profile.maxResultRows)
+    parts.push(describeLimit(props.profile.maxResultRows, "rows"));
+  return parts.join(" · ");
+});
 
 function onKeydown(event) {
   if (event.target !== event.currentTarget) return;
@@ -133,6 +145,15 @@ function onKeydown(event) {
           class="flex shrink-0 items-center gap-1 text-xs text-fg-subtle"
         >
           <Waypoints :size="12" :stroke-width="1.75" aria-hidden="true" /> SSH
+        </span>
+        <span
+          v-if="limits"
+          v-tooltip="`Own limits: ${limits}. Settings show the defaults.`"
+          class="flex shrink-0 items-center gap-1 text-xs text-fg-subtle"
+        >
+          <Clock :size="12" :stroke-width="1.75" aria-hidden="true" />
+          {{ limits }}
+          <span class="sr-only">Own query limits: {{ limits }}</span>
         </span>
         <SafeModeBadge
           :safe-mode="profile.safeMode"

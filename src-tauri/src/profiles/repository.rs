@@ -64,6 +64,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         ssh_keepalive_seconds: u32::try_from(row.get::<_, i64>("ssh_keepalive_seconds")?)
             .unwrap_or(0),
         startup_commands: row.get("startup_commands")?,
+        query_timeout_seconds: row.get::<_, i64>("query_timeout_seconds")?.max(0) as u64,
+        max_result_rows: row.get::<_, i64>("max_result_rows")?.max(0) as u64,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -77,8 +79,8 @@ fn profile_columns() -> &'static str {
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
      has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
      ask_database_password, ask_ssh_password, ask_ssh_key_passphrase,
-     ssh_keepalive_seconds, startup_commands, created_at, updated_at,
-     last_connected_at"
+     ssh_keepalive_seconds, startup_commands, query_timeout_seconds,
+     max_result_rows, created_at, updated_at, last_connected_at"
 }
 
 fn get_profile(connection: &Connection, id: &str) -> Result<ConnectionProfile, AppError> {
@@ -546,10 +548,11 @@ fn insert_profile(
                 ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
                 group_name, colour, sort_order, ask_database_password,
                 ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds,
-                startup_commands
+                startup_commands, query_timeout_seconds, max_result_rows
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
+                ?32, ?33
              )",
             params![
                 id,
@@ -583,6 +586,8 @@ fn insert_profile(
                 profile.ask_ssh_key_passphrase,
                 profile.ssh_keepalive_seconds,
                 profile.startup_commands,
+                profile.query_timeout_seconds as i64,
+                profile.max_result_rows as i64,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -746,6 +751,7 @@ pub fn update_validated_profile(
             ask_database_password = ?24, ask_ssh_password = ?25,
             ask_ssh_key_passphrase = ?26, ssh_keepalive_seconds = ?27,
             startup_commands = ?28, tls_client_cert = ?29, tls_client_key = ?30,
+            query_timeout_seconds = ?31, max_result_rows = ?32,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -779,6 +785,8 @@ pub fn update_validated_profile(
             profile.startup_commands,
             profile.tls_client_cert,
             profile.tls_client_key,
+            profile.query_timeout_seconds as i64,
+            profile.max_result_rows as i64,
         ],
     );
     if update_result.is_err() {
@@ -865,6 +873,8 @@ pub fn duplicate_profile(
         ask_ssh_key_passphrase: source.ask_ssh_key_passphrase,
         ssh_keepalive_seconds: source.ssh_keepalive_seconds.to_string(),
         startup_commands: source.startup_commands.clone(),
+        query_timeout_seconds: source.query_timeout_seconds.to_string(),
+        max_result_rows: source.max_result_rows.to_string(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -1557,6 +1567,76 @@ mod tests {
 
     /// Mutual TLS: the client certificate and key reach the driver as paths,
     /// and neither the key's contents nor its location ends up in a debug log.
+    /// The profile statements are long lists of columns and parameters, and a
+    /// mismatch shows up only as a generic storage error at runtime. This
+    /// checks every one of them against the table, so a mismatch is a test
+    /// failure naming the statement.
+    #[test]
+    fn profile_statements_match_the_table() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        // insert_profile and update_validated_profile each build one long
+        // statement; a full round trip through both proves the columns, the
+        // placeholders and the bound values still line up.
+        let mut create = input();
+        create.database_password = Some("secret".into());
+        let saved = create_profile(&connection, &credentials, create).unwrap();
+        let mut update = input();
+        update.name = "Renamed".into();
+        update_validated_profile(
+            &connection,
+            &credentials,
+            &saved.profile.id,
+            validate(update).unwrap(),
+        )
+        .unwrap();
+        reorder_profiles(
+            &mut connection,
+            &[saved.profile.id.clone(), saved.profile.id.clone()],
+        )
+        .unwrap();
+        assert_eq!(list_profiles(&connection).unwrap()[0].name, "Renamed");
+    }
+
+    /// A connection may set its own timeout and row limit; both round-trip and
+    /// are bounded, and 0 keeps meaning "use the app default".
+    #[test]
+    fn query_limits_round_trip_and_are_bounded() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let plain = create_profile(&connection, &credentials, input()).unwrap();
+        assert_eq!(plain.profile.query_timeout_seconds, 0);
+        assert_eq!(plain.profile.max_result_rows, 0);
+
+        let mut own = input();
+        own.query_timeout_seconds = "120".into();
+        own.max_result_rows = "500".into();
+        let saved = create_profile(&connection, &credentials, own).unwrap();
+        assert_eq!(saved.profile.query_timeout_seconds, 120);
+        assert_eq!(saved.profile.max_result_rows, 500);
+
+        let copy = duplicate_profile(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(copy.profile.query_timeout_seconds, 120);
+
+        // The field errors are named in camelCase, like every other one.
+        for (field, value) in [
+            ("queryTimeoutSeconds", "99999999"),
+            ("maxResultRows", "99999999"),
+        ] {
+            let mut bad = input();
+            match field {
+                "queryTimeoutSeconds" => bad.query_timeout_seconds = value.into(),
+                _ => bad.max_result_rows = value.into(),
+            }
+            let error = create_profile(&connection, &credentials, bad)
+                .expect_err("an out-of-range limit should be rejected");
+            assert!(error.fields.unwrap().contains_key(field), "{field}");
+        }
+    }
+
     #[test]
     fn client_certificate_files_reach_the_driver() {
         let mut connection = Connection::open_in_memory().unwrap();

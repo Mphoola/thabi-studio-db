@@ -17,6 +17,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0009_ask_every_time.sql"),
     include_str!("../migrations/0010_startup_commands.sql"),
     include_str!("../migrations/0011_tls_client_certificate.sql"),
+    include_str!("../migrations/0012_connection_limits.sql"),
 ];
 
 /// The migration files in order, for tests that need a schema from before the

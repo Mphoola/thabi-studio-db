@@ -59,6 +59,9 @@ pub struct ConnectionProfile {
     pub ssh_keepalive_seconds: u32,
     /// Statements run on every new session, one per line.
     pub startup_commands: String,
+    /// Per-connection overrides; 0 means "use the app default".
+    pub query_timeout_seconds: u64,
+    pub max_result_rows: u64,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -131,6 +134,11 @@ pub struct ProfileInput {
     pub ssh_keepalive_seconds: String,
     #[serde(default)]
     pub startup_commands: String,
+    /// Overrides the app default; "0" means use it.
+    #[serde(default)]
+    pub query_timeout_seconds: String,
+    #[serde(default)]
+    pub max_result_rows: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { Eye, ListFilter, Plus, RefreshCw, Table2 } from "lucide-vue-next";
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useExplorer } from "../../composables/useExplorer.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import { useAppSettings } from "../../composables/useAppSettings.js";
@@ -11,6 +12,7 @@ import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
 import { remoteSource } from "../../lib/gridSources.js";
+import { limitsFor } from "../../lib/limits.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
 import AddRowDialog from "./AddRowDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
@@ -23,6 +25,7 @@ import StructureView from "./StructureView.vue";
 const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
 const { settings } = useAppSettings();
+const profiles = useConnectionProfiles();
 const node = computed(() => props.tab.node);
 const tab = computed({
   get: () => props.tab.view ?? "data",
@@ -76,7 +79,13 @@ async function load(which = tab.value) {
       which === "data"
         ? await openObjectData(id, props.tab.id, {
             ...target,
-            maxRows: settings.value.maxResultRows || null,
+            maxRows: limitsFor(
+              profiles.profiles.value.find(
+                (p) =>
+                  p.id === (props.tab.profileId ?? explorer.profile.value?.id),
+              ),
+              settings.value,
+            ).maxRows,
             filters: request,
           })
         : await describeObject(id, target);
