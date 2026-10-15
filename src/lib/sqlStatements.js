@@ -122,3 +122,15 @@ export function stripComments(sql) {
     .replace(/--[^\n]*/g, " ")
     .replace(/^\s*#[^\n]*/gm, " ");
 }
+
+/**
+ * The database a `USE name` statement switches to (MySQL, SQL Server), or
+ * null. Quotes are removed: USE `shop`, USE [shop], USE "shop".
+ * @param {string} statement
+ */
+export function useTarget(statement) {
+  const match = /^\s*use\s+(`[^`]+`|\[[^\]]+\]|"[^"]+"|[^\s;]+)\s*;?\s*$/i.exec(
+    stripComments(statement),
+  );
+  return match ? match[1].replace(/^[`["]|[`\]"]$/g, "") : null;
+}

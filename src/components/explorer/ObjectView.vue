@@ -8,7 +8,8 @@ import IconButton from "../common/IconButton.vue";
 import InlineAlert from "../common/InlineAlert.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
-import DataPreview from "./DataPreview.vue";
+import ResultView from "../grid/ResultView.vue";
+import { localSource } from "../../lib/gridSources.js";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
@@ -55,6 +56,11 @@ watch(tab, (value) => !results.value[value] && load(value));
 if (node.value) load();
 
 const current = computed(() => results.value[tab.value] ?? { status: "idle" });
+const previewSource = computed(() =>
+  tab.value === "data" && current.value.status === "loaded"
+    ? localSource(current.value.value)
+    : null,
+);
 const location = computed(() =>
   [node.value?.database, node.value?.schema].filter(Boolean).join(" · "),
 );
@@ -107,10 +113,12 @@ const location = computed(() =>
         <BaseButton size="sm" @click="load()">Try Again</BaseButton>
       </InlineAlert>
     </div>
-    <DataPreview
-      v-else-if="tab === 'data'"
+    <ResultView
+      v-else-if="previewSource"
       class="min-h-0 flex-1"
+      :source="previewSource"
       :result="current.value"
+      note="First 100 rows · read-only preview"
     />
     <StructureView
       v-else

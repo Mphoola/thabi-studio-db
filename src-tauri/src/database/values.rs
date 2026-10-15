@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Arc;
 
 /// One cell of a result. Values travel as text so large integers and
 /// high-precision decimals are never squeezed through a JavaScript number.
@@ -7,10 +8,13 @@ use serde::Serialize;
 pub enum Cell {
     Null,
     Value(String),
-    /// Binary data: total length and a hex preview of the first bytes.
+    /// Binary data: total length and a hex preview of the first bytes. The
+    /// full bytes stay in Rust for copying and export.
     Binary {
         bytes: usize,
         preview: String,
+        #[serde(skip)]
+        data: Arc<[u8]>,
     },
 }
 
@@ -26,6 +30,24 @@ impl Cell {
         Self::Binary {
             bytes: bytes.len(),
             preview,
+            data: Arc::from(bytes),
+        }
+    }
+
+    /// Text used when copying or exporting: NULL becomes empty, binary
+    /// becomes 0x-prefixed hex of every byte.
+    pub fn export_text(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Null => "".into(),
+            Self::Value(text) => text.as_str().into(),
+            Self::Binary { data, .. } => {
+                let mut hex = String::with_capacity(2 + data.len() * 2);
+                hex.push_str("0x");
+                for byte in data.iter() {
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                hex.into()
+            }
         }
     }
 }
@@ -50,6 +72,11 @@ pub struct QueryResult {
     /// Row-returning result sets after the first, which are not kept yet.
     pub extra_result_sets: usize,
     pub elapsed_ms: u64,
+    /// Rows held in Rust for this result (all fetched rows); `rows` above
+    /// carries only the first page. Set by query tabs.
+    pub total_rows: usize,
+    /// Handle for fetching more pages, sorting, copying and exporting.
+    pub result_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -59,7 +86,7 @@ mod tests {
     #[test]
     fn binary_cells_keep_length_and_a_short_preview() {
         let data = vec![0xab; 100];
-        let Cell::Binary { bytes, preview } = Cell::binary(&data) else {
+        let Cell::Binary { bytes, preview, .. } = Cell::binary(&data) else {
             panic!("expected binary cell");
         };
         assert_eq!(bytes, 100);

@@ -183,7 +183,16 @@ handlers.run_statement = ({ sql }) =>
           extraResultSets: 0,
           elapsedMs: 18,
         });
-      resolve({ ...handlers.preview_object({ name: "orders" }), elapsedMs: 9 });
+      resolve({
+        columns: bigColumns,
+        rows: bigRows.slice(0, 200),
+        totalRows: bigRows.length,
+        resultId: "r1",
+        rowsAffected: null,
+        truncated: false,
+        extraResultSets: 0,
+        elapsedMs: 9,
+      });
     };
     if (!text.includes("sleep")) return finish();
     const timer = setTimeout(finish, 4000);
@@ -197,6 +206,47 @@ handlers.run_statement = ({ sql }) =>
       });
     };
   });
+// A large sample result kept "in Rust" for paging, sorting and copying.
+const bigRows = Array.from({ length: 5000 }, (_, i) => [
+  v(String(100000 + i)),
+  i % 7 === 0 ? v(null) : v(`customer${i}@example.com`),
+  v(((i * 37.5) % 9000).toFixed(2)),
+  i % 11 === 0 ? v("") : v(["pending", "paid", "refunded"][i % 3]),
+  v(JSON.stringify({ items: i % 5, gift: i % 2 === 0 })),
+]);
+const bigColumns = [
+  { name: "id", typeName: "INT8" },
+  { name: "customer_email", typeName: "TEXT" },
+  { name: "total", typeName: "NUMERIC" },
+  { name: "status", typeName: "TEXT" },
+  { name: "meta", typeName: "JSONB" },
+];
+function sortedRows(sort) {
+  if (!sort) return bigRows;
+  const numeric =
+    bigColumns[sort.column].typeName !== "TEXT" &&
+    bigColumns[sort.column].typeName !== "JSONB";
+  const key = (row) => row[sort.column].value;
+  return [...bigRows].sort((a, b) => {
+    const x = key(a),
+      y = key(b);
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = numeric ? Number(x) - Number(y) : x.localeCompare(y);
+    return sort.descending ? -c : c;
+  });
+}
+handlers.fetch_rows = ({ offset, limit, sort }) =>
+  sortedRows(sort).slice(offset, offset + limit);
+handlers.copy_rows = ({ scope }) => {
+  const [start, end] = scope.rows ?? [0, bigRows.length];
+  return bigRows
+    .slice(start, end)
+    .map((r) => r.map((c) => c.value ?? "").join("\t"))
+    .join("\n");
+};
+handlers.export_csv = ({ path }) => ({ rows: bigRows.length, path });
+
 handlers.cancel_statement = () => {
   if (!cancelRun) return false;
   cancelRun();

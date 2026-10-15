@@ -1,5 +1,6 @@
 import { homeDir, join } from "@tauri-apps/api/path";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 /** Native file picker for a PEM CA certificate. Resolves to a path or null. */
 export async function pickCaCertificate() {
@@ -27,4 +28,18 @@ export async function pickSshKey() {
     defaultPath,
   });
   return typeof path === "string" ? path : null;
+}
+
+/** Native save dialog for a CSV export. Resolves to a path or null. */
+export async function pickCsvDestination(defaultName) {
+  const path = await save({
+    title: "Export CSV",
+    defaultPath: `${defaultName.replace(/[\\/:*?"<>|]/g, "_")}.csv`,
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+export function showInFinder(path) {
+  return revealItemInDir(path);
 }

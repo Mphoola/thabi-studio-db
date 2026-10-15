@@ -7,8 +7,10 @@ use crate::{
 };
 use tauri::State;
 
-/// Rows kept per statement until the results grid adds paging (Phase 8).
-const MAX_ROWS: usize = 1_000;
+/// Default rows fetched per statement; the user can raise it in Settings.
+const DEFAULT_MAX_ROWS: usize = 10_000;
+/// Upper bound on rows kept per statement, whatever the setting says.
+const MAX_ROWS_LIMIT: usize = 1_000_000;
 /// Rows shown by the explorer's read-only data preview.
 const PREVIEW_ROWS: usize = 100;
 
@@ -182,13 +184,17 @@ pub async fn run_statement(
     database: Option<String>,
     sql: String,
     timeout_seconds: Option<u64>,
+    max_rows: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let max_rows = max_rows
+        .unwrap_or(DEFAULT_MAX_ROWS)
+        .clamp(1, MAX_ROWS_LIMIT);
     let timeout = timeout_seconds
         .filter(|s| *s > 0)
         .map(std::time::Duration::from_secs);
-    let result = tab.run(&params, database, &sql, MAX_ROWS, timeout).await;
+    let result = tab.run(&params, database, &sql, max_rows, timeout).await;
     if let Err(error) = &result
         && is_connection_failure(error)
     {
@@ -265,4 +271,81 @@ pub async fn forget_ssh_host_keys(
             })
         })
         .await
+}
+
+async fn stored_result(
+    state: &AppState,
+    id: &str,
+    tab_id: &str,
+    result_id: &str,
+) -> Result<std::sync::Arc<crate::results::StoredResult>, AppError> {
+    let (tab, _) = state
+        .connections
+        .existing_query_tab(id, tab_id)
+        .await
+        .ok_or_else(|| {
+            AppError::new(
+                "result_expired",
+                "This result is no longer kept. Run the query again.",
+            )
+        })?;
+    tab.result(result_id)
+}
+
+/// A page of a kept result, in the grid's current sort order.
+#[tauri::command]
+pub async fn fetch_rows(
+    id: String,
+    tab_id: String,
+    result_id: String,
+    offset: usize,
+    limit: usize,
+    sort: Option<crate::results::Sort>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Vec<database::Cell>>, AppError> {
+    let result = stored_result(&state, &id, &tab_id, &result_id).await?;
+    tauri::async_runtime::spawn_blocking(move || result.page(offset, limit, sort))
+        .await
+        .map_err(|_| AppError::background_task())
+}
+
+/// Selected cells as TSV or CSV text for the clipboard.
+#[tauri::command]
+pub async fn copy_rows(
+    id: String,
+    tab_id: String,
+    result_id: String,
+    scope: crate::results::Scope,
+    sort: Option<crate::results::Sort>,
+    format: crate::results::TextFormat,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let result = stored_result(&state, &id, &tab_id, &result_id).await?;
+    tauri::async_runtime::spawn_blocking(move || result.to_text(&scope, sort, format))
+        .await
+        .map_err(|_| AppError::background_task())
+}
+
+/// Writes a kept result to a CSV file the user chose in the save dialog.
+#[tauri::command]
+pub async fn export_csv(
+    id: String,
+    tab_id: String,
+    result_id: String,
+    path: String,
+    scope: crate::results::Scope,
+    sort: Option<crate::results::Sort>,
+    state: State<'_, AppState>,
+) -> Result<crate::results::ExportSummary, AppError> {
+    let result = stored_result(&state, &id, &tab_id, &result_id).await?;
+    let path = crate::results::export_path(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let rows = result.export_csv(&path, &scope, sort)?;
+        Ok(crate::results::ExportSummary {
+            rows,
+            path: path.to_string_lossy().into_owned(),
+        })
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
 }

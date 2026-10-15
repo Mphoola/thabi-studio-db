@@ -6,6 +6,7 @@ mod errors;
 mod menu;
 mod profiles;
 pub mod queries;
+pub mod results;
 mod settings;
 pub mod ssh;
 mod state;
@@ -29,6 +30,8 @@ struct ConnectionClosed {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             credentials::init_platform_store()?;
             app.set_menu(menu::build(app.handle())?)?;
@@ -76,6 +79,9 @@ pub fn run() {
             commands::connections::run_statement,
             commands::connections::cancel_statement,
             commands::connections::close_query_tab,
+            commands::connections::fetch_rows,
+            commands::connections::copy_rows,
+            commands::connections::export_csv,
             commands::connections::trust_ssh_host_key,
             commands::connections::forget_ssh_host_keys,
             commands::settings::get_app_settings,

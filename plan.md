@@ -523,31 +523,31 @@ Tasks:
 
 Tasks:
 
-- Build a virtualised results grid that supports large results without rendering every row.
-- Show column names, type information where available, row count or returned-row count, and query duration.
-- Represent SQL `NULL`, empty strings, binary data, large numeric values, timestamps, and JSON distinctly and safely.
-- Avoid silently converting large integers or high-precision decimals into lossy JavaScript numbers. Use string or typed serialisation where required.
-- Add horizontal/vertical scrolling, column resizing, column sorting for the rows already fetched, and pagination or bounded fetch controls.
-- Make it clear when the displayed rows are only a subset of the total result.
-- Add copy-cell, copy-row, and copy-selected-table-as-TSV/CSV actions.
-- Add CSV export with correct escaping for commas, quotes, and newlines; use streaming or chunked writing for large exports where practical.
-- Let users choose an export destination through a native save dialog.
-- Ensure binary and special database types have documented export behaviour.
-- Add empty result, query failed, cancelled, and loading states.
-- Ensure copying/exporting does not accidentally include hidden columns or unintended rows.
+- [x] Build a virtualised results grid that supports large results without rendering every row.
+- [x] Show column names, type information where available, row count or returned-row count, and query duration.
+- [x] Represent SQL `NULL`, empty strings, binary data, large numeric values, timestamps, and JSON distinctly and safely.
+- [x] Avoid silently converting large integers or high-precision decimals into lossy JavaScript numbers. Use string or typed serialisation where required.
+- [x] Add horizontal/vertical scrolling, column resizing, column sorting for the rows already fetched, and pagination or bounded fetch controls.
+- [x] Make it clear when the displayed rows are only a subset of the total result.
+- [x] Add copy-cell, copy-row, and copy-selected-table-as-TSV/CSV actions.
+- [x] Add CSV export with correct escaping for commas, quotes, and newlines; use streaming or chunked writing for large exports where practical.
+- [x] Let users choose an export destination through a native save dialog.
+- [x] Ensure binary and special database types have documented export behaviour.
+- [x] Add empty result, query failed, cancelled, and loading states.
+- [x] Ensure copying/exporting does not accidentally include hidden columns or unintended rows.
 
 **Deliverables:**
 
-- Efficient results grid.
-- Clipboard operations.
-- CSV export.
+- [x] Efficient results grid.
+- [x] Clipboard operations.
+- [x] CSV export.
 
 **Exit criteria:**
 
-- Large result sets remain responsive within documented limits.
-- Nulls, Unicode, commas, quotes, newlines, and high-precision values are handled correctly.
-- Exported CSV opens in common spreadsheet tools and matches the selected output scope.
-- The UI distinguishes fetched rows from total rows when total count is unknown.
+- [x] Large result sets remain responsive within documented limits.
+- [x] Nulls, Unicode, commas, quotes, newlines, and high-precision values are handled correctly.
+- [x] Exported CSV opens in common spreadsheet tools and matches the selected output scope.
+- [x] The UI distinguishes fetched rows from total rows when total count is unknown.
 
 ### Phase 9 — Query history, saved queries, polish, and safeguards
 
@@ -846,7 +846,12 @@ Update this section as work progresses.
   - [x] One session per query tab; cancel (server-side for PostgreSQL/MySQL, session reset for SQL Server); timeout preference; no retries
   - [x] Confirmation for risky statements and for writes on Production
   - [x] Native menu bar; 37 integration tests pass
-- [ ] Phase 8 — Results grid, data inspection, and CSV export
+- [x] Phase 8 — Results grid, data inspection, and CSV export (2026-10-15, branch `phase-8-results-grid`, not committed)
+  - [x] Results kept in Rust up to a configurable limit; virtualised grid fetches pages
+  - [x] Sort, resize, select, inspect values (JSON, binary, NULL, empty)
+  - [x] Copy as TSV/CSV and streamed CSV export with the native save dialog
+  - [x] Explorer and query tabs scoped to a connection's saved database; USE follows
+  - [x] 39 integration tests pass
 - [ ] Phase 9 — Query history, saved queries, polish, and safeguards
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release
 

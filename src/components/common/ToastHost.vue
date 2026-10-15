@@ -54,6 +54,17 @@ const toneClass = {
           >
             {{ toast.detail }}
           </p>
+          <button
+            v-if="toast.action"
+            type="button"
+            class="mt-1 rounded-sm text-sm font-medium text-accent-text hover:underline"
+            @click="
+              toast.action.run();
+              dismiss(toast.id);
+            "
+          >
+            {{ toast.action.label }}
+          </button>
         </div>
         <button
           type="button"

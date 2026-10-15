@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ChevronDown, Play, Square } from "lucide-vue-next";
+import { ChevronDown, Database, Play, Square } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { environmentFor } from "../../lib/environments.js";
@@ -28,6 +28,11 @@ watch(
   async (isConnected) => {
     databases.value = [];
     if (!isConnected) return;
+    // A connection saved with a database offers just that database.
+    if (profile.value.databaseName) {
+      databases.value = [profile.value.databaseName];
+      return;
+    }
     try {
       databases.value = await listDatabases(profile.value.id);
     } catch {
@@ -119,11 +124,20 @@ const cancelHint = computed(() =>
       <span v-if="!connected" class="text-fg-subtle">· Not connected</span>
     </span>
     <span v-else class="text-sm text-warning-text">No connection selected</span>
-    <label class="relative flex items-center text-sm text-fg-muted">
+    <label
+      v-tooltip="'Database this tab runs in'"
+      class="relative flex items-center text-sm text-fg-muted"
+    >
+      <Database
+        :size="13"
+        :stroke-width="1.75"
+        class="pointer-events-none absolute left-2 text-fg-subtle"
+        aria-hidden="true"
+      />
       <span class="sr-only">Database</span>
       <select
         v-model="tab.database"
-        class="h-6 appearance-none rounded-md border border-line bg-surface pr-6 pl-2 text-sm text-fg disabled:opacity-50"
+        class="h-6 max-w-48 appearance-none rounded-md border border-line-strong bg-surface pr-6 pl-7 text-sm font-medium text-fg hover:border-fg-subtle disabled:opacity-50"
         :disabled="tab.running || !databaseOptions.length"
         aria-label="Database"
       >

@@ -54,6 +54,11 @@ export function useExplorer() {
     const id = profile.value.id;
     if (!node) {
       const current = status.value.server?.database;
+      // A connection saved with a database shows only that database.
+      const scoped = profile.value.databaseName
+        ? current || profile.value.databaseName
+        : null;
+      if (scoped) return [databaseNode(scoped)];
       const names = await listDatabases(id);
       // Put the database this connection opened first.
       names.sort((a, b) => (a === current ? -1 : b === current ? 1 : 0));

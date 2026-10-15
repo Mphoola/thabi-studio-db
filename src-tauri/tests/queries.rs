@@ -206,3 +206,100 @@ async fn changing_database_opens_a_new_session() {
     );
     tab.close().await;
 }
+
+#[tokio::test]
+#[ignore]
+async fn large_results_stay_in_rust_and_export_to_csv() {
+    use thabi_studio_lib::results::{Scope, Sort};
+    let tab = QueryTab::default();
+    let p = params(Engine::Postgres);
+    let result = tab
+        .run(
+            &p,
+            None,
+            "SELECT n, 'row, ' || n AS label, CASE WHEN n % 10 = 0 THEN NULL ELSE n * 1.5 END AS amount \
+             FROM generate_series(1, 5000) AS n",
+            100_000,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.total_rows, 5000);
+    assert_eq!(result.rows.len(), 200, "only the first page goes to the UI");
+    let stored = tab.result(result.result_id.as_deref().unwrap()).unwrap();
+
+    // Numeric sort, descending, NULLs last.
+    let top = stored.page(
+        0,
+        3,
+        Some(Sort {
+            column: 2,
+            descending: true,
+        }),
+    );
+    assert_eq!(
+        top[0][0],
+        thabi_studio_lib::database::Cell::Value("4999".into())
+    );
+    let bottom = stored.page(
+        4999,
+        1,
+        Some(Sort {
+            column: 2,
+            descending: true,
+        }),
+    );
+    assert_eq!(bottom[0][2], thabi_studio_lib::database::Cell::Null);
+
+    let path = std::env::temp_dir().join(format!("thabi-it-{}.csv", std::process::id()));
+    let rows = stored
+        .export_csv(
+            &path,
+            &Scope {
+                include_header: true,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(rows, 5000);
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let mut lines = text.trim_start_matches('\u{feff}').split("\r\n");
+    assert_eq!(lines.next(), Some("n,label,amount"));
+    assert_eq!(lines.next(), Some("1,\"row, 1\",1.5"));
+    assert!(
+        text.contains("\r\n10,\"row, 10\",\r\n"),
+        "NULL exports as an empty field"
+    );
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_row_limit_is_reported() {
+    let tab = QueryTab::default();
+    let p = params(Engine::MySql);
+    tab.run(
+        &p,
+        None,
+        "SET SESSION cte_max_recursion_depth = 5000",
+        10,
+        None,
+    )
+    .await
+    .unwrap();
+    let result = tab
+        .run(
+            &p,
+            None,
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3000) SELECT i FROM n",
+            1000,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.total_rows, 1000);
+    assert!(result.truncated);
+    tab.close().await;
+}

@@ -1,5 +1,6 @@
 import { cancelStatement, runStatement } from "../lib/tauri/commands.js";
 import { confirmationFor } from "../lib/sqlSafety.js";
+import { useTarget } from "../lib/sqlStatements.js";
 import { confirm } from "./useConfirm.js";
 import { useAppSettings } from "./useAppSettings.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
@@ -68,8 +69,12 @@ export function useQueryRunner() {
             database: tab.database,
             sql,
             timeoutSeconds: settings.value.queryTimeoutSeconds || null,
+            maxRows: settings.value.maxResultRows || null,
           });
           entry.status = "completed";
+          // `USE db` moved the tab's session; keep the picker in step.
+          const used = profile.driver === "postgres" ? null : useTarget(sql);
+          if (used) tab.database = used;
           entry.elapsedMs = entry.result.elapsedMs;
         } catch (error) {
           entry.error = error;

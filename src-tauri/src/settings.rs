@@ -12,6 +12,8 @@ pub struct AppSettings {
     pub selected_profile_id: Option<String>,
     /// 0 means no limit.
     pub query_timeout_seconds: u64,
+    /// Rows fetched and kept per result.
+    pub max_result_rows: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +63,9 @@ pub fn read_settings(connection: &Connection) -> Result<AppSettings, AppError> {
         query_timeout_seconds: setting(connection, "query_timeout_seconds")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
+        max_result_rows: setting(connection, "max_result_rows")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(10_000),
     })
 }
 
@@ -144,6 +149,11 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             .as_bool()
             .map(|open| open.to_string())
             .ok_or_else(|| AppError::new("validation", "Choose whether the sidebar is open."))?,
+        "max_result_rows" => value
+            .as_u64()
+            .filter(|rows| (1..=1_000_000).contains(rows))
+            .ok_or_else(|| AppError::new("validation", "Choose how many rows to keep."))?
+            .to_string(),
         "query_timeout_seconds" => value
             .as_u64()
             .filter(|seconds| *seconds <= 24 * 60 * 60)
@@ -234,6 +244,7 @@ mod tests {
                 sidebar_open: true,
                 selected_profile_id: None,
                 query_timeout_seconds: 0,
+                max_result_rows: 10_000,
             }
         );
     }

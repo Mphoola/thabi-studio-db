@@ -14,9 +14,11 @@
 use crate::{
     database::{CancelTarget, ConnectParams, QueryResult, Session, cancel_backend},
     errors::AppError,
+    results::{StoredResult, into_first_page},
 };
 use serde_json::json;
 use std::{
+    collections::VecDeque,
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
@@ -28,6 +30,9 @@ use tokio_util::sync::CancellationToken;
 
 /// How long a server-side cancel may take before the session is dropped.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
+/// Results kept per tab for paging, copying and export. Older ones are
+/// dropped so memory stays bounded.
+const KEPT_RESULTS: usize = 8;
 
 #[derive(Default)]
 pub struct QueryTab {
@@ -39,6 +44,8 @@ pub struct QueryTab {
     abort: StdMutex<CancellationToken>,
     cancel_requested: AtomicBool,
     running: AtomicBool,
+    results: StdMutex<VecDeque<(String, Arc<StoredResult>)>>,
+    next_result: std::sync::atomic::AtomicU64,
 }
 
 fn query_running() -> AppError {
@@ -71,6 +78,37 @@ enum Stop {
 }
 
 impl QueryTab {
+    /// Keeps the full rows of a result and returns its first page.
+    fn keep(&self, result: QueryResult) -> QueryResult {
+        if result.columns.is_empty() {
+            return result;
+        }
+        let id = format!("r{}", self.next_result.fetch_add(1, Ordering::Relaxed) + 1);
+        let (first, stored) = into_first_page(result, id.clone());
+        let mut results = self.results.lock().expect("tab lock");
+        results.push_back((id, Arc::new(stored)));
+        while results.len() > KEPT_RESULTS {
+            results.pop_front();
+        }
+        first
+    }
+
+    /// A result kept by this tab, for paging, copying or export.
+    pub fn result(&self, id: &str) -> Result<Arc<StoredResult>, AppError> {
+        self.results
+            .lock()
+            .expect("tab lock")
+            .iter()
+            .find(|(key, _)| key == id)
+            .map(|(_, result)| result.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    "result_expired",
+                    "This result is no longer kept. Run the query again.",
+                )
+            })
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -150,10 +188,18 @@ impl QueryTab {
             Ok((result, Stop::Timeout)) => match result {
                 Err(_) => Err(timed_out(seconds, false)),
                 // It finished just as the limit was reached.
-                Ok(result) => Ok(result),
+                Ok(result) => Ok(self.keep(result)),
             },
             Ok((result, Stop::None)) => match result {
                 Err(_) if self.cancel_requested.load(Ordering::SeqCst) => Err(cancelled(false)),
+                Ok(result) => {
+                    // `USE db` moved this session to another database; remember
+                    // it so the next run doesn't open a new session.
+                    if let Some(database) = use_target(sql) {
+                        *self.database.lock().expect("tab lock") = Some(database);
+                    }
+                    Ok(self.keep(result))
+                }
                 other => other,
             },
         }
@@ -202,3 +248,38 @@ impl QueryTab {
 }
 
 pub type QueryTabHandle = Arc<QueryTab>;
+
+/// The database named by a `USE name` statement, without quotes.
+fn use_target(sql: &str) -> Option<String> {
+    let rest = sql.trim().strip_prefix(|c: char| c == 'u' || c == 'U')?;
+    let rest = rest.strip_prefix(['s', 'S'])?.strip_prefix(['e', 'E'])?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let name = rest.trim().trim_end_matches(';').trim();
+    if name.is_empty() || (name.contains(char::is_whitespace) && !name.starts_with(['`', '[', '"']))
+    {
+        return None;
+    }
+    let unquoted = name
+        .strip_prefix('`')
+        .and_then(|n| n.strip_suffix('`'))
+        .or_else(|| name.strip_prefix('[').and_then(|n| n.strip_suffix(']')))
+        .or_else(|| name.strip_prefix('"').and_then(|n| n.strip_suffix('"')))
+        .unwrap_or(name);
+    Some(unquoted.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::use_target;
+
+    #[test]
+    fn reads_use_statements() {
+        assert_eq!(use_target("USE shop"), Some("shop".into()));
+        assert_eq!(use_target("  use `my db`;"), Some("my db".into()));
+        assert_eq!(use_target("USE [Sales Ü]"), Some("Sales Ü".into()));
+        assert_eq!(use_target("SELECT 1"), None);
+        assert_eq!(use_target("user_defined()"), None);
+    }
+}

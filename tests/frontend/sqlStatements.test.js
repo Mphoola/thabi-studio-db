@@ -66,3 +66,13 @@ describe("statementAt", () => {
     );
   });
 });
+
+describe("useTarget", () => {
+  it("reads the database from USE statements", async () => {
+    const { useTarget } = await import("../../src/lib/sqlStatements.js");
+    expect(useTarget("USE shop")).toBe("shop");
+    expect(useTarget("use `my db`;")).toBe("my db");
+    expect(useTarget("USE [Sales Ü]")).toBe("Sales Ü");
+    expect(useTarget("SELECT 1")).toBeNull();
+  });
+});

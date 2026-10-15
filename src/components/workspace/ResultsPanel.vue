@@ -3,13 +3,24 @@ import { computed } from "vue";
 import { CircleAlert, CircleCheck, CircleSlash, Clock } from "lucide-vue-next";
 import InlineAlert from "../common/InlineAlert.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
-import DataPreview from "../explorer/DataPreview.vue";
+import ResultView from "../grid/ResultView.vue";
+import { remoteSource } from "../../lib/gridSources.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 
 /** Results of the last run: one tab per statement, plus messages. */
 const props = defineProps({ tab: { type: Object, required: true } });
 
 const run = computed(() => props.tab.runs[props.tab.activeRun] ?? null);
+const source = computed(() =>
+  run.value?.status === "completed" && run.value.result.columns.length
+    ? remoteSource({
+        profileId: props.tab.profileId,
+        tabId: props.tab.id,
+        result: run.value.result,
+        exportName: props.tab.title,
+      })
+    : null,
+);
 const store = useConnectionProfiles();
 // Errors name where the query ran, e.g. Query failed on “Production” (shop).
 const failedTitle = computed(() => {
@@ -44,8 +55,8 @@ function label(entry, index) {
   if (entry.status !== "completed") return `Statement ${index + 1}`;
   const r = entry.result;
   if (r.columns.length) {
-    const rows = r.rows.length.toLocaleString();
-    return `Result ${index + 1} · ${rows}${r.truncated ? "+" : ""} rows`;
+    const total = (r.totalRows ?? r.rows.length).toLocaleString();
+    return `Result ${index + 1} · ${total}${r.truncated ? "+" : ""} rows`;
   }
   return `Statement ${index + 1}`;
 }
@@ -107,17 +118,11 @@ function message(entry) {
     >
       <SpinnerIcon :size="14" /> Running…
     </div>
-    <DataPreview
-      v-else-if="run.status === 'completed' && run.result.columns.length"
+    <ResultView
+      v-else-if="source"
       class="min-h-0 flex-1"
+      :source="source"
       :result="run.result"
-      :footnote="
-        run.result.truncated
-          ? 'Only the first 1,000 rows are kept for now'
-          : run.result.extraResultSets
-            ? `${run.result.extraResultSets} more result sets not shown`
-            : ''
-      "
     />
     <div v-else class="flex flex-col gap-3 overflow-auto p-4">
       <InlineAlert

@@ -10,12 +10,14 @@ const defaults = {
   sidebarOpen: true,
   selectedProfileId: null,
   queryTimeoutSeconds: 0,
+  maxResultRows: 10000,
 };
 const nativeKeys = {
   themeMode: "theme_mode",
   sidebarWidth: "sidebar_width",
   sidebarOpen: "sidebar_open",
   queryTimeoutSeconds: "query_timeout_seconds",
+  maxResultRows: "max_result_rows",
 };
 const settings = ref({ ...defaults });
 

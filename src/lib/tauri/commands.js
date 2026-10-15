@@ -68,8 +68,37 @@ export function listDatabases(id) {
  * Runs one statement on a query tab's own session. Keeps at most 1,000 rows.
  * Rejects with kind "query_cancelled" or "query_timed_out" when stopped.
  */
-export function runStatement(id, tabId, { database, sql, timeoutSeconds }) {
-  return call("run_statement", { id, tabId, database, sql, timeoutSeconds });
+export function runStatement(
+  id,
+  tabId,
+  { database, sql, timeoutSeconds, maxRows },
+) {
+  return call("run_statement", {
+    id,
+    tabId,
+    database,
+    sql,
+    timeoutSeconds,
+    maxRows,
+  });
+}
+
+/** A page of a kept result in the given sort ({ column, descending }). */
+export function fetchRows(id, tabId, resultId, { offset, limit, sort }) {
+  return call("fetch_rows", { id, tabId, resultId, offset, limit, sort });
+}
+
+/**
+ * Cells as text for the clipboard. scope: { rows?: [start, end],
+ * columns?: number[], includeHeader }. format: "tsv" | "csv".
+ */
+export function copyRows(id, tabId, resultId, { scope, sort, format }) {
+  return call("copy_rows", { id, tabId, resultId, scope, sort, format });
+}
+
+/** @returns {Promise<{ rows: number, path: string }>} */
+export function exportCsv(id, tabId, resultId, { path, scope, sort }) {
+  return call("export_csv", { id, tabId, resultId, path, scope, sort });
 }
 
 /** @returns {Promise<boolean>} false when nothing was running. */

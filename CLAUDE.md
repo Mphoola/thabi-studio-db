@@ -25,9 +25,11 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   `phase-5-remote-ssh`. Read `docs/decisions/0007-ssh-tunnels.md`.
 - Phase 6 (database explorer): complete on branch `phase-6-explorer`. Read
   `docs/decisions/0008-explorer.md`.
-- Phase 7 (SQL editor): done on branch `phase-7-sql-editor`, not committed
-  (the user reviews before committing). Read `docs/decisions/0009-sql-editor.md`.
-- Next: Phase 8 (results grid, data inspection, CSV export).
+- Phase 7 (SQL editor): committed on `phase-7-sql-editor`. Read
+  `docs/decisions/0009-sql-editor.md`.
+- Phase 8 (results grid): done on `phase-8-results-grid`, not committed (the
+  user tests before committing). Read `docs/decisions/0010-results-grid.md`.
+- Next: Phase 9 (history, saved queries, polish).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -85,6 +87,9 @@ Run `npm run check` after every meaningful change and before calling work done.
 - `src/components/workspace/` — tab bar, query tab, SQL editor (CodeMirror), results.
 - `src-tauri/src/queries.rs` — query-tab sessions, cancel and timeout.
 - `src-tauri/src/menu.rs` — native menu bar; items forward command ids.
+- `src-tauri/src/results.rs` — kept results: paging, sorting, copy, CSV export.
+- `src/components/grid/` — virtualised results grid and value inspector.
+  Never load a whole result into the webview; use a grid source.
 - `src/dev/mockBackend.js` — `?mock` sample backend for reviewing screens in
   a browser (dev only).
 - `src-tauri/tests/drivers.rs` — integration tests against real databases.

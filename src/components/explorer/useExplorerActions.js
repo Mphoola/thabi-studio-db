@@ -1,3 +1,4 @@
+import { copyText } from "../../lib/clipboard.js";
 import {
   ClipboardCopy,
   Columns3,
@@ -51,7 +52,7 @@ export function useExplorerActions() {
 
   async function copy(text) {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       toasts.info("Copied", text);
     } catch {
       toasts.error("Couldn’t copy", "The clipboard isn’t available.");
