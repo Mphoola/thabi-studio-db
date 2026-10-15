@@ -30,6 +30,30 @@ export async function pickSshKey() {
   return typeof path === "string" ? path : null;
 }
 
+/** Native picker for a TLS client certificate (PEM or DER). */
+export async function pickClientCertificate() {
+  const path = await open({
+    title: "Choose Client Certificate",
+    multiple: false,
+    directory: false,
+    filters: [
+      { name: "Certificates", extensions: ["pem", "crt", "cer", "der"] },
+    ],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Native picker for the private key that matches a client certificate. */
+export async function pickClientKey() {
+  const path = await open({
+    title: "Choose Client Private Key",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Private keys", extensions: ["pem", "key", "der"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
 /** Native save dialog for a CSV export. Resolves to a path or null. */
 export async function pickCsvDestination(defaultName) {
   const path = await save({

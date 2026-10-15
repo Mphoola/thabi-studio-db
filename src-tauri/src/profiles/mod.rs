@@ -28,6 +28,9 @@ pub struct ConnectionProfile {
     pub tls_mode: String,
     /// Custom CA certificate used with "verify-full"; empty for system roots.
     pub tls_ca_path: String,
+    /// Client certificate and key for mutual TLS, as file paths.
+    pub tls_client_cert: String,
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: u16,
@@ -87,6 +90,10 @@ pub struct ProfileInput {
     pub tls_mode: String,
     #[serde(default)]
     pub tls_ca_path: String,
+    #[serde(default)]
+    pub tls_client_cert: String,
+    #[serde(default)]
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: String,

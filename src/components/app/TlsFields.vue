@@ -6,6 +6,7 @@ import { TLS_MODES, tlsHint } from "../../lib/tls.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 import SelectInput from "../common/SelectInput.vue";
+import TlsClientFields from "./TlsClientFields.vue";
 
 const form = defineModel("form", { type: Object, required: true });
 defineProps({ fields: { type: Object, required: true } });
@@ -28,6 +29,7 @@ async function chooseCa() {
 
 <template>
   <div class="grid grid-cols-2 items-start gap-3">
+    <TlsClientFields v-model:form="form" :fields="fields" />
     <SelectInput
       v-model="mode"
       label="TLS"

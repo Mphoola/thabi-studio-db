@@ -1304,7 +1304,7 @@ Update this section as work progresses.
   - [x] `~/.ssh/config`: Host aliases, IdentityFile and one ProxyJump hop, shown before use (`docs/decisions/0018-ssh-config.md`)
   - [x] "Ask every time" for the database password, SSH password and key passphrase, plus per-connection SSH keep-alive (`docs/decisions/0019-ask-every-time.md`)
   - [x] Startup commands per connection, run on every new session including query tabs; a failure stops the connect (`docs/decisions/0020-startup-commands.md`)
-  - [ ] Mutual TLS (client certificate and key)
+  - [x] Mutual TLS: client certificate and key as paths, on MySQL, PostgreSQL and SQL Server (`docs/decisions/0021-mutual-tls.md`)
   - [ ] Per-connection query timeout and row limit overriding the app default
   - [ ] Import/export without secrets, multiple windows, reconnect
 - [ ] Phase 12 — Table data and results power-ups

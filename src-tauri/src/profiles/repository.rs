@@ -43,6 +43,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         auth_mode: row.get("auth_mode")?,
         tls_mode: row.get("tls_mode")?,
         tls_ca_path: row.get("tls_ca_path")?,
+        tls_client_cert: row.get("tls_client_cert")?,
+        tls_client_key: row.get("tls_client_key")?,
         ssh_enabled: row.get::<_, i64>("ssh_enabled")? != 0,
         ssh_host: row.get("ssh_host")?,
         ssh_port: row.get("ssh_port")?,
@@ -70,7 +72,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
 
 fn profile_columns() -> &'static str {
     "id, name, environment, driver, host, port, database_name, username,
-     auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
+     auth_mode, tls_mode, tls_ca_path, tls_client_cert, tls_client_key,
+     ssh_enabled, ssh_host, ssh_port, ssh_username,
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
      has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
      ask_database_password, ask_ssh_password, ask_ssh_key_passphrase,
@@ -139,6 +142,8 @@ struct Target<'a> {
     username: &'a str,
     tls_mode: &'a str,
     tls_ca_path: &'a str,
+    tls_client_cert: &'a str,
+    tls_client_key: &'a str,
 }
 
 fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectParams, AppError> {
@@ -151,6 +156,10 @@ fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectPa
         password,
         tls: TlsMode::from_setting(target.tls_mode)?,
         ca_path: Some(PathBuf::from(target.tls_ca_path)).filter(|_| !target.tls_ca_path.is_empty()),
+        client_cert: Some(PathBuf::from(target.tls_client_cert))
+            .filter(|_| !target.tls_client_cert.is_empty()),
+        client_key: Some(PathBuf::from(target.tls_client_key))
+            .filter(|_| !target.tls_client_key.is_empty()),
         ssh: None,
         connect_to: None,
         read_only: false,
@@ -317,6 +326,8 @@ pub fn connect_params(
             username: &profile.username,
             tls_mode: &profile.tls_mode,
             tls_ca_path: &profile.tls_ca_path,
+            tls_client_cert: &profile.tls_client_cert,
+            tls_client_key: &profile.tls_client_key,
         },
         bundle.database_password,
     )?;
@@ -387,6 +398,8 @@ pub fn connect_params_for_input(
             username: &input.username,
             tls_mode: &input.tls_mode,
             tls_ca_path: &input.tls_ca_path,
+            tls_client_cert: &input.tls_client_cert,
+            tls_client_key: &input.tls_client_key,
         },
         password,
     )?;
@@ -529,13 +542,14 @@ fn insert_profile(
                 id, name, environment, driver, host, port, database_name, username,
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
+                tls_client_cert, tls_client_key,
                 ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
                 group_name, colour, sort_order, ask_database_password,
                 ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds,
                 startup_commands
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31
              )",
             params![
                 id,
@@ -555,6 +569,8 @@ fn insert_profile(
                 bundle.ssh_password.is_some(),
                 profile.tls_mode,
                 profile.tls_ca_path,
+                profile.tls_client_cert,
+                profile.tls_client_key,
                 profile.ssh_auth_mode,
                 profile.ssh_key_path,
                 bundle.ssh_key_passphrase.is_some(),
@@ -729,7 +745,7 @@ pub fn update_validated_profile(
             group_name = ?22, colour = ?23,
             ask_database_password = ?24, ask_ssh_password = ?25,
             ask_ssh_key_passphrase = ?26, ssh_keepalive_seconds = ?27,
-            startup_commands = ?28,
+            startup_commands = ?28, tls_client_cert = ?29, tls_client_key = ?30,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -761,6 +777,8 @@ pub fn update_validated_profile(
             profile.ask_ssh_key_passphrase,
             profile.ssh_keepalive_seconds,
             profile.startup_commands,
+            profile.tls_client_cert,
+            profile.tls_client_key,
         ],
     );
     if update_result.is_err() {
@@ -825,6 +843,8 @@ pub fn duplicate_profile(
         username: source.username.clone(),
         tls_mode: source.tls_mode.clone(),
         tls_ca_path: source.tls_ca_path.clone(),
+        tls_client_cert: source.tls_client_cert.clone(),
+        tls_client_key: source.tls_client_key.clone(),
         ssh_enabled: source.ssh_enabled,
         ssh_host: source.ssh_host.clone(),
         ssh_port: source.ssh_port.to_string(),
@@ -1533,5 +1553,45 @@ mod tests {
             .expect_err("unknown safe mode should be rejected");
         assert_eq!(error.kind, "validation");
         assert!(error.fields.unwrap().contains_key("safeMode"));
+    }
+
+    /// Mutual TLS: the client certificate and key reach the driver as paths,
+    /// and neither the key's contents nor its location ends up in a debug log.
+    #[test]
+    fn client_certificate_files_reach_the_driver() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let dir = std::env::temp_dir().join(format!("thabi-mtls-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cert = dir.join("client.crt");
+        let key = dir.join("client.key");
+        std::fs::write(&cert, b"certificate").unwrap();
+        std::fs::write(&key, b"private key").unwrap();
+
+        let mut profile = input();
+        profile.tls_mode = "verify-full".into();
+        profile.tls_client_cert = cert.display().to_string();
+        profile.tls_client_key = key.display().to_string();
+        let saved = create_profile(&connection, &credentials, profile).unwrap();
+        assert_eq!(saved.profile.tls_client_cert, cert.display().to_string());
+
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(
+            params.client_cert.as_ref().map(|p| p.display().to_string()),
+            Some(cert.display().to_string())
+        );
+        assert_eq!(
+            params.client_key.as_ref().map(|p| p.display().to_string()),
+            Some(key.display().to_string())
+        );
+        // Where the private key lives is itself worth keeping out of logs.
+        assert!(!format!("{params:?}").contains("client.key"));
+
+        // A profile without one connects without it.
+        let plain = create_profile(&connection, &credentials, input()).unwrap();
+        let (_, params) = connect_params(&connection, &credentials, &plain.profile.id).unwrap();
+        assert!(params.client_cert.is_none() && params.client_key.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

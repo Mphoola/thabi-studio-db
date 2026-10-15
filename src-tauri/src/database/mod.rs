@@ -97,6 +97,10 @@ pub struct ConnectParams {
     pub tls: TlsMode,
     /// Custom CA certificate (PEM) used with `TlsMode::Verify`.
     pub ca_path: Option<PathBuf>,
+    /// Client certificate and private key for mutual TLS, as file paths. The
+    /// key is read at connect time and never copied.
+    pub client_cert: Option<PathBuf>,
+    pub client_key: Option<PathBuf>,
     /// Reach the database through this SSH server.
     pub ssh: Option<SshParams>,
     /// Where to open the TCP connection when it differs from host:port
@@ -131,6 +135,12 @@ impl std::fmt::Debug for ConnectParams {
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("tls", &self.tls)
             .field("ca_path", &self.ca_path)
+            .field("client_cert", &self.client_cert)
+            // Never print a path that points at a private key.
+            .field(
+                "client_key",
+                &self.client_key.as_ref().map(|_| "<redacted>"),
+            )
             .field("ssh", &self.ssh)
             .field("read_only", &self.read_only)
             .field("startup_commands", &self.startup_commands.len())
@@ -497,6 +507,8 @@ mod tests {
             password: Some("hunter2".into()),
             tls: TlsMode::Verify,
             ca_path: None,
+            client_cert: None,
+            client_key: None,
             ssh: None,
             connect_to: None,
             read_only: false,

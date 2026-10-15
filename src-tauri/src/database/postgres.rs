@@ -76,6 +76,10 @@ impl DatabaseSession for PgSession {
         if let Some(ca) = &params.ca_path {
             options = options.ssl_root_cert(ca);
         }
+        // Mutual TLS: present this certificate and key to the server.
+        if let (Some(cert), Some(key)) = (&params.client_cert, &params.client_key) {
+            options = options.ssl_client_cert(cert).ssl_client_key(key);
+        }
         let connection = options
             .connect()
             .await

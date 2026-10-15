@@ -58,6 +58,15 @@ impl DatabaseSession for SqlServerSession {
             TlsMode::Off => config.encryption(EncryptionLevel::NotSupported),
         }
 
+        // Mutual TLS: Tiberius reads PEM or DER files with the rustls backend
+        // this build uses. Required by TDS 8.0 strict connections.
+        if let (Some(cert), Some(key)) = (&params.client_cert, &params.client_key) {
+            config.client_certificate(
+                cert.to_string_lossy().into_owned(),
+                key.to_string_lossy().into_owned(),
+            );
+        }
+
         // Through a tunnel, TCP goes to the local end while TLS still checks
         // the real host name (config.host above).
         let tcp = match params.connect_to {

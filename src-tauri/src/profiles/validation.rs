@@ -12,6 +12,8 @@ pub struct ValidatedProfile {
     pub username: String,
     pub tls_mode: String,
     pub tls_ca_path: String,
+    pub tls_client_cert: String,
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: u16,
@@ -147,6 +149,39 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
     } else {
         String::new()
     };
+
+    // Mutual TLS needs both halves and both files; half a pair is a mistake
+    // that would otherwise surface as a confusing handshake error.
+    let tls_client_cert = input.tls_client_cert.trim().to_owned();
+    let tls_client_key = input.tls_client_key.trim().to_owned();
+    if tls_mode == "disable" && !(tls_client_cert.is_empty() && tls_client_key.is_empty()) {
+        fields.insert(
+            "tlsClientCert".into(),
+            "Turn TLS on to use a client certificate.".into(),
+        );
+    } else {
+        match (tls_client_cert.is_empty(), tls_client_key.is_empty()) {
+            (true, true) => {}
+            (false, false) => {
+                if let Err(message) = check_key_file(&tls_client_cert) {
+                    fields.insert("tlsClientCert".into(), message.into());
+                }
+                if let Err(message) = check_key_file(&tls_client_key) {
+                    fields.insert("tlsClientKey".into(), message.into());
+                }
+            }
+            _ => {
+                fields.insert(
+                    "tlsClientCert".into(),
+                    "Choose both a client certificate and its private key.".into(),
+                );
+                fields.insert(
+                    "tlsClientKey".into(),
+                    "Choose both a client certificate and its private key.".into(),
+                );
+            }
+        }
+    }
 
     let mut ssh_host = input.ssh_host.trim().to_owned();
     let ssh_username = input.ssh_username.trim().to_owned();
@@ -303,6 +338,8 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         username,
         tls_mode,
         tls_ca_path,
+        tls_client_cert,
+        tls_client_key,
         ssh_enabled: input.ssh_enabled,
         ssh_host,
         ssh_port,
@@ -432,6 +469,8 @@ pub(crate) mod tests {
             username: "user".into(),
             tls_mode: "disable".into(),
             tls_ca_path: String::new(),
+            tls_client_cert: String::new(),
+            tls_client_key: String::new(),
             ssh_enabled: false,
             ssh_host: String::new(),
             ssh_port: "22".into(),

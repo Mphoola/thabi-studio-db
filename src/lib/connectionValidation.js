@@ -152,6 +152,23 @@ export function validateConnectionProfile(profile) {
   if (profile.askSshKeyPassphrase && profile.sshKeyPassphrase)
     errors.sshKeyPassphrase =
       "Choose to ask for the passphrase each time, or enter one to save — not both.";
+  const clientCert = String(profile.tlsClientCert ?? "").trim();
+  const clientKey = String(profile.tlsClientKey ?? "").trim();
+  if (profile.tlsMode === "disable" && (clientCert || clientKey))
+    errors.tlsClientCert = "Turn TLS on to use a client certificate.";
+  else if (Boolean(clientCert) !== Boolean(clientKey))
+    errors.tlsClientCert =
+      "Choose both a client certificate and its private key.";
+  else if (clientCert && clientKey) {
+    for (const [field, value] of [
+      ["tlsClientCert", clientCert],
+      ["tlsClientKey", clientKey],
+    ]) {
+      if (!value.startsWith("/") || value.length < 3)
+        errors[field] = "Choose this file again.";
+    }
+  }
+
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (
