@@ -27,6 +27,11 @@ const positions = computed(() => columns.value.map((_, position) => position));
 
 const input = ref(null);
 const draft = ref("");
+const deleted = () => props.editor?.isDeleted(props.cells);
+/** The source column a display position stands for. */
+const source = (position) =>
+  props.visible ? props.visible[position] : position;
+
 watch(
   () => props.editingCol,
   async (col) => {
@@ -39,10 +44,6 @@ watch(
   { immediate: true },
 );
 
-const deleted = () => props.editor?.isDeleted(props.cells);
-/** The source column a display position stands for. */
-const source = (position) =>
-  props.visible ? props.visible[position] : position;
 /** Shown for a column this row has no cell for. */
 const EMPTY = Object.freeze({ kind: "null" });
 

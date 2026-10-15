@@ -36,33 +36,6 @@ const profile = computed(() => {
 /** Rows this connection shows at once; see lib/tablePaging.js. */
 const pageSize = computed(() => tablePageSize(profile.value));
 const node = computed(() => props.tab.node);
-// Saved filter sets belong to the table, so they are read whenever it changes.
-const presetState = useFilterPresets({
-  profileId: computed(() => props.tab.profileId ?? explorer.profile.value?.id),
-  target: node,
-  filters,
-  toasts,
-});
-const gridView = ref(null);
-/** The filter presets menu's view of the table's presets. */
-const presetMenu = computed(() => ({
-  list: presetState.presets.value,
-  loading: presetState.loading.value,
-  currentName: presetState.existingName(),
-  apply: presetState.apply,
-  save: presetState.save,
-  remove: presetState.remove,
-}));
-
-/** What the pager shows; see lib/tablePaging.js. */
-const pager = computed(() =>
-  pagerProps(
-    gridView.value?.paging ?? null,
-    previewSource.value,
-    pageSize.value,
-  ),
-);
-const goToPage = (index) => gridView.value?.goToPage(index);
 const tab = computed({
   get: () => props.tab.view ?? "data",
   set: (value) => (props.tab.view = value),
@@ -171,6 +144,34 @@ const previewSource = computed(() =>
       })
     : null,
 );
+// Saved filter sets belong to the table, so they are read whenever it changes.
+const presetState = useFilterPresets({
+  profileId: computed(() => props.tab.profileId ?? explorer.profile.value?.id),
+  target: node,
+  filters,
+  toasts,
+});
+const gridView = ref(null);
+/** The filter presets menu's view of the table's presets. */
+const presetMenu = computed(() => ({
+  list: presetState.presets.value,
+  loading: presetState.loading.value,
+  currentName: presetState.existingName(),
+  apply: presetState.apply,
+  save: presetState.save,
+  remove: presetState.remove,
+}));
+
+/** What the pager shows; see lib/tablePaging.js. */
+const pager = computed(() =>
+  pagerProps(
+    gridView.value?.paging ?? null,
+    previewSource.value,
+    pageSize.value,
+  ),
+);
+const goToPage = (index) => gridView.value?.goToPage(index);
+
 const location = computed(() =>
   [node.value?.database, node.value?.schema].filter(Boolean).join(" · "),
 );

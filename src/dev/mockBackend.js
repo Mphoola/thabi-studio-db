@@ -45,6 +45,22 @@ const status = () => ({
 const v = (value) =>
   value === null ? { kind: "null" } : { kind: "value", value };
 
+// A large sample result kept "in Rust" for paging, sorting and copying.
+const bigRows = Array.from({ length: 5000 }, (_, i) => [
+  v(String(100000 + i)),
+  i % 7 === 0 ? v(null) : v(`customer${i}@example.com`),
+  v(((i * 37.5) % 9000).toFixed(2)),
+  i % 11 === 0 ? v("") : v(["pending", "paid", "refunded"][i % 3]),
+  v(JSON.stringify({ items: i % 5, gift: i % 2 === 0 })),
+]);
+const bigColumns = [
+  { name: "id", typeName: "INT8" },
+  { name: "customer_email", typeName: "TEXT" },
+  { name: "total", typeName: "NUMERIC" },
+  { name: "status", typeName: "TEXT" },
+  { name: "meta", typeName: "JSONB" },
+];
+
 const handlers = {
   app_info: () => ({ name: "Thabi Studio", version: "0.1.0-mock" }),
   get_app_settings: () => ({
@@ -211,21 +227,6 @@ handlers.run_statement = ({ sql }) =>
       });
     };
   });
-// A large sample result kept "in Rust" for paging, sorting and copying.
-const bigRows = Array.from({ length: 5000 }, (_, i) => [
-  v(String(100000 + i)),
-  i % 7 === 0 ? v(null) : v(`customer${i}@example.com`),
-  v(((i * 37.5) % 9000).toFixed(2)),
-  i % 11 === 0 ? v("") : v(["pending", "paid", "refunded"][i % 3]),
-  v(JSON.stringify({ items: i % 5, gift: i % 2 === 0 })),
-]);
-const bigColumns = [
-  { name: "id", typeName: "INT8" },
-  { name: "customer_email", typeName: "TEXT" },
-  { name: "total", typeName: "NUMERIC" },
-  { name: "status", typeName: "TEXT" },
-  { name: "meta", typeName: "JSONB" },
-];
 function sortedRows(sort) {
   if (!sort) return bigRows;
   const numeric =

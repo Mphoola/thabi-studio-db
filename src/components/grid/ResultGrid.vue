@@ -164,6 +164,22 @@ function scrollIntoView(row) {
     el.scrollTop = top + ROW + header - el.clientHeight;
 }
 
+const {
+  editing,
+  startEdit,
+  commitEdit,
+  endEdit,
+  toggleDeleteSelected,
+  onMenuSelect,
+} = useGridEditing({
+  props,
+  data,
+  selection,
+  scroller,
+  openInspector,
+  actions,
+});
+
 function onKeydown(event) {
   if (editing.value) return;
   if (
@@ -209,22 +225,6 @@ function openDetail() {
   const { row } = selection.focus.value;
   if (data.rowAt(row)) detailOpen.value = true;
 }
-const {
-  editing,
-  startEdit,
-  commitEdit,
-  endEdit,
-  toggleDeleteSelected,
-  onMenuSelect,
-} = useGridEditing({
-  props,
-  data,
-  selection,
-  scroller,
-  openInspector,
-  actions,
-});
-
 /**
  * A cell as the value inspector and the detail panel want it. `position` is a
  * display position; the editor and the row are addressed by source column.
