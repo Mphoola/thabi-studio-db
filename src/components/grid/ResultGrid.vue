@@ -53,7 +53,11 @@ const columnIndexes = computed(
 const columns = computed(() =>
   columnIndexes.value.map((index) => props.source.columns[index]),
 );
-const rowCount = computed(() => props.source.total);
+// The scroller is as tall as what is loaded, not as tall as the table. A
+// million rows would be twenty-six million pixels of spacer, past what a
+// browser will lay out, and holding the rows behind it would be the same
+// mistake a page size is meant to avoid.
+const rowCount = computed(() => data.loaded.value);
 const selection = useGridSelection(
   rowCount,
   computed(() => columns.value.length),
@@ -110,6 +114,30 @@ const last = computed(() =>
     Math.ceil((scrollTop.value + viewport.value) / ROW) + OVERSCAN,
   ),
 );
+/** Which page is on screen, for the pager. */
+const page = computed(
+  () =>
+    data.windowStart.value +
+    Math.floor(scrollTop.value / (ROW * data.pageSize())),
+);
+
+/** Keeps scrolling going: the next page loads as the end comes into view. */
+watch(
+  () => [scrollTop.value, viewport.value],
+  () => {
+    if (!data.hasMore.value) return;
+    const end = rowCount.value * ROW;
+    if (scrollTop.value + viewport.value >= end - ROW * 20) data.extend();
+  },
+);
+
+/** Jumps to a page; the window moves there rather than fetching up to it. */
+async function goToPage(index) {
+  await data.goto(index);
+  scrollTop.value = 0;
+  if (scroller.value) scroller.value.scrollTop = 0;
+}
+
 const visible = computed(() => {
   void data.version.value;
   const rows = [];
@@ -231,7 +259,13 @@ const rowDetail = useRowDetail();
 onMounted(() => rowDetail.set(openDetail));
 onBeforeUnmount(() => rowDetail.set(null));
 
-defineExpose({ fitToContents });
+defineExpose({
+  fitToContents,
+  page,
+  goToPage,
+  pageSize: data.pageSize,
+  hasMore: () => data.hasMore.value,
+});
 </script>
 
 <template>

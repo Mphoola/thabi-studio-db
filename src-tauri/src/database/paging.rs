@@ -16,6 +16,14 @@
 
 use super::{Engine, quote};
 
+/// Largest table page the grid may ask for at once.
+///
+/// A page is what the user moves between with the page buttons, so this is set
+/// by how many rows are worth loading together, not by how a query result is
+/// chunked for the webview. Bounded all the same: one request must not be able
+/// to ask for a whole table.
+pub const MAX_TABLE_PAGE: usize = 100_000;
+
 /// How a table's rows are ordered, as the grid asks for it.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

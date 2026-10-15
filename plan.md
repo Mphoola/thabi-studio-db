@@ -1315,6 +1315,7 @@ Update this section as work progresses.
   - [x] Catalog row estimate on open, exact count on request
   - [x] Copy and export stream the table from the server as CSV, TSV, JSON, Markdown, SQL INSERT and SQL UPDATE; copy is capped, export is not (`docs/decisions/0024-transfer-formats.md`)
   - [ ] .xlsx export (needs a spreadsheet crate, recorded and still open)
+  - [x] Rows per page from the connection's row limit, 1,000 by default, at most 100,000; page buttons (First/Prev/Next/Last) and a scrolling window that grows a page at a time, so a million-row table is navigable (`docs/decisions/0027-table-page-size.md`)
   - [x] Column controls: hide/show, reorder by drag or arrows, fit to contents, remembered per table (`docs/decisions/0025-columns.md`)
   - [x] Row detail panel (Mod+Alt+I, also in the command palette): every column with its type, full text, editable through the same staged changes (`docs/decisions/0026-row-detail.md`)
   - [ ] Saved filter presets per table

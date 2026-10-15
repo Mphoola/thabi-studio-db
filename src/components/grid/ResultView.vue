@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from "vue";
 import { Columns3, Download } from "lucide-vue-next";
 import { EXPORT_FORMATS } from "../../lib/tauri/files.js";
+import { PAGE_SIZE } from "../../composables/useGridData.js";
 import { useColumns } from "../../composables/useColumns.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
@@ -36,6 +37,16 @@ const columns = useColumns({
 });
 const columnsOpen = ref(false);
 const grid = ref(null);
+
+/**
+ * Paging, for a caller that puts the pager somewhere other than here — a table
+ * view does, since a query result is capped and pages through what it fetched.
+ */
+const page = computed(() => grid.value?.page ?? 0);
+const pageSize = computed(() => grid.value?.pageSize() ?? PAGE_SIZE);
+const hasMore = computed(() => grid.value?.hasMore() ?? false);
+const goToPage = (index) => grid.value?.goToPage(index);
+defineExpose({ page, pageSize, hasMore, goToPage });
 
 const format = ref(null);
 const exportMenu = ref(null);

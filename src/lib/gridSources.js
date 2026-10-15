@@ -57,6 +57,7 @@ export function tableSource({
   columns = [],
   firstRows = [],
   maxRows,
+  pageSize,
 }) {
   // One owner for the result's columns. The explorer owns the live list so it
   // can clear it while loading; a snapshot here would let the grid render
@@ -71,6 +72,8 @@ export function tableSource({
     estimated: true,
     firstRows,
     sortable: primaryKey?.length > 0,
+    // The chunk the user moves between with the page buttons.
+    pageSize,
     load: (offset, limit, sort) =>
       fetchTablePage(
         profileId,

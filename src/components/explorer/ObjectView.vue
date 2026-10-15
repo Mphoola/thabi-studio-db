@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { Eye, ListFilter, Plus, RefreshCw, Table2 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
@@ -9,9 +10,10 @@ import InlineAlert from "../common/InlineAlert.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
+import TablePager from "../grid/TablePager.vue";
 import { columnLayoutRef } from "../../composables/useColumns.js";
-import { PAGE_SIZE } from "../../composables/useGridData.js";
 import { tableSource } from "../../lib/gridSources.js";
+import { tablePageSize } from "../../lib/tablePaging.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
 import AddRowDialog from "./AddRowDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
@@ -23,7 +25,23 @@ import StructureView from "./StructureView.vue";
 /** A table or view opened from the explorer: read-only data or structure. */
 const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
+const connections = useConnectionProfiles();
+const profile = computed(() => {
+  const id = props.tab.profileId ?? explorer.profile.value?.id;
+  return connections.profiles.value.find((p) => p.id === id) ?? null;
+});
+/** Rows this connection shows at once; see lib/tablePaging.js. */
+const pageSize = computed(() => tablePageSize(profile.value));
 const node = computed(() => props.tab.node);
+const gridView = ref(null);
+/** The page on screen, and what is left to reach. */
+const paging = computed(() => ({
+  page: gridView.value?.page ?? 0,
+  // The view hands these over as plain values; only `goToPage` is a call.
+  pageSize: gridView.value?.pageSize ?? pageSize.value,
+  hasMore: gridView.value?.hasMore() ?? false,
+}));
+const goToPage = (index) => gridView.value?.goToPage(index);
 const tab = computed({
   get: () => props.tab.view ?? "data",
   set: (value) => (props.tab.view = value),
@@ -79,8 +97,9 @@ async function load(which = tab.value) {
       which === "data"
         ? await openObjectData(id, props.tab.id, {
             ...target,
-            // One page at a time, ordered by the key (Phase 12).
-            maxRows: PAGE_SIZE,
+            // One page at a time, ordered by the key (Phase 12), sized by
+            // the connection's row limit.
+            maxRows: pageSize.value,
             filters: request,
             // The key must be known first: paging without it would order
             // the first page differently from the rest.
@@ -126,6 +145,7 @@ const previewSource = computed(() =>
         estimate: page.value.estimatedTotal ?? null,
         // The live list, not a snapshot: the grid and the editor must agree.
         columns,
+        pageSize: pageSize.value,
         firstRows: page.value.rows,
       })
     : null,
@@ -211,18 +231,29 @@ const location = computed(() =>
         <BaseButton size="sm" @click="load()">Try Again</BaseButton>
       </InlineAlert>
     </div>
-    <ResultView
-      v-else-if="previewSource"
-      class="min-h-0 flex-1"
-      :source="previewSource"
-      :result="current.value"
-      :editor="editing.editable.value ? editor : null"
-      :layout="columnLayout"
-      :note="
-        editing.readOnlyReason.value ||
-        (editing.editable.value ? 'Double-click a cell to edit' : '')
-      "
-    />
+    <template v-else-if="previewSource">
+      <ResultView
+        ref="gridView"
+        class="min-h-0 flex-1"
+        :source="previewSource"
+        :result="current.value"
+        :editor="editing.editable.value ? editor : null"
+        :layout="columnLayout"
+        :note="
+          editing.readOnlyReason.value ||
+          (editing.editable.value ? 'Double-click a cell to edit' : '')
+        "
+      />
+      <TablePager
+        :page="paging.page"
+        :page-size="paging.pageSize"
+        :total="previewSource.total"
+        :estimated="previewSource.estimated"
+        :has-more="paging.hasMore"
+        class="h-7 shrink-0 border-t border-line bg-toolbar px-3"
+        @go="goToPage"
+      />
+    </template>
     <StructureView
       v-else
       class="min-h-0 flex-1"

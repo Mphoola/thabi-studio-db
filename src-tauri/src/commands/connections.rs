@@ -307,10 +307,11 @@ pub async fn fetch_table_page(
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
     let filter =
         database::filter::where_clause(params.engine, filters.as_deref().unwrap_or_default())?;
-    // A query tab hands back one page of rows and keeps the rest, so asking
-    // for more than that would silently return fewer rows than the grid
-    // counted on. A table page never needs more than one page anyway.
-    let limit = limit.clamp(1, crate::results::FIRST_PAGE);
+    // A table page is the chunk the user moves between with the page buttons,
+    // sized by the connection's row limit, so it is not the 200 rows a query
+    // result sends first. It is still bounded, so one request cannot ask for a
+    // whole table.
+    let limit = limit.clamp(1, database::paging::MAX_TABLE_PAGE);
     let sql = database::paging::page_sql(
         params.engine,
         &database,
