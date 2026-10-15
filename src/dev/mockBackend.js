@@ -229,9 +229,10 @@ const bigColumns = [
 function sortedRows(sort) {
   if (!sort) return bigRows;
   const numeric =
-    bigColumns[sort.column].typeName !== "TEXT" &&
-    bigColumns[sort.column].typeName !== "JSONB";
-  const key = (row) => row[sort.column].value;
+    bigColumns.find((column) => column.name === sort.column)?.typeName !==
+    "TEXT";
+  const at = bigColumns.findIndex((column) => column.name === sort.column);
+  const key = (row) => row[at].value;
   return [...bigRows].sort((a, b) => {
     const x = key(a),
       y = key(b);

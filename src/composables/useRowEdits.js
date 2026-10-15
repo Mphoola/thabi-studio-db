@@ -39,25 +39,37 @@ export function useRowEdits(tab, columns, primaryKey) {
     return Boolean(key && tab.edits.deletes[key]);
   }
 
+  /**
+   * A source column the editor knows about.
+   *
+   * The grid can ask about a column the current result does not have — a result
+   * whose shape changed while the grid still holds a row from the old one. This
+   * is called during render, so it must answer rather than throw: returning
+   * undefined makes every operation on that column a no-op, and the grid falls
+   * back to the raw cell.
+   */
+  const name = (col) => columns.value[col]?.name;
+
   function display(cells, col) {
-    const key = keyOf(cells);
-    return key
-      ? shownCell(tab.edits, key, columns.value[col].name, cells[col])
-      : cells[col];
+    const column = name(col);
+    const key = column ? keyOf(cells) : null;
+    return key ? shownCell(tab.edits, key, column, cells[col]) : cells[col];
   }
 
   return {
     enabled,
     summary: computed(() => counts(tab.edits)),
     canEdit: (cells, col) =>
+      Boolean(name(col)) &&
       Boolean(parts(cells)) &&
       !isDeleted(cells) &&
       cells[col]?.kind !== "binary",
     isDeleted,
     isChanged(cells, col) {
-      const key = keyOf(cells);
+      const column = name(col);
+      const key = column ? keyOf(cells) : null;
       const set = key && tab.edits.updates[key]?.set;
-      return Boolean(set && columns.value[col].name in set);
+      return Boolean(set && column in set);
     },
     display,
     /** The value an editor should start with: staged or original. */
@@ -66,8 +78,9 @@ export function useRowEdits(tab, columns, primaryKey) {
       return cell?.kind === "value" ? cell.value : null;
     },
     setValue(cells, col, value) {
-      const p = parts(cells);
-      if (p) setCell(tab.edits, p, columns.value[col].name, cells[col], value);
+      const column = name(col);
+      const p = column ? parts(cells) : null;
+      if (p) setCell(tab.edits, p, column, cells[col], value);
     },
     /** Toggles deletion for rows; returns how many rows could be marked. */
     toggleDelete(rowsCells) {

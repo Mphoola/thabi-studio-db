@@ -26,6 +26,12 @@ const query = ref("");
 /** The row being dragged within the list. */
 const dragging = ref(null);
 const dropOn = ref(null);
+/** Off while a press starts on a control, so its click is not eaten. */
+const draggable = ref(true);
+
+function startPress(event) {
+  draggable.value = !event.target.closest("input, button, label");
+}
 
 watch(open, (value) => {
   if (value) query.value = "";
@@ -83,10 +89,14 @@ function dropOnColumn(column) {
         <li
           v-for="column in matches"
           :key="column.name"
-          draggable="true"
+          :draggable="draggable"
           class="flex items-center gap-2 border-b border-line px-2 py-1 last:border-b-0"
           :class="dropOn === column ? 'bg-accent-subtle' : ''"
-          @dragstart="dragging = column"
+          @mousedown="startPress"
+          @dragstart="
+            dragging = column;
+            draggable = true;
+          "
           @dragover.prevent="dropOn = column"
           @dragleave="dropOn === column && (dropOn = null)"
           @drop="dropOnColumn(column)"
