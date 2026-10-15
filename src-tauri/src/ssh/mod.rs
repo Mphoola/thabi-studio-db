@@ -360,12 +360,24 @@ async fn authenticate_with_agent(
     let unavailable = || {
         AppError::new(
             "ssh_agent",
-            "Couldn't reach your SSH agent. Check that ssh-agent is running and has your key (ssh-add -l).",
+            "Couldn't reach your SSH agent. Check that it's running and has your key (ssh-add -l).",
         )
     };
-    let mut agent = russh::keys::agent::client::AgentClient::connect_env()
+    use russh::keys::agent::client::AgentClient;
+    #[cfg(unix)]
+    let mut agent = AgentClient::connect_env()
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| unavailable())?
+        .dynamic();
+    // Windows: the OpenSSH agent service's named pipe, or Pageant.
+    #[cfg(windows)]
+    let mut agent = match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+        Ok(agent) => agent.dynamic(),
+        Err(_) => AgentClient::connect_pageant()
+            .await
+            .map_err(|_| unavailable())?
+            .dynamic(),
+    };
     let identities = agent
         .request_identities()
         .await

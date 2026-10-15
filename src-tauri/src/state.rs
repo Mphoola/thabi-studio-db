@@ -1,5 +1,5 @@
 use crate::connections::ConnectionService;
-use crate::credentials::{CredentialStore, KeychainCredentialStore};
+use crate::credentials::{CredentialStore, OsCredentialStore};
 use crate::errors::AppError;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
@@ -14,12 +14,12 @@ impl AppState {
     pub fn new(database: Connection) -> Self {
         Self {
             database: Arc::new(Mutex::new(database)),
-            credentials: Arc::new(KeychainCredentialStore),
+            credentials: Arc::new(OsCredentialStore),
             connections: ConnectionService::default(),
         }
     }
 
-    /// Runs SQLite and Keychain work on a blocking thread. Keychain calls can
+    /// Runs SQLite and credential-store work on a blocking thread. Those calls can
     /// be slow or show a macOS prompt, so they must never run on the main
     /// thread or an async worker.
     pub async fn blocking<T, F>(&self, work: F) -> Result<T, AppError>

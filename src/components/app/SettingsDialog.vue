@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { computed } from "vue";
 import { Monitor, Moon, Sun } from "lucide-vue-next";
 import { useAppSettings } from "../../composables/useAppSettings.js";
@@ -52,7 +53,12 @@ const options = [
     <div class="flex items-center justify-between gap-4">
       <div class="flex flex-col">
         <span id="appearance-label" class="text-base text-fg">Appearance</span>
-        <span class="text-sm text-fg-subtle">System follows your Mac.</span>
+        <span class="text-sm text-fg-subtle"
+          >System follows
+          {{
+            words.computer === "this Mac" ? "your Mac" : "your system"
+          }}.</span
+        >
       </div>
       <SegmentedControl
         v-model="appearance"
@@ -78,8 +84,8 @@ const options = [
       <div class="flex flex-col">
         <span class="text-base text-fg">Rows kept per result</span>
         <span class="max-w-64 text-sm text-fg-subtle">
-          Results are fetched up to this many rows and kept on this Mac for
-          scrolling, sorting, copying and export.
+          Results are fetched up to this many rows and kept on
+          {{ words.computer }} for scrolling, sorting, copying and export.
         </span>
       </div>
       <SelectInput v-model="maxRows" class="w-36" :options="rowLimits" />

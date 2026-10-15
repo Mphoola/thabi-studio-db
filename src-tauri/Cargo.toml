@@ -1,7 +1,7 @@
 [package]
 name = "thabi-studio"
 version = "0.1.0"
-description = "Local-first desktop client for MySQL, PostgreSQL and SQL Server"
+description = "Local-first desktop client for MySQL, PostgreSQL and SQL Server on macOS, Windows and Linux"
 authors = ["Promise Mphoola"]
 edition = "2024"
 
@@ -54,3 +54,9 @@ strip = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "1.0", features = ["crypto-rust"] }

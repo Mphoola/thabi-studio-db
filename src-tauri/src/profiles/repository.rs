@@ -449,7 +449,7 @@ pub fn create_profile(
         {
             return Err(AppError::new(
                 "credential_cleanup",
-                "The profile couldn't be saved. An unused Keychain item may need to be removed in Keychain Access.",
+                "The connection couldn't be saved. An unused saved password may need to be removed from the system credential store.",
             ));
         }
         return Err(error);
@@ -554,7 +554,7 @@ pub fn update_validated_profile(
         {
             return Err(AppError::new(
                 "credential_cleanup",
-                "The profile couldn't be saved. An unused Keychain item may need to be removed in Keychain Access.",
+                "The connection couldn't be saved. An unused saved password may need to be removed from the system credential store.",
             ));
         }
         return Err(AppError::storage());
@@ -566,7 +566,7 @@ pub fn update_validated_profile(
             .is_some_and(|reference| credentials.delete(reference).is_err())
     {
         Some(
-            "The profile was saved, but previous credentials couldn't be removed from Keychain."
+            "The connection was saved, but its previous password couldn't be removed from the system credential store."
                 .to_owned(),
         )
     } else {
@@ -650,7 +650,7 @@ pub fn duplicate_profile(
         {
             return Err(AppError::new(
                 "credential_cleanup",
-                "The duplicate couldn't be saved. An unused Keychain item may need to be removed in Keychain Access.",
+                "The copy couldn't be saved. An unused saved password may need to be removed from the system credential store.",
             ));
         }
         return Err(error);
@@ -717,7 +717,7 @@ fn restore_secret(
         credentials.set(reference, secret).map_err(|_| {
             AppError::new(
                 "credential_recovery",
-                "The profile couldn't be deleted, and its Keychain credential couldn't be restored.",
+                "The connection couldn't be deleted, and its saved password couldn't be restored.",
             )
         })?;
     }

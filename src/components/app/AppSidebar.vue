@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { Bookmark, History, ListTree } from "lucide-vue-next";
 import { useLayout } from "../../composables/useLayout.js";
 import EmptyState from "../common/EmptyState.vue";
@@ -23,7 +24,7 @@ const empty = {
   history: {
     icon: History,
     title: "No query history",
-    description: "Queries you run are listed here. History stays on this Mac.",
+    description: `Queries you run are listed here. History stays on ${words.computer}.`,
   },
 };
 </script>

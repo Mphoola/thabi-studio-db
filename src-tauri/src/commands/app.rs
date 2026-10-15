@@ -6,14 +6,24 @@ use serde::Serialize;
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+    /// Where the app keeps its local database (connections, history, saved
+    /// queries), shown in the privacy section of About.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<String>,
 }
 
 #[tauri::command]
 pub fn app_info(app: tauri::AppHandle) -> AppInfo {
+    use tauri::Manager;
     let package = app.package_info();
     AppInfo {
         name: package.name.clone(),
         version: package.version.to_string(),
+        data_dir: app
+            .path()
+            .app_data_dir()
+            .ok()
+            .map(|dir| dir.to_string_lossy().into_owned()),
     }
 }
 
@@ -26,6 +36,7 @@ mod tests {
         let info = AppInfo {
             name: "Thabi Studio".into(),
             version: "0.1.0".into(),
+            data_dir: None,
         };
         let json = serde_json::to_value(&info).unwrap();
         assert_eq!(

@@ -16,8 +16,9 @@ pub struct KnownHost {
     pub from_openssh: bool,
 }
 
+/// ~/.ssh/known_hosts (%USERPROFILE%\.ssh\known_hosts on Windows).
 fn openssh_known_hosts() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".ssh/known_hosts"))
+    std::env::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
 }
 
 pub fn known_host_keys(

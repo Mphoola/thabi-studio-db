@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useDialogs } from "../../composables/useDialogs.js";
@@ -159,7 +160,11 @@ async function save() {
   saving.value = true;
   try {
     const warning = await store.save(input);
-    if (warning) toasts.error("Saved, but Keychain needs attention", warning);
+    if (warning)
+      toasts.error(
+        `Saved, but ${words.credentialStore} needs attention`,
+        warning,
+      );
   } catch (error) {
     if (error?.kind === "validation" && error.fields)
       fields.value = error.fields;

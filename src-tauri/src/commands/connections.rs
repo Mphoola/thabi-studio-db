@@ -210,7 +210,10 @@ pub async fn run_statement(
     let timeout = timeout_seconds
         .filter(|s| *s > 0)
         .map(std::time::Duration::from_secs);
+    let ran_in = database.clone().or_else(|| params.database.clone());
+    let started = std::time::Instant::now();
     let result = tab.run(&params, database, &sql, max_rows, timeout).await;
+    record_history(&state, &id, ran_in, &sql, started.elapsed(), &result).await;
     if let Err(error) = &result
         && is_connection_failure(error)
     {
@@ -219,6 +222,55 @@ pub async fn run_statement(
         return Err(database::error::connection_lost());
     }
     result
+}
+
+/// Adds a run to query history (if enabled). Failing to record never fails
+/// the query itself.
+async fn record_history(
+    state: &AppState,
+    profile_id: &str,
+    database: Option<String>,
+    sql: &str,
+    elapsed: std::time::Duration,
+    result: &Result<QueryResult, AppError>,
+) {
+    let (status, row_count, error) = match result {
+        Ok(r) if !r.columns.is_empty() => ("completed", Some(r.total_rows as i64), None),
+        Ok(r) => ("completed", r.rows_affected.map(|n| n as i64), None),
+        Err(e) if e.kind == "query_cancelled" => ("cancelled", None, Some(e.message.clone())),
+        Err(e) if e.kind == "query_timed_out" => ("timed_out", None, Some(e.message.clone())),
+        Err(e) => (
+            "failed",
+            None,
+            Some(e.detail.clone().unwrap_or_else(|| e.message.clone())),
+        ),
+    };
+    let profile_id = profile_id.to_owned();
+    let sql = sql.to_owned();
+    let _ = state
+        .blocking(move |connection, _| {
+            let name: String = connection
+                .query_row(
+                    "SELECT name FROM connection_profiles WHERE id = ?1",
+                    [&profile_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
+            crate::library::record(
+                connection,
+                &crate::library::NewHistoryEntry {
+                    profile_id: &profile_id,
+                    connection_name: &name,
+                    database_name: database.as_deref().unwrap_or_default(),
+                    query_text: &sql,
+                    duration_ms: elapsed.as_millis() as i64,
+                    status,
+                    row_count,
+                    error_summary: error.as_deref(),
+                },
+            )
+        })
+        .await;
 }
 
 /// Stops the statement running in a query tab. Returns false if nothing ran.

@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { computed, ref } from "vue";
 import { Plus, Search } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
@@ -63,8 +64,9 @@ const edge = {
       <div class="mr-auto flex flex-col gap-0.5">
         <h1 class="text-xl font-semibold text-fg">Connections</h1>
         <p class="text-sm text-fg-muted">
-          Saved on this Mac. Double-click or press Return to connect.
-          <KbdShortcut shortcut="Mod+Shift+K" /> switches from anywhere.
+          Saved on {{ words.computer }}. Double-click or press Return to
+          connect. <KbdShortcut shortcut="Mod+Shift+K" /> switches from
+          anywhere.
         </p>
       </div>
       <TextInput

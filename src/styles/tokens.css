@@ -258,7 +258,7 @@
 }
 
 @theme {
-  /* Native macOS system fonts; nothing is fetched from the network. */
+  /* Native system fonts (San Francisco, Segoe UI, system-ui); nothing is fetched. */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui,
     sans-serif;

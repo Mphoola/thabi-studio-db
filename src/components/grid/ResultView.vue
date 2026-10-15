@@ -3,7 +3,8 @@ import { computed } from "vue";
 import { Download } from "lucide-vue-next";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
-import { showInFinder } from "../../lib/tauri/files.js";
+import { showInFileManager } from "../../lib/tauri/files.js";
+import { words } from "../../lib/platform.js";
 import BaseButton from "../common/BaseButton.vue";
 import ResultGrid from "./ResultGrid.vue";
 
@@ -31,8 +32,8 @@ async function exportCsv() {
       `Exported ${done.rows.toLocaleString()} rows to ${file}`,
       "",
       {
-        label: "Show in Finder",
-        run: () => showInFinder(done.path),
+        label: words.fileManager,
+        run: () => showInFileManager(done.path),
       },
     );
   } catch (error) {

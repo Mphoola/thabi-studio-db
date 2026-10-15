@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-vue-next";
 import FormField from "./FormField.vue";
 import { borderClass, describedBy, fieldClass } from "./fieldClasses.js";
 
-/** Native <select>, styled to match TextInput. Keeps macOS keyboard behaviour. */
+/** Native <select>, styled to match TextInput. Keeps the platform's keyboard behaviour. */
 const props = defineProps({
   label: { type: String, default: "" },
   hint: { type: String, default: "" },

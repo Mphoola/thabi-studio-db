@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import CheckboxInput from "../common/CheckboxInput.vue";
 import PasswordInput from "../common/PasswordInput.vue";
 import SelectInput from "../common/SelectInput.vue";
@@ -55,8 +56,8 @@ const drivers = [
         label="Password"
         :hint="
           hasSavedPassword
-            ? 'Saved in Keychain. Leave blank to keep it.'
-            : 'Optional. Saved in your Keychain.'
+            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+            : `Optional. Saved in ${words.credentialStore}.`
         "
         :error="fields.databasePassword"
       />

@@ -6,7 +6,8 @@ phase until the current one's exit criteria are verified.
 
 ## Product
 
-Local-first macOS desktop client for MySQL, PostgreSQL and SQL Server.
+Local-first desktop client for MySQL, PostgreSQL and SQL Server on macOS,
+Windows and Linux (developed on macOS; CI builds all three).
 No Thabi backend, accounts, telemetry or cloud dependency. The MVP favours
 reliable connections, safe query execution, schema browsing and a good
 results grid over breadth of features. See `plan.md` §2 for what is out of scope.
@@ -135,6 +136,10 @@ Run `npm run check` after every meaningful change and before calling work done.
   Encrypt Without Verifying or Off, and only for that connection.
 - Each live connection is one database session; never put a pool behind a
   query editor.
+- Cross-platform: no macOS-only assumptions. Use `lib/platform.js` for
+  platform words (credential store, file manager), `Mod+…` shortcuts (⌘ or
+  Ctrl), `cfg(target_os)` in Rust, and `tauri.<platform>.conf.json` for
+  window differences.
 - Never retry a statement automatically. Ask before risky statements and
   before writes on Production (`src/lib/sqlSafety.js`).
 - Never accept an unknown or changed SSH host key without the user's

@@ -3,9 +3,8 @@
  * "Mod+Shift+K", where Mod is ⌘ on macOS and Ctrl elsewhere.
  */
 
-export const isMac =
-  typeof navigator !== "undefined" &&
-  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+export { isMac } from "./platform.js";
+import { isMac } from "./platform.js";
 
 const KEY_ALIASES = {
   enter: "Enter",

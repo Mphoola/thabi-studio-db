@@ -14,6 +14,10 @@ pub struct AppSettings {
     pub query_timeout_seconds: u64,
     /// Rows fetched and kept per result.
     pub max_result_rows: u64,
+    pub history_enabled: bool,
+    /// 0 keeps history until the size cap.
+    pub history_retention_days: u64,
+    pub editor_font_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +70,13 @@ pub fn read_settings(connection: &Connection) -> Result<AppSettings, AppError> {
         max_result_rows: setting(connection, "max_result_rows")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(10_000),
+        history_enabled: setting(connection, "history_enabled")?.as_deref() != Some("false"),
+        history_retention_days: setting(connection, "history_retention_days")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30),
+        editor_font_size: setting(connection, "editor_font_size")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(13),
     })
 }
 
@@ -149,6 +160,20 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             .as_bool()
             .map(|open| open.to_string())
             .ok_or_else(|| AppError::new("validation", "Choose whether the sidebar is open."))?,
+        "history_enabled" => value
+            .as_bool()
+            .map(|on| on.to_string())
+            .ok_or_else(|| AppError::new("validation", "Choose whether to keep history."))?,
+        "history_retention_days" => value
+            .as_u64()
+            .filter(|days| *days <= 3650)
+            .ok_or_else(|| AppError::new("validation", "Choose how long to keep history."))?
+            .to_string(),
+        "editor_font_size" => value
+            .as_u64()
+            .filter(|size| (10..=24).contains(size))
+            .ok_or_else(|| AppError::new("validation", "Choose an editor font size."))?
+            .to_string(),
         "max_result_rows" => value
             .as_u64()
             .filter(|rows| (1..=1_000_000).contains(rows))
@@ -245,6 +270,9 @@ mod tests {
                 selected_profile_id: None,
                 query_timeout_seconds: 0,
                 max_result_rows: 10_000,
+                history_enabled: true,
+                history_retention_days: 30,
+                editor_font_size: 13,
             }
         );
     }

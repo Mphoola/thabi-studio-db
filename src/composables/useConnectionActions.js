@@ -1,3 +1,4 @@
+import { words } from "../lib/platform.js";
 import { ref } from "vue";
 import { confirm } from "./useConfirm.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
@@ -63,7 +64,10 @@ export function useConnectionActions() {
     try {
       const warning = await store.duplicate(profile.id);
       if (warning)
-        toasts.error("Duplicated, but Keychain needs attention", warning);
+        toasts.error(
+          `Duplicated, but ${words.credentialStore} needs attention`,
+          warning,
+        );
     } catch (error) {
       toasts.error(
         `Couldn’t duplicate “${profile.name}”`,

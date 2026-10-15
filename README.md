@@ -2,7 +2,7 @@
 
 A local-first desktop app for connecting to, exploring and querying MySQL,
 PostgreSQL and Microsoft SQL Server databases. Connections go directly from
-your Mac to your database servers; there is no account, telemetry or cloud
+your computer to your database servers; there is no account, telemetry or cloud
 service.
 
 > Status: early development. You can save connections, connect to MySQL,
@@ -11,10 +11,20 @@ service.
 > results to CSV. Query history and saved queries come next.
 > See [`plan.md`](plan.md) for the roadmap.
 
-## Prerequisites (macOS)
+## Platforms
 
-- Xcode Command Line Tools: `xcode-select --install`
+Thabi Studio runs on **macOS, Windows and Linux**. Passwords are kept in
+the platform's credential store: Keychain on macOS, Windows Credential
+Manager, or the Secret Service (GNOME Keyring or KWallet) on Linux. CI
+builds and checks all three platforms on every push.
+
+## Prerequisites
+
 - Rust (stable, via [rustup](https://rustup.rs)); developed on 1.96
+- macOS: Xcode Command Line Tools (`xcode-select --install`)
+- Windows: Microsoft C++ Build Tools and WebView2 (preinstalled on Windows 11)
+- Linux: `libwebkit2gtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`,
+  `libdbus-1-dev`, `patchelf` and `pkg-config` (Debian/Ubuntu names)
 - Node.js 20.19+ or 22.12+ (required by Vite 8); developed on Node 25
 
 See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for details.
@@ -44,7 +54,7 @@ Later runs start in seconds.
 
 ## Remote databases and SSH
 
-Connect directly to anything your Mac can reach, including over a VPN. For a
+Connect directly to anything your computer can reach, including over a VPN. For a
 database that's only reachable from a bastion, turn on **Connect through
 SSH** in the connection settings and sign in with a password, a private key
 file or your ssh-agent. The first time you connect to an SSH server, Thabi
@@ -63,7 +73,8 @@ through connections and the explorer without the native app.
 2022 and an OpenSSH bastion in Docker (bound to 127.0.0.1), generates a
 throwaway password and SSH keys in `tests/integration/` (git-ignored), and
 runs `src-tauri/tests/drivers.rs` and `ssh.rs`.
-It needs Docker Desktop; SQL Server runs under Rosetta on Apple Silicon.
+It needs Docker (Docker Desktop on macOS and Windows; SQL Server runs under
+Rosetta on Apple Silicon) and a Bash shell (use WSL or Git Bash on Windows).
 Stop the databases with `scripts/integration-tests.sh down`.
 
 ## Project structure

@@ -10,14 +10,16 @@ import {
 import { runCommand } from "../../composables/useCommands.js";
 import { useLayout } from "../../composables/useLayout.js";
 import { isTauri } from "../../lib/tauri/ipc.js";
+import { isMac } from "../../lib/platform.js";
 import IconButton from "../common/IconButton.vue";
 import KbdShortcut from "../common/KbdShortcut.vue";
 import ConnectionPill from "./ConnectionPill.vue";
 
 const { sidebarOpen, mainView } = useLayout();
 const showingQueries = computed(() => mainView.value === "workspace");
-// The native window has an overlay title bar; leave room for the traffic lights.
-const trafficLightInset = isTauri();
+// On macOS the window has an overlay title bar; leave room for the traffic
+// lights. Windows and Linux keep their native title bar.
+const trafficLightInset = isTauri() && isMac;
 </script>
 
 <template>

@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { Database, Plus } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { runCommand } from "../../composables/useCommands.js";
@@ -24,7 +25,7 @@ const { profiles, loaded, nativeAvailable } = useConnectionProfiles();
       title="Connect to your first database"
       :description="
         nativeAvailable
-          ? 'Thabi Studio connects straight from this Mac to MySQL, PostgreSQL or SQL Server. Nothing goes through a server of ours.'
+          ? `Thabi Studio connects straight from ${words.computer} to MySQL, PostgreSQL or SQL Server. Nothing goes through a server of ours.`
           : 'Connections can be added in the Thabi Studio app.'
       "
     >

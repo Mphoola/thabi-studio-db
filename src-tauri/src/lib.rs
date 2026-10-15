@@ -3,6 +3,7 @@ mod connections;
 mod credentials;
 pub mod database;
 mod errors;
+mod library;
 mod menu;
 mod profiles;
 pub mod queries;
@@ -84,6 +85,14 @@ pub fn run() {
             commands::connections::export_csv,
             commands::connections::trust_ssh_host_key,
             commands::connections::forget_ssh_host_keys,
+            commands::library::list_history,
+            commands::library::delete_history_entry,
+            commands::library::clear_history,
+            commands::library::list_saved_queries,
+            commands::library::save_query,
+            commands::library::delete_saved_query,
+            commands::library::save_workspace_tabs,
+            commands::library::load_workspace_tabs,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
             commands::settings::import_legacy_preferences

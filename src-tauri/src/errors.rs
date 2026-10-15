@@ -1,6 +1,14 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// What the user knows their OS credential store as.
+#[cfg(target_os = "macos")]
+pub const CREDENTIAL_STORE: &str = "Keychain";
+#[cfg(target_os = "windows")]
+pub const CREDENTIAL_STORE: &str = "Windows Credential Manager";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const CREDENTIAL_STORE: &str = "The system keyring";
+
 /// Error returned to the frontend as `{ kind, message, detail?, code?, fields? }`.
 ///
 /// `message` is written for the user. `detail` carries the database server's
@@ -68,14 +76,16 @@ impl AppError {
     pub fn credential_access() -> Self {
         Self::new(
             "credential_access",
-            "Keychain couldn't be accessed. Check Keychain Access and try again.",
+            format!("{CREDENTIAL_STORE} couldn't be accessed. Unlock it and try again."),
         )
     }
 
     pub fn credential_missing() -> Self {
         Self::new(
             "credential_missing",
-            "A saved password is missing from Keychain. Enter it again to continue.",
+            format!(
+                "A saved password is missing from {CREDENTIAL_STORE}. Enter it again to continue."
+            ),
         )
     }
 

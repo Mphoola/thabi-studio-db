@@ -40,6 +40,7 @@ export async function pickCsvDestination(defaultName) {
   return typeof path === "string" ? path : null;
 }
 
-export function showInFinder(path) {
+/** Reveals a file in Finder, File Explorer or the Linux file manager. */
+export function showInFileManager(path) {
   return revealItemInDir(path);
 }

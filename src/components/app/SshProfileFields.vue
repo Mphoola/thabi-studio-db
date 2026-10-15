@@ -1,4 +1,5 @@
 <script setup>
+import { words } from "../../lib/platform.js";
 import { computed } from "vue";
 import { KeyRound, X } from "lucide-vue-next";
 import { pickSshKey } from "../../lib/tauri/files.js";
@@ -77,8 +78,8 @@ async function chooseKey() {
         label="SSH password"
         :hint="
           hasSavedPassword
-            ? 'Saved in Keychain. Leave blank to keep it.'
-            : 'Saved in your Keychain.'
+            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+            : `Saved in ${words.credentialStore}.`
         "
         :error="fields.sshPassword"
       />
@@ -119,8 +120,8 @@ async function chooseKey() {
         label="Key passphrase"
         :hint="
           hasSavedPassphrase
-            ? 'Saved in Keychain. Leave blank to keep it.'
-            : 'Only if the key has one. Saved in your Keychain.'
+            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+            : `Only if the key has one. Saved in ${words.credentialStore}.`
         "
         :error="fields.sshKeyPassphrase"
       />

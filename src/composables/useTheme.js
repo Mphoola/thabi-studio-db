@@ -13,7 +13,7 @@ function apply() {
   document.documentElement.dataset.theme = resolved.value;
 }
 
-/** Call once before mounting. Follows the macOS appearance by default. */
+/** Call once before mounting. Follows the system appearance by default. */
 export function initTheme(initialMode = "system") {
   mode.value = initialMode;
   media.addEventListener("change", apply);

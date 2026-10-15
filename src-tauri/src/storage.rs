@@ -10,6 +10,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_profile_security_settings.sql"),
     include_str!("../migrations/0003_tls_ca_path.sql"),
     include_str!("../migrations/0004_ssh_auth.sql"),
+    include_str!("../migrations/0005_history_saved_tabs.sql"),
 ];
 
 pub fn migrate(connection: &mut Connection) -> Result<(), AppError> {
@@ -56,7 +57,7 @@ mod tests {
         let settings: i64 = connection
             .query_row("SELECT COUNT(*) FROM app_settings", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(settings, 4);
+        assert_eq!(settings, 7);
     }
 
     #[test]

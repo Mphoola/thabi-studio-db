@@ -1,4 +1,4 @@
-//! Saved connection profiles: metadata in SQLite, secrets in Keychain.
+//! Saved connection profiles: metadata in SQLite, secrets in the OS credential store.
 
 mod repository;
 mod validation;

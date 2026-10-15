@@ -58,7 +58,7 @@ describe("TLS helpers", () => {
 
   it("warns when TLS is off for a remote host", () => {
     expect(tlsHint("disable", "db.example.com")).toContain("plain text");
-    expect(tlsHint("disable", "localhost")).toContain("this Mac");
+    expect(tlsHint("disable", "localhost")).toContain("this computer");
   });
 });
 

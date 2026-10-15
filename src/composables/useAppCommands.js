@@ -10,7 +10,7 @@ import { useToasts } from "./useToasts.js";
 import { toUserDetail } from "../lib/errors.js";
 
 /**
- * App-wide commands. Shortcuts follow macOS conventions and are reserved
+ * App-wide commands. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere) and are reserved
  * in docs/design/workspace.md so later phases don't collide.
  */
 export function useAppCommands() {

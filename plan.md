@@ -2,7 +2,7 @@
 
 **Product:** Thabi Studio  
 **Product type:** Native desktop database client  
-**Initial platforms:** macOS first; keep Windows/Linux portability in mind  
+**Platforms:** macOS, Windows and Linux (cross-platform from the start; developed on macOS)  
 **Stack:** Tauri 2, Vue 3, JavaScript, Rust  
 **Initial database engines:** MySQL, PostgreSQL, Microsoft SQL Server  
 **Primary use:** Personal daily development work, with builds shared with developer friends  
@@ -14,7 +14,7 @@
 
 Thabi Studio is a polished, local-first desktop application for connecting to, exploring, querying, and managing MySQL, PostgreSQL, and Microsoft SQL Server databases from one workspace.
 
-It should feel like a carefully designed native Mac developer tool: fast, calm, keyboard-friendly, and reliable. The app connects directly from the user's computer to database servers. **No Thabi-hosted backend, user account, telemetry service, or cloud dependency is required for the MVP.**
+It should feel like a carefully designed native developer tool on each platform (macOS, Windows and Linux): fast, calm, keyboard-friendly, and reliable. The app connects directly from the user's computer to database servers. **No Thabi-hosted backend, user account, telemetry service, or cloud dependency is required for the MVP.**
 
 The MVP should prioritise reliable connections, safe query execution, useful schema exploration, and a high-quality results grid over a long list of advanced features.
 
@@ -22,7 +22,7 @@ The MVP should prioritise reliable connections, safe query execution, useful sch
 
 A user can:
 
-1. Install and launch Thabi Studio on macOS.
+1. Install and launch Thabi Studio on macOS, Windows and Linux.
 2. Create, edit, duplicate, test, and delete saved connection profiles.
 3. Connect to local or remote MySQL, PostgreSQL, and Microsoft SQL Server databases.
 4. Connect directly over TCP/TLS or through an SSH tunnel.
@@ -39,7 +39,7 @@ A user can:
 
 ### Included in MVP
 
-- macOS-first desktop packaging with Tauri 2.
+- Desktop packaging for macOS, Windows and Linux with Tauri 2.
 - Vue 3 + Vite frontend written in JavaScript.
 - Rust backend for database drivers, SSH tunnelling, connection lifecycle, and sensitive operations.
 - MySQL, PostgreSQL, and Microsoft SQL Server support.
@@ -140,7 +140,7 @@ Before committing to the full architecture, build a small Rust proof of concept 
 - **MySQL:** evaluate `sqlx` MySQL support or another actively maintained driver that meets licensing and platform needs.
 - **PostgreSQL:** evaluate `sqlx` PostgreSQL support.
 - **SQL Server:** evaluate `tiberius` and its current compatibility, TLS behaviour, authentication options, data type coverage, async runtime requirements, and maintenance status.
-- Check crate versions, licensing, release activity, supported Rust toolchain, macOS Apple Silicon builds, and whether the chosen driver can use a TCP stream supplied by the SSH tunnel implementation.
+- Check crate versions, licensing, release activity, supported Rust toolchain, macOS (Apple Silicon and Intel), Windows and Linux builds, and whether the chosen driver can use a TCP stream supplied by the SSH tunnel implementation.
 - Confirm how each driver exposes column metadata, null values, binary values, decimal values, timestamps, and cancellation.
 - Do not assume that SQL Server authentication or SSH tunnelling works just because a basic local connection succeeds.
 
@@ -286,7 +286,7 @@ Tasks:
 - Inspect the repository, existing files, installed Node.js/Rust toolchains, and the current Tauri template before making changes.
 - Create the project using the official Tauri 2 project creation flow if no suitable scaffold exists.
 - Configure Vue 3 + Vite and JavaScript.
-- Confirm `cargo check`, frontend build, and Tauri development launch work on the Mac.
+- Confirm `cargo check`, frontend build, and Tauri development launch work (on the development Mac; CI covers Windows and Linux).
 - Add formatting/lint scripts supported by the chosen scaffold.
 - Add a basic app shell, error boundary/fallback view, and consistent notification/dialog primitives.
 - Establish the theme tokens, typography, spacing, borders, focus styles, and light/dark theme strategy.
@@ -304,7 +304,7 @@ Tasks:
 **Exit criteria:**
 
 - A clean checkout can install dependencies and run the app using documented steps.
-- The app opens on macOS without console or Rust errors.
+- The app opens without console or Rust errors.
 - Lint/build/check commands pass.
 - No database functionality is faked or implied yet.
 
@@ -322,7 +322,7 @@ Tasks:
 - Add theme tokens in one place; avoid arbitrary hard-coded colours throughout components.
 - Use native-feeling spacing and restrained colour accents. Avoid visual clutter and oversized cards.
 - Establish an icon set and consistent icon sizing.
-- Add keyboard shortcuts infrastructure without binding shortcuts that conflict with macOS conventions.
+- Add keyboard shortcuts infrastructure without binding shortcuts that conflict with platform conventions (⌘ on macOS, Ctrl on Windows and Linux).
 
 **Deliverables:**
 
@@ -412,7 +412,7 @@ Tasks:
 
 - Each engine can establish a real connection, run a simple query, and close cleanly.
 - Failures such as wrong password, unreachable host, refused port, timeout, and invalid TLS configuration produce useful errors without leaking secrets.
-- macOS Apple Silicon build works.
+- macOS Apple Silicon build works; Windows and Linux builds pass CI.
 - SQL Server limitations, if any, are documented explicitly.
 
 ### Phase 5 — Remote connectivity, TLS, and SSH tunnelling
@@ -586,7 +586,7 @@ Tasks:
 
 ### Phase 10 — Testing, packaging, documentation, and MVP release
 
-**Goal:** Produce a dependable macOS build suitable for personal use and sharing.
+**Goal:** Produce dependable macOS, Windows and Linux builds suitable for personal use and sharing.
 
 Tasks:
 
@@ -596,16 +596,16 @@ Tasks:
 - Test wrong credentials, invalid ports, network loss, TLS failures, SSH host-key changes, query timeout, cancellation, app restart, and connection cleanup.
 - Test database identifiers with spaces, quotes, reserved words, Unicode, and mixed case.
 - Test `NULL`, Unicode text, large result sets, binary values, decimal precision, large integers, timestamps, and JSON values.
-- Test macOS Apple Silicon first; test Intel only if the target build environment and dependencies support it.
+- Test on macOS (Apple Silicon, then Intel), Windows 10/11 and a current Linux desktop (Ubuntu LTS with GNOME, plus a KDE check for the keyring).
 - Verify app data and credential locations; confirm uninstall/documented cleanup behaviour.
-- Configure Tauri application identifier, display name, version, bundle icons, permissions/capabilities, and macOS packaging.
+- Configure Tauri application identifier, display name, version, bundle icons, permissions/capabilities, and packaging per platform: `.app`/`.dmg` (macOS), MSI/NSIS installer (Windows), AppImage/`.deb` (Linux).
 - Audit Tauri capabilities and enabled plugins using least privilege.
 - Ensure release builds do not contain development credentials, test endpoints, verbose secret-bearing logs, or debug-only commands.
 - Build a release `.app` and a shareable archive/DMG as appropriate.
-- Document signing/notarisation implications. Unsigned builds may trigger macOS Gatekeeper warnings; do not tell users to bypass security protections blindly.
+- Document signing implications per platform: macOS notarisation (Gatekeeper), Windows code signing (SmartScreen), Linux package signing. Do not tell users to bypass security protections blindly.
 - Write README installation instructions, supported database versions, known limitations, troubleshooting, data storage locations, and a release checklist.
 - Create a known-issues list and versioned changelog.
-- Run a clean-install test on a separate macOS user account or another Mac if available.
+- Run a clean-install test on each platform (a separate user account or another machine).
 
 **Deliverables:**
 
@@ -621,7 +621,7 @@ Tasks:
 - No known critical data-loss or credential-exposure issue remains.
 - Each database engine's supported capabilities are documented.
 - A friend can install and use the build by following the documentation.
-- macOS security/signing limitations are explained accurately.
+- Security and signing limitations on each platform are explained accurately.
 
 ---
 
@@ -773,7 +773,7 @@ Do not mark a phase complete because code was written. Mark it complete only whe
 
 The MVP is complete when all of the following are true:
 
-- [ ] Tauri desktop app runs and builds on macOS.
+- [ ] Tauri desktop app runs and builds on macOS, Windows and Linux.
 - [ ] App uses Vue 3 and JavaScript for the frontend and Rust for native/database work.
 - [ ] MySQL, PostgreSQL, and SQL Server each have a verified driver implementation.
 - [ ] Saved connection profiles persist locally.

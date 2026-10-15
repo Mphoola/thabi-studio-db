@@ -16,7 +16,7 @@ export function isLoopbackHost(host) {
 }
 
 /**
- * Suggested TLS mode for a new connection. Traffic to this Mac never leaves
+ * Suggested TLS mode for a new connection. Traffic to this computer never leaves
  * it, and local Docker databases usually have no trusted certificate, so
  * loopback hosts start with TLS off. Everything else verifies.
  */
@@ -30,6 +30,6 @@ export function tlsHint(mode, host) {
   if (mode === "require")
     return "Encrypted, but the certificate isn't checked. Use only for a server you trust.";
   return isLoopbackHost(host)
-    ? "Not encrypted. Fine for a database on this Mac."
+    ? "Not encrypted. Fine for a database on this computer."
     : "Not encrypted. Passwords and data cross the network in plain text.";
 }
