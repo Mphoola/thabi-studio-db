@@ -165,7 +165,7 @@ export function findParameters(sql, engine = "postgres") {
  * position; `:status` is called `status`.
  */
 export function parameterLabels(names) {
-  return names.map((name, position) =>
+  return names.map((name) =>
     typeof name === "number" ? `Parameter ${name}` : name,
   );
 }
