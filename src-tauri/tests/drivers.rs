@@ -384,3 +384,158 @@ async fn connects_and_reports_version_with(engine: Engine, tls: TlsMode) {
     let result = test_connection(&params(engine, tls)).await.unwrap();
     assert!(!result.server.version.is_empty());
 }
+
+/// Explorer metadata with names that need quoting: spaces, a reserved
+/// word, mixed case and non-ASCII characters.
+mod explorer {
+    use super::*;
+    use thabi_studio_lib::database::{ObjectKind, ObjectStructure};
+
+    async fn run_all(session: &mut Session, sql: &[&str]) {
+        for statement in sql {
+            session
+                .execute(statement, 10)
+                .await
+                .unwrap_or_else(|e| panic!("{statement}: {} {:?}", e.message, e.detail));
+        }
+    }
+
+    fn check_structure(structure: &ObjectStructure) {
+        let names: Vec<_> = structure.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["id", "select", "MixedCase"]);
+        assert_eq!(structure.columns[0].primary_key, Some(1));
+        assert_eq!(structure.columns[2].primary_key, Some(2));
+        assert_eq!(structure.columns[1].primary_key, None);
+        assert!(!structure.columns[1].nullable);
+        assert!(
+            structure.columns[1]
+                .default
+                .as_deref()
+                .unwrap_or("")
+                .contains('x')
+        );
+        let indexes = structure.indexes.as_ref().expect("tables have indexes");
+        let by_name = indexes
+            .iter()
+            .find(|i| i.name == "idx ünï")
+            .expect("named index");
+        assert_eq!(by_name.columns, vec!["select"]);
+        assert!(indexes.iter().any(|i| i.primary));
+    }
+
+    async fn check_objects(session: &mut Session, database: &str, schema: &str) {
+        let objects = session.list_objects(database, schema).await.unwrap();
+        let find = |name: &str| objects.iter().find(|o| o.name == name).map(|o| o.kind);
+        assert_eq!(
+            find("Order Details"),
+            Some(ObjectKind::Table),
+            "{objects:?}"
+        );
+        assert_eq!(find("Big Orders"), Some(ObjectKind::View), "{objects:?}");
+
+        let table = session
+            .describe(database, schema, "Order Details", ObjectKind::Table)
+            .await
+            .unwrap();
+        check_structure(&table);
+
+        let preview = session
+            .preview(database, schema, "Order Details", 100)
+            .await
+            .unwrap();
+        assert_eq!(preview.rows.len(), 1);
+        let view = session
+            .preview(database, schema, "Big Orders", 100)
+            .await
+            .unwrap();
+        assert_eq!(view.rows.len(), 1);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn postgres() {
+        let mut session = open(Engine::Postgres).await;
+        run_all(
+            &mut session,
+            &[
+                "DROP SCHEMA IF EXISTS \"Sales Ünïcödé\" CASCADE",
+                "CREATE SCHEMA \"Sales Ünïcödé\"",
+                "CREATE TABLE \"Sales Ünïcödé\".\"Order Details\" (id bigint, \"select\" text NOT NULL DEFAULT 'x', \"MixedCase\" int, PRIMARY KEY (id, \"MixedCase\"))",
+                "CREATE INDEX \"idx ünï\" ON \"Sales Ünïcödé\".\"Order Details\" (\"select\")",
+                "CREATE VIEW \"Sales Ünïcödé\".\"Big Orders\" AS SELECT * FROM \"Sales Ünïcödé\".\"Order Details\"",
+                "INSERT INTO \"Sales Ünïcödé\".\"Order Details\" VALUES (1, 'a', 2)",
+            ],
+        )
+        .await;
+        let schemas = session.list_schemas("thabi_it").await.unwrap().unwrap();
+        assert!(schemas.contains(&"Sales Ünïcödé".to_owned()), "{schemas:?}");
+        assert!(schemas.contains(&"public".to_owned()));
+        assert!(!schemas.iter().any(|s| s.starts_with("pg_")));
+        check_objects(&mut session, "thabi_it", "Sales Ünïcödé").await;
+
+        let view = session
+            .describe("thabi_it", "Sales Ünïcödé", "Big Orders", ObjectKind::View)
+            .await
+            .unwrap();
+        assert!(
+            view.indexes.is_none(),
+            "views report indexes as not applicable"
+        );
+
+        let other = session.list_schemas("postgres").await.unwrap_err();
+        assert_eq!(other.kind, "database_not_open");
+        session.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn mysql() {
+        let mut session = open(Engine::MySql).await;
+        run_all(
+            &mut session,
+            &[
+                "DROP VIEW IF EXISTS `Big Orders`",
+                "DROP TABLE IF EXISTS `Order Details`",
+                "CREATE TABLE `Order Details` (id bigint, `select` varchar(20) NOT NULL DEFAULT 'x', `MixedCase` int, PRIMARY KEY (id, `MixedCase`), INDEX `idx ünï` (`select`))",
+                "CREATE VIEW `Big Orders` AS SELECT * FROM `Order Details`",
+                "INSERT INTO `Order Details` VALUES (1, 'a', 2)",
+            ],
+        )
+        .await;
+        assert!(session.list_schemas("thabi_it").await.unwrap().is_none());
+        check_objects(&mut session, "thabi_it", "").await;
+        session.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sqlserver() {
+        let mut session = open(Engine::SqlServer).await;
+        run_all(
+            &mut session,
+            &["IF DB_ID('thabi it') IS NULL CREATE DATABASE [thabi it]"],
+        )
+        .await;
+        // Created through a session on master to prove three-part names work.
+        run_all(
+            &mut session,
+            &[
+                "USE [thabi it]",
+                "IF OBJECT_ID(N'[Sales Ünïcödé].[Big Orders]') IS NOT NULL DROP VIEW [Sales Ünïcödé].[Big Orders]",
+                "IF OBJECT_ID(N'[Sales Ünïcödé].[Order Details]') IS NOT NULL DROP TABLE [Sales Ünïcödé].[Order Details]",
+                "IF SCHEMA_ID(N'Sales Ünïcödé') IS NULL EXEC(N'CREATE SCHEMA [Sales Ünïcödé]')",
+                "CREATE TABLE [Sales Ünïcödé].[Order Details] (id bigint NOT NULL, [select] nvarchar(20) NOT NULL DEFAULT 'x', [MixedCase] int NOT NULL, CONSTRAINT pk_od PRIMARY KEY (id, [MixedCase]))",
+                "CREATE INDEX [idx ünï] ON [Sales Ünïcödé].[Order Details] ([select])",
+                "EXEC(N'CREATE VIEW [Sales Ünïcödé].[Big Orders] AS SELECT * FROM [Sales Ünïcödé].[Order Details]')",
+                "INSERT INTO [Sales Ünïcödé].[Order Details] VALUES (1, N'a', 2)",
+                "USE master",
+            ],
+        )
+        .await;
+        let schemas = session.list_schemas("thabi it").await.unwrap().unwrap();
+        assert!(schemas.contains(&"Sales Ünïcödé".to_owned()), "{schemas:?}");
+        assert!(schemas.contains(&"dbo".to_owned()));
+        check_objects(&mut session, "thabi it", "Sales Ünïcödé").await;
+        session.close().await.unwrap();
+    }
+}

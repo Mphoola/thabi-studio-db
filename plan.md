@@ -455,30 +455,30 @@ Tasks:
 
 Tasks:
 
-- Build a lazy-loaded tree for connections, databases, schemas, tables, and views.
-- Load child nodes on demand rather than querying every object at once.
-- Implement driver-specific metadata queries.
-- Display columns, types, nullability, primary keys, indexes, and other metadata where supported.
-- Distinguish unsupported features from empty results.
-- Add refresh for the selected node and refresh-all where reasonable.
-- Add object context menus for supported actions, starting with “Open data” and “Copy name”.
-- Quote/escape identifiers using database-specific rules for any generated SQL.
-- Display loading, permission-denied, stale-connection, and empty-schema states.
-- Avoid blocking the UI while metadata is fetched.
-- Add metadata tests for names containing spaces, reserved words, mixed case, and non-ASCII characters.
+- [x] Build a lazy-loaded tree for connections, databases, schemas, tables, and views.
+- [x] Load child nodes on demand rather than querying every object at once.
+- [x] Implement driver-specific metadata queries.
+- [x] Display columns, types, nullability, primary keys, indexes, and other metadata where supported.
+- [x] Distinguish unsupported features from empty results.
+- [x] Add refresh for the selected node and refresh-all where reasonable.
+- [x] Add object context menus for supported actions, starting with “Open data” and “Copy name”.
+- [x] Quote/escape identifiers using database-specific rules for any generated SQL.
+- [x] Display loading, permission-denied, stale-connection, and empty-schema states.
+- [x] Avoid blocking the UI while metadata is fetched.
+- [x] Add metadata tests for names containing spaces, reserved words, mixed case, and non-ASCII characters.
 
 **Deliverables:**
 
-- Schema explorer.
-- Table/view structure panel.
-- Metadata adapters for each database.
+- [x] Schema explorer.
+- [x] Table/view structure panel.
+- [x] Metadata adapters for each database.
 
 **Exit criteria:**
 
-- Users can navigate database objects for all three engines.
-- Explorer requests are lazy and cancellable where practical.
-- Unsupported metadata is clearly indicated.
-- Identifier quoting tests pass for supported operations.
+- [x] Users can navigate database objects for all three engines.
+- [x] Explorer requests are lazy. Cancelling an in-flight metadata request isn't implemented (requests are short); see `docs/decisions/0008-explorer.md`.
+- [x] Unsupported metadata is clearly indicated.
+- [x] Identifier quoting tests pass for supported operations.
 
 ### Phase 7 — SQL editor and query execution
 
@@ -836,7 +836,11 @@ Update this section as work progresses.
   - [x] Tunnel closes with its session; 5 SSH integration tests pass against a Docker bastion
   - [x] Status bar security indicator
   - Open: check a real remote server directly and through SSH
-- [ ] Phase 6 — Database explorer and metadata
+- [x] Phase 6 — Database explorer and metadata (2026-10-15, branch `phase-6-explorer`)
+  - [x] Lazy, keyboard-accessible tree for all three engines; PostgreSQL switch-database flow
+  - [x] Structure view (columns, keys, indexes) and read-only 100-row data preview
+  - [x] Identifier quoting with tests; permission-denied, lost-connection and empty states
+  - [x] 31 integration tests pass, including awkward names on every engine
 - [ ] Phase 7 — SQL editor and query execution
 - [ ] Phase 8 — Results grid, data inspection, and CSV export
 - [ ] Phase 9 — Query history, saved queries, polish, and safeguards

@@ -23,7 +23,9 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   Remote-server verification is still open (see plan.md).
 - Phase 5 (remote connectivity and SSH tunnels): complete on branch
   `phase-5-remote-ssh`. Read `docs/decisions/0007-ssh-tunnels.md`.
-- Next: Phase 6 (database explorer and metadata).
+- Phase 6 (database explorer): complete on branch `phase-6-explorer`. Read
+  `docs/decisions/0008-explorer.md`.
+- Next: Phase 7 (SQL editor and query execution).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -75,6 +77,11 @@ Run `npm run check` after every meaningful change and before calling work done.
 - `src-tauri/src/connections.rs` — live connections and their states.
 - `src-tauri/src/profiles/` — profile validation and storage.
 - `src-tauri/src/ssh/` — SSH tunnels and trusted host keys.
+- `src-tauri/src/database/quote.rs` — identifier quoting; use it for every
+  generated identifier. Values always go through bind parameters.
+- `src/components/explorer/` — explorer tree, object, structure and data views.
+- `src/dev/mockBackend.js` — `?mock` sample backend for reviewing screens in
+  a browser (dev only).
 - `src-tauri/tests/drivers.rs` — integration tests against real databases.
 - `src-tauri/migrations/` — versioned SQLite schema migrations.
 - `src-tauri/capabilities/default.json` — keep to least privilege.

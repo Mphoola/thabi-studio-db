@@ -2,6 +2,7 @@ import { useCommandRegistration } from "./useCommands.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
+import { useExplorer } from "./useExplorer.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
@@ -15,6 +16,7 @@ export function useAppCommands() {
   const dialogs = useDialogs();
   const connections = useConnectionProfiles();
   const layout = useLayout();
+  const explorer = useExplorer();
   const theme = useTheme();
   const toasts = useToasts();
   const hostKeys = useHostKeyTrust();
@@ -100,6 +102,24 @@ export function useAppCommands() {
       title: "About Thabi Studio",
       group: "Help",
       run: () => dialogs.show("about"),
+    },
+    {
+      id: "explorer.refresh",
+      title: "Refresh Explorer",
+      group: "View",
+      shortcut: "Mod+R",
+      enabled: () => explorer.connected.value,
+      run: () => {
+        layout.sidebarView.value = "explorer";
+        layout.sidebarOpen.value = true;
+        explorer.refresh();
+      },
+    },
+    {
+      id: "view.connections",
+      title: "Show Connections",
+      group: "View",
+      run: () => (layout.mainView.value = "welcome"),
     },
     {
       id: "view.toggleSidebar",

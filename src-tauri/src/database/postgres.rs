@@ -1,6 +1,7 @@
 use super::{
-    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, Engine, QueryResult,
-    ServerInfo, TlsMode, error, first_column,
+    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
+    ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
+    quote,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -17,6 +18,18 @@ pub struct PgSession {
     backend_pid: i32,
     host: String,
     port: u16,
+}
+
+impl PgSession {
+    /// A PostgreSQL session can only read the database it connected to.
+    fn require_current(&self, database: &str) -> Result<(), AppError> {
+        match self.info.database.as_deref() {
+            Some(current) if current != database => {
+                Err(error::database_not_open(database, current))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 fn context(params: &ConnectParams) -> error::Context<'_> {
@@ -68,6 +81,7 @@ impl DatabaseSession for PgSession {
             info: ServerInfo {
                 engine: Engine::Postgres,
                 version: String::new(),
+                database: None,
             },
             backend_pid: 0,
             host: params.host.clone(),
@@ -75,7 +89,7 @@ impl DatabaseSession for PgSession {
         };
         let row = session
             .execute(
-                "SELECT current_setting('server_version'), pg_backend_pid()",
+                "SELECT current_setting('server_version'), pg_backend_pid(), current_database()",
                 1,
             )
             .await?;
@@ -86,6 +100,9 @@ impl DatabaseSession for PgSession {
         }
         if let Some(Cell::Value(pid)) = cells.next() {
             session.backend_pid = pid.parse().unwrap_or_default();
+        }
+        if let Some(Cell::Value(database)) = cells.next() {
+            session.info.database = Some(database);
         }
         Ok(session)
     }
@@ -184,6 +201,119 @@ impl DatabaseSession for PgSession {
             result.rows_affected = None;
         }
         Ok(result)
+    }
+
+    async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::Postgres, &host, self.port);
+        let mut query = sqlx::query(AssertSqlSafe(sql.to_owned()));
+        for param in params {
+            query = query.bind(*param);
+        }
+        let rows = query
+            .fetch_all(&mut self.connection)
+            .await
+            .map_err(|e| error::from_sqlx(e, ctx))?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (0..row.len())
+                    .map(|i| row.try_get::<Option<String>, _>(i).ok().flatten())
+                    .collect()
+            })
+            .collect())
+    }
+
+    async fn list_schemas(&mut self, database: &str) -> Result<Option<Vec<String>>, AppError> {
+        self.require_current(database)?;
+        let rows = self
+            .query_text(
+                "SELECT nspname::text FROM pg_namespace
+                 WHERE nspname NOT LIKE 'pg\\_%' ESCAPE '\\' AND nspname <> 'information_schema'
+                 ORDER BY nspname",
+                &[],
+            )
+            .await?;
+        Ok(Some(metadata::names(rows)))
+    }
+
+    async fn list_objects(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<Vec<DbObject>, AppError> {
+        self.require_current(database)?;
+        let rows = self
+            .query_text(
+                "SELECT c.relname::text,
+                        CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view'
+                                       WHEN 'f' THEN 'foreign_table' ELSE 'table' END
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                 ORDER BY c.relname",
+                &[schema],
+            )
+            .await?;
+        Ok(metadata::object_rows(rows))
+    }
+
+    async fn describe(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<ObjectStructure, AppError> {
+        self.require_current(database)?;
+        let columns = self
+            .query_text(
+                "SELECT a.attname::text,
+                        format_type(a.atttypid, a.atttypmod),
+                        (NOT a.attnotnull)::text,
+                        pg_get_expr(d.adbin, d.adrelid),
+                        (SELECT k.ord::text
+                         FROM pg_index i, unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                         WHERE i.indrelid = c.oid AND i.indisprimary AND k.attnum = a.attnum)
+                 FROM pg_attribute a
+                 JOIN pg_class c ON c.oid = a.attrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                 WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+                 ORDER BY a.attnum",
+                &[schema, name],
+            )
+            .await?;
+        let indexes = if matches!(kind, ObjectKind::Table | ObjectKind::MaterializedView) {
+            let rows = self
+                .query_text(
+                    "SELECT ic.relname::text, i.indisunique::text, i.indisprimary::text,
+                            (SELECT string_agg(a.attname, ', ' ORDER BY k.ord)
+                             FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum)
+                     FROM pg_index i
+                     JOIN pg_class ic ON ic.oid = i.indexrelid
+                     JOIN pg_class c ON c.oid = i.indrelid
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = $1 AND c.relname = $2
+                     ORDER BY ic.relname",
+                    &[schema, name],
+                )
+                .await?;
+            Some(metadata::index_rows(rows))
+        } else {
+            None
+        };
+        Ok(ObjectStructure {
+            columns: metadata::column_rows(columns),
+            indexes,
+        })
+    }
+
+    fn preview_sql(&self, _database: &str, schema: &str, name: &str, limit: usize) -> String {
+        format!(
+            "SELECT * FROM {} LIMIT {limit}",
+            quote::qualified(Engine::Postgres, &[schema, name])
+        )
     }
 
     async fn close(self) -> Result<(), AppError> {

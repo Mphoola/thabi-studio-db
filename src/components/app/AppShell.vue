@@ -12,6 +12,7 @@ import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StatusBar from "./StatusBar.vue";
 import TitleBar from "./TitleBar.vue";
 import WelcomeView from "./WelcomeView.vue";
+import ObjectView from "../explorer/ObjectView.vue";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
@@ -31,22 +32,29 @@ const toasts = useToasts();
 
 let stopListening = () => {};
 
+function onClosed({ profileId, reason }) {
+  const name =
+    connections.profiles.value.find((p) => p.id === profileId)?.name ?? "";
+  connections.forgetStatus(profileId);
+  if (reason === "idle")
+    toasts.info(`Disconnected from “${name}”`, "It was unused for an hour.");
+  else
+    toasts.error(
+      `Lost the connection to “${name}”`,
+      "The server stopped responding.",
+    );
+}
+
 onMounted(async () => {
   connections.load().catch((error) => {
     toasts.error("Saved connections couldn’t be loaded", toUserMessage(error));
   });
-  stopListening = await onConnectionClosed(({ profileId, reason }) => {
-    const name =
-      connections.profiles.value.find((p) => p.id === profileId)?.name ?? "";
-    connections.forgetStatus(profileId);
-    if (reason === "idle")
-      toasts.info(`Disconnected from “${name}”`, "It was unused for an hour.");
-    else
-      toasts.error(
-        `Lost the connection to “${name}”`,
-        "The server stopped responding.",
-      );
-  });
+  try {
+    stopListening = await onConnectionClosed(onClosed);
+  } catch (error) {
+    // Not fatal: connections still work; dropped ones just aren't announced.
+    console.error("[connection-closed listener]", error);
+  }
 });
 onBeforeUnmount(() => stopListening());
 
@@ -69,6 +77,7 @@ function dialogModel(name) {
           :is="ComponentGallery"
           v-if="ComponentGallery && mainView === 'gallery'"
         />
+        <ObjectView v-else-if="mainView === 'object'" />
         <WelcomeView v-else />
       </main>
     </div>

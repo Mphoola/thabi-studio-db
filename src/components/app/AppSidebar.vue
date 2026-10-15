@@ -3,6 +3,7 @@ import { Bookmark, History, ListTree } from "lucide-vue-next";
 import { useLayout } from "../../composables/useLayout.js";
 import EmptyState from "../common/EmptyState.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
+import ExplorerPanel from "../explorer/ExplorerPanel.vue";
 import SidebarResizer from "./SidebarResizer.vue";
 
 const { sidebarWidth, sidebarView } = useLayout();
@@ -14,11 +15,6 @@ const views = [
 ];
 
 const empty = {
-  explorer: {
-    icon: ListTree,
-    title: "Nothing to explore yet",
-    description: "Databases, schemas and tables appear here once you connect.",
-  },
   saved: {
     icon: Bookmark,
     title: "No saved queries",
@@ -53,7 +49,9 @@ const empty = {
       role="tabpanel"
       class="min-h-0 flex-1 overflow-auto"
     >
+      <ExplorerPanel v-if="sidebarView === 'explorer'" />
       <EmptyState
+        v-else
         size="sm"
         :icon="empty[sidebarView].icon"
         :title="empty[sidebarView].title"

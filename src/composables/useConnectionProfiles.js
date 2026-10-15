@@ -119,10 +119,10 @@ export function useConnectionProfiles() {
     return testConnectionInput(input, profileId);
   }
 
-  async function connect(id) {
+  async function connect(id, database = null) {
     setStatus(id, { profileId: id, state: "connecting", server: null });
     try {
-      setStatus(id, await connectConnectionProfile(id));
+      setStatus(id, await connectConnectionProfile(id, database));
     } catch (error) {
       setStatus(id, null);
       throw error;

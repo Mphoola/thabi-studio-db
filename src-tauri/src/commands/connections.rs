@@ -1,6 +1,6 @@
 use crate::{
-    connections::ConnectionStatus,
-    database::{self, QueryResult, TestResult},
+    connections::{ConnectionStatus, SessionHandle},
+    database::{self, DbObject, ObjectKind, ObjectStructure, QueryResult, Session, TestResult},
     errors::AppError,
     profiles::{self, ProfileInput},
     state::AppState,
@@ -9,6 +9,8 @@ use tauri::State;
 
 /// Rows kept per statement until the results grid adds paging (Phase 8).
 const MAX_ROWS: usize = 1_000;
+/// Rows shown by the explorer's read-only data preview.
+const PREVIEW_ROWS: usize = 100;
 
 /// Tests the values currently in the connection form. Nothing is saved.
 /// `profile_id` lets an edited profile reuse its saved password.
@@ -32,17 +34,25 @@ pub async fn test_connection_input(
     database::test_connection(&params).await
 }
 
+/// Connects a saved profile. `database` opens a different database than the
+/// profile's default for this connection only (PostgreSQL can only browse
+/// the database it is connected to); any open connection is replaced.
 #[tauri::command]
 pub async fn connect_connection_profile(
     id: String,
+    database: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<ConnectionStatus, AppError> {
     let lookup = id.clone();
-    let (_, params) = state
+    let (_, mut params) = state
         .blocking(move |connection, credentials| {
             profiles::connect_params(connection, credentials, &lookup)
         })
         .await?;
+    if let Some(database) = database.filter(|d| !d.trim().is_empty()) {
+        state.connections.disconnect(&id).await?;
+        params.database = Some(database);
+    }
     let status = state.connections.connect(&id, &params).await?;
     // Best effort: the connection is open even if the timestamp can't be saved.
     let _ = state
@@ -66,18 +76,100 @@ pub async fn list_connections(
     Ok(state.connections.statuses().await)
 }
 
+/// Errors that mean the session itself is gone rather than the request failing.
+fn is_connection_failure(error: &AppError) -> bool {
+    matches!(
+        error.kind,
+        "connection_closed" | "connection_refused" | "unreachable" | "connection" | "timeout"
+    )
+}
+
+/// Runs explorer work on a profile's session. If the session turns out to
+/// be dead, it is closed and the caller gets a "connection lost" error so
+/// the UI can offer to reconnect instead of showing stale data.
+async fn with_session<T>(
+    state: &AppState,
+    id: &str,
+    work: impl AsyncFnOnce(&mut Session) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let handle: SessionHandle = state.connections.session(id).await?;
+    let result = {
+        let mut guard = handle.lock().await;
+        let session = guard.as_mut().ok_or_else(AppError::not_connected)?;
+        work(session).await
+    };
+    match result {
+        Err(error) if is_connection_failure(&error) => {
+            let _ = state.connections.disconnect(id).await;
+            Err(database::error::connection_lost())
+        }
+        other => other,
+    }
+}
+
 #[tauri::command]
 pub async fn list_databases(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, AppError> {
-    let handle = state.connections.session(&id).await?;
-    let mut guard = handle.lock().await;
-    guard
-        .as_mut()
-        .ok_or_else(AppError::not_connected)?
-        .list_databases()
-        .await
+    with_session(&state, &id, async |s| s.list_databases().await).await
+}
+
+/// Schemas in a database, or null when the engine has none (MySQL).
+#[tauri::command]
+pub async fn list_schemas(
+    id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Vec<String>>, AppError> {
+    with_session(&state, &id, async |s| s.list_schemas(&database).await).await
+}
+
+#[tauri::command]
+pub async fn list_objects(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<DbObject>, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| {
+        s.list_objects(&database, &schema).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn describe_object(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<ObjectStructure, AppError> {
+    let schema = schema.unwrap_or_default();
+    let kind = ObjectKind::from_code(&kind);
+    with_session(&state, &id, async |s| {
+        s.describe(&database, &schema, &name, kind).await
+    })
+    .await
+}
+
+/// First 100 rows of a table or view, read-only.
+#[tauri::command]
+pub async fn preview_object(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<QueryResult, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| {
+        s.preview(&database, &schema, &name, PREVIEW_ROWS).await
+    })
+    .await
 }
 
 /// Runs user-authored SQL on the profile's session, as written.

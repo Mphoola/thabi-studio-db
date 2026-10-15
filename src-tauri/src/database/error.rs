@@ -157,6 +157,30 @@ pub fn tls(ctx: Context<'_>, detail: &str) -> AppError {
     AppError::new("tls", message).with_detail(Some(sanitise(detail, ctx.password)))
 }
 
+pub fn permission_denied(ctx: Context<'_>, detail: &str, code: Option<String>) -> AppError {
+    AppError::new(
+        "permission_denied",
+        "This user doesn't have permission to read that.",
+    )
+    .with_detail(Some(sanitise(detail, ctx.password)))
+    .with_code(code)
+}
+
+/// The session can't be used any more (server gone, network dropped).
+pub fn connection_lost() -> AppError {
+    AppError::new(
+        "connection_lost",
+        "The connection to the database was lost. Reconnect to continue.",
+    )
+}
+
+pub fn database_not_open(database: &str, current: &str) -> AppError {
+    AppError::new(
+        "database_not_open",
+        format!("This connection is using “{current}”. Switch to “{database}” to browse it."),
+    )
+}
+
 pub fn server(ctx: Context<'_>, detail: &str, code: Option<String>) -> AppError {
     AppError::new("server", "The database returned an error.")
         .with_detail(Some(sanitise(detail, ctx.password)))
@@ -170,7 +194,7 @@ pub fn from_sqlx(error: sqlx::Error, ctx: Context<'_>) -> AppError {
         sqlx::Error::Tls(tls_error) => tls(ctx, &tls_error.to_string()),
         sqlx::Error::Database(db) => {
             let message = sanitise(db.message(), ctx.password);
-            let (auth, unknown_db, code) = match ctx.engine {
+            let (auth, unknown_db, denied, code) = match ctx.engine {
                 Engine::MySql => {
                     let number = db
                         .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
@@ -178,6 +202,7 @@ pub fn from_sqlx(error: sqlx::Error, ctx: Context<'_>) -> AppError {
                     (
                         matches!(number, Some(1045 | 1698)),
                         matches!(number, Some(1049 | 1044)),
+                        matches!(number, Some(1142 | 1143)),
                         number.map(|n| n.to_string()),
                     )
                 }
@@ -186,11 +211,14 @@ pub fn from_sqlx(error: sqlx::Error, ctx: Context<'_>) -> AppError {
                     (
                         matches!(code.as_deref(), Some("28P01" | "28000")),
                         code.as_deref() == Some("3D000"),
+                        code.as_deref() == Some("42501"),
                         code,
                     )
                 }
             };
-            if auth {
+            if denied {
+                permission_denied(ctx, &message, code)
+            } else if auth {
                 authentication(Some(message), code)
             } else if unknown_db {
                 unknown_database(ctx, Some(message), code)
@@ -235,6 +263,7 @@ pub fn from_tiberius(error: tiberius::error::Error, ctx: Context<'_>) -> AppErro
             match code {
                 18456 => authentication(Some(message), Some(code.to_string())),
                 4060 => unknown_database(ctx, Some(message), Some(code.to_string())),
+                229 | 262 | 916 => permission_denied(ctx, &message, Some(code.to_string())),
                 _ => server(ctx, &message, Some(code.to_string())),
             }
         }

@@ -1,6 +1,7 @@
 use super::{
-    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, Engine, QueryResult,
-    ServerInfo, TlsMode, error, first_column,
+    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
+    ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
+    quote,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -75,16 +76,21 @@ impl DatabaseSession for SqlServerSession {
             info: ServerInfo {
                 engine: Engine::SqlServer,
                 version: String::new(),
+                database: None,
             },
             host: params.host.clone(),
             port: params.port,
         };
-        let version = first_column(session.execute("SELECT @@VERSION", 1).await?);
-        if let Some(version) = version.first() {
+        let row = session
+            .query_text("SELECT @@VERSION, DB_NAME()", &[])
+            .await?;
+        let mut cells = row.into_iter().next().unwrap_or_default().into_iter();
+        if let Some(version) = cells.next().flatten() {
             // "Microsoft SQL Server 2022 (RTM-CU14) (KB…) - 16.0.4135.4 (X64) …"
-            let product = version.split(" (").next().unwrap_or(version).trim();
+            let product = version.split(" (").next().unwrap_or(&version).trim();
             session.info.version = product.to_owned();
         }
+        session.info.database = cells.next().flatten();
         Ok(session)
     }
 
@@ -164,6 +170,139 @@ impl DatabaseSession for SqlServerSession {
         }
         result.extra_result_sets = row_sets.saturating_sub(1);
         Ok(result)
+    }
+
+    async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::SqlServer, &host, self.port);
+        let params: Vec<&dyn tiberius::ToSql> =
+            params.iter().map(|p| p as &dyn tiberius::ToSql).collect();
+        let rows = self
+            .client
+            .query(sql, &params)
+            .await
+            .map_err(|e| error::from_tiberius(e, ctx))?
+            .into_first_result()
+            .await
+            .map_err(|e| error::from_tiberius(e, ctx))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|data| match cell(&data) {
+                        Cell::Value(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect())
+    }
+
+    async fn list_schemas(&mut self, database: &str) -> Result<Option<Vec<String>>, AppError> {
+        let db = quote::ident(Engine::SqlServer, database);
+        let rows = self
+            .query_text(
+                &format!(
+                    "SELECT name FROM {db}.sys.schemas
+                     WHERE name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')
+                       AND name NOT LIKE 'db[_]%'
+                     ORDER BY name"
+                ),
+                &[],
+            )
+            .await?;
+        Ok(Some(metadata::names(rows)))
+    }
+
+    async fn list_objects(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<Vec<DbObject>, AppError> {
+        let db = quote::ident(Engine::SqlServer, database);
+        let rows = self
+            .query_text(
+                &format!(
+                    "SELECT o.name, CASE o.type WHEN 'V' THEN 'view' ELSE 'table' END
+                     FROM {db}.sys.objects o JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id
+                     WHERE s.name = @P1 AND o.type IN ('U', 'V')
+                     ORDER BY o.name"
+                ),
+                &[schema],
+            )
+            .await?;
+        Ok(metadata::object_rows(rows))
+    }
+
+    async fn describe(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<ObjectStructure, AppError> {
+        let db = quote::ident(Engine::SqlServer, database);
+        let columns = self
+            .query_text(
+                &format!(
+                    "SELECT c.name,
+                            t.name + CASE
+                              WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary')
+                                THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length AS varchar(10))) + ')'
+                              WHEN t.name IN ('nvarchar', 'nchar')
+                                THEN '(' + IIF(c.max_length = -1, 'max', CAST(c.max_length / 2 AS varchar(10))) + ')'
+                              WHEN t.name IN ('decimal', 'numeric')
+                                THEN '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')'
+                              ELSE '' END,
+                            IIF(c.is_nullable = 1, 'true', 'false'),
+                            dc.definition,
+                            CAST(ic.key_ordinal AS varchar(10))
+                     FROM {db}.sys.columns c
+                     JOIN {db}.sys.objects o ON o.object_id = c.object_id
+                     JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id
+                     JOIN {db}.sys.types t ON t.user_type_id = c.user_type_id
+                     LEFT JOIN {db}.sys.default_constraints dc ON dc.object_id = c.default_object_id
+                     LEFT JOIN {db}.sys.indexes i ON i.object_id = o.object_id AND i.is_primary_key = 1
+                     LEFT JOIN {db}.sys.index_columns ic
+                       ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.column_id = c.column_id
+                     WHERE s.name = @P1 AND o.name = @P2
+                     ORDER BY c.column_id"
+                ),
+                &[schema, name],
+            )
+            .await?;
+        // Views can be indexed in SQL Server, so ask for both kinds.
+        let _ = kind;
+        let rows = self
+            .query_text(
+                &format!(
+                    "SELECT i.name, IIF(i.is_unique = 1, 'true', 'false'),
+                            IIF(i.is_primary_key = 1, 'true', 'false'),
+                            STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal)
+                     FROM {db}.sys.indexes i
+                     JOIN {db}.sys.objects o ON o.object_id = i.object_id
+                     JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id
+                     JOIN {db}.sys.index_columns ic
+                       ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+                     JOIN {db}.sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                     WHERE s.name = @P1 AND o.name = @P2 AND i.type > 0
+                     GROUP BY i.name, i.is_unique, i.is_primary_key
+                     ORDER BY i.name"
+                ),
+                &[schema, name],
+            )
+            .await?;
+        Ok(ObjectStructure {
+            columns: metadata::column_rows(columns),
+            indexes: Some(metadata::index_rows(rows)),
+        })
+    }
+
+    fn preview_sql(&self, database: &str, schema: &str, name: &str, limit: usize) -> String {
+        format!(
+            "SELECT TOP ({limit}) * FROM {}",
+            quote::qualified(Engine::SqlServer, &[database, schema, name])
+        )
     }
 
     async fn close(self) -> Result<(), AppError> {

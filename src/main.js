@@ -35,6 +35,12 @@ function readLegacyPreferences() {
   }
 }
 
+// Development only: ?mock answers commands with sample data in a browser.
+if (import.meta.env.DEV && new URLSearchParams(location.search).has("mock")) {
+  const { installMockBackend } = await import("./dev/mockBackend.js");
+  installMockBackend();
+}
+
 let settings = null;
 let settingsError = null;
 let migrationError = null;

@@ -7,8 +7,10 @@
 //! to know which backend is running it.
 
 pub mod error;
+pub mod metadata;
 mod mysql;
 mod postgres;
+pub mod quote;
 mod sqlserver;
 mod values;
 
@@ -23,6 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use metadata::{DbObject, ObjectKind, ObjectStructure, TextRows};
 pub use values::{Cell, ColumnMeta, QueryResult};
 
 /// Upper bound for opening a session, including DNS and TLS.
@@ -121,6 +124,8 @@ pub struct ServerInfo {
     pub engine: Engine,
     /// Human-readable product and version, e.g. "PostgreSQL 16.4".
     pub version: String,
+    /// Database the session opened in, when the engine has one.
+    pub database: Option<String>,
 }
 
 /// What a driver can do reliably. The UI hides or explains anything false.
@@ -144,6 +149,25 @@ pub trait DatabaseSession: Sized {
     async fn list_databases(&mut self) -> Result<Vec<String>, AppError>;
     /// Runs user-authored SQL as written and keeps at most `max_rows` rows.
     async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError>;
+    /// Runs app-generated metadata SQL with bound text parameters.
+    async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError>;
+    /// Schemas in a database, or `None` when the engine has no schema level
+    /// (MySQL, where a database is a schema).
+    async fn list_schemas(&mut self, database: &str) -> Result<Option<Vec<String>>, AppError>;
+    async fn list_objects(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<Vec<DbObject>, AppError>;
+    async fn describe(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<ObjectStructure, AppError>;
+    /// SQL that reads the first `limit` rows of an object, fully quoted.
+    fn preview_sql(&self, database: &str, schema: &str, name: &str, limit: usize) -> String;
     async fn close(self) -> Result<(), AppError>;
 }
 
@@ -260,6 +284,40 @@ impl Session {
         let mut result = dispatch!(self, s => s.execute(sql, max_rows).await)?;
         result.elapsed_ms = started.elapsed().as_millis() as u64;
         Ok(result)
+    }
+
+    pub async fn list_schemas(&mut self, database: &str) -> Result<Option<Vec<String>>, AppError> {
+        dispatch!(self, s => s.list_schemas(database).await)
+    }
+
+    pub async fn list_objects(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<Vec<DbObject>, AppError> {
+        dispatch!(self, s => s.list_objects(database, schema).await)
+    }
+
+    pub async fn describe(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<ObjectStructure, AppError> {
+        dispatch!(self, s => s.describe(database, schema, name, kind).await)
+    }
+
+    /// First `limit` rows of a table or view, read-only.
+    pub async fn preview(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+        limit: usize,
+    ) -> Result<QueryResult, AppError> {
+        let sql = dispatch!(self, s => s.preview_sql(database, schema, name, limit));
+        self.execute(&sql, limit).await
     }
 
     pub async fn close(self) -> Result<(), AppError> {

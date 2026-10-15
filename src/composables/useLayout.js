@@ -14,7 +14,9 @@ const sidebarPinned = ref(true);
 const sidebarView = ref(/** @type {SidebarView} */ ("explorer"));
 const compact = ref(window.innerWidth < COMPACT_BELOW);
 /** Which pane fills the main area. "gallery" exists only in dev builds. */
-const mainView = ref(/** @type {"welcome" | "gallery"} */ ("welcome"));
+const mainView = ref(
+  /** @type {"welcome" | "object" | "gallery"} */ ("welcome"),
+);
 // In a narrow window the sidebar starts hidden but can still be opened.
 const sidebarOpen = ref(!compact.value);
 let widthSaveTimer;

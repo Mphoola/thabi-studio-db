@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
+import { runCommand } from "../../composables/useCommands.js";
 
 const store = useConnectionProfiles();
 const { selectedProfile } = store;
@@ -24,11 +25,11 @@ const tooltip = computed(() => {
 </script>
 
 <template>
-  <div
+  <button
     v-tooltip="tooltip"
-    class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted"
-    role="status"
-    tabindex="0"
+    type="button"
+    class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted hover:border-line-strong"
+    @click="runCommand('view.connections')"
   >
     <span
       class="size-2 rounded-full"
@@ -42,5 +43,5 @@ const tooltip = computed(() => {
       </span>
     </template>
     <span v-else>No connection</span>
-  </div>
+  </button>
 </template>

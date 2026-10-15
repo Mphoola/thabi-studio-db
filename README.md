@@ -5,9 +5,9 @@ PostgreSQL and Microsoft SQL Server databases. Connections go directly from
 your Mac to your database servers; there is no account, telemetry or cloud
 service.
 
-> Status: early development. You can save connections, test them and
-> connect to MySQL, PostgreSQL and SQL Server. The explorer and query editor
-> are not built yet.
+> Status: early development. You can save connections, connect to MySQL,
+> PostgreSQL and SQL Server (directly or through SSH), and browse databases,
+> tables and views. The query editor is not built yet.
 > See [`plan.md`](plan.md) for the roadmap.
 
 ## Prerequisites (macOS)
@@ -49,6 +49,12 @@ SSH** in the connection settings and sign in with a password, a private key
 file or your ssh-agent. The first time you connect to an SSH server, Thabi
 Studio shows its fingerprint and asks before trusting it. Keys you already
 trust in `~/.ssh/known_hosts` are recognised.
+
+## Reviewing screens without a database
+
+Run `npm run dev` and open `http://localhost:1420/?mock` in a browser. A
+development-only sample backend answers every command, so you can click
+through connections and the explorer without the native app.
 
 ## Integration tests
 

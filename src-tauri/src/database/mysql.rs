@@ -1,6 +1,7 @@
 use super::{
-    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, Engine, QueryResult,
-    ServerInfo, TlsMode, error, first_column,
+    Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
+    ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
+    quote,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -68,6 +69,7 @@ impl DatabaseSession for MySqlSession {
             info: ServerInfo {
                 engine: Engine::MySql,
                 version: String::new(),
+                database: params.database.clone(),
             },
             connection_id: 0,
             host: params.host.clone(),
@@ -181,6 +183,106 @@ impl DatabaseSession for MySqlSession {
             result.rows_affected = None;
         }
         Ok(result)
+    }
+
+    async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::MySql, &host, self.port);
+        let mut query = sqlx::query(AssertSqlSafe(sql.to_owned()));
+        for param in params {
+            query = query.bind(*param);
+        }
+        let rows = query
+            .fetch_all(&mut self.connection)
+            .await
+            .map_err(|e| error::from_sqlx(e, ctx))?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (0..row.len())
+                    .map(|i| row.try_get_unchecked::<Option<String>, _>(i).ok().flatten())
+                    .collect()
+            })
+            .collect())
+    }
+
+    async fn list_schemas(&mut self, _database: &str) -> Result<Option<Vec<String>>, AppError> {
+        // In MySQL a database is a schema; tables sit directly under it.
+        Ok(None)
+    }
+
+    async fn list_objects(
+        &mut self,
+        database: &str,
+        _schema: &str,
+    ) -> Result<Vec<DbObject>, AppError> {
+        let rows = self
+            .query_text(
+                "SELECT CONVERT(TABLE_NAME USING utf8mb4),
+                        CASE TABLE_TYPE WHEN 'VIEW' THEN 'view' ELSE 'table' END
+                 FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = ?
+                 ORDER BY TABLE_NAME",
+                &[database],
+            )
+            .await?;
+        Ok(metadata::object_rows(rows))
+    }
+
+    async fn describe(
+        &mut self,
+        database: &str,
+        _schema: &str,
+        name: &str,
+        kind: ObjectKind,
+    ) -> Result<ObjectStructure, AppError> {
+        let columns = self
+            .query_text(
+                "SELECT CONVERT(c.COLUMN_NAME USING utf8mb4),
+                        CONVERT(c.COLUMN_TYPE USING utf8mb4),
+                        CONVERT(c.IS_NULLABLE USING utf8mb4),
+                        CONVERT(c.COLUMN_DEFAULT USING utf8mb4),
+                        CAST((SELECT k.ORDINAL_POSITION
+                              FROM information_schema.KEY_COLUMN_USAGE k
+                              WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME
+                                AND k.COLUMN_NAME = c.COLUMN_NAME AND k.CONSTRAINT_NAME = 'PRIMARY')
+                             AS CHAR)
+                 FROM information_schema.COLUMNS c
+                 WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
+                 ORDER BY c.ORDINAL_POSITION",
+                &[database, name],
+            )
+            .await?;
+        let indexes = if kind == ObjectKind::Table {
+            let rows = self
+                .query_text(
+                    "SELECT CONVERT(INDEX_NAME USING utf8mb4),
+                            IF(MAX(NON_UNIQUE) = 0, 'true', 'false'),
+                            IF(INDEX_NAME = 'PRIMARY', 'true', 'false'),
+                            CONVERT(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ')
+                                    USING utf8mb4)
+                     FROM information_schema.STATISTICS
+                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                     GROUP BY INDEX_NAME
+                     ORDER BY INDEX_NAME",
+                    &[database, name],
+                )
+                .await?;
+            Some(metadata::index_rows(rows))
+        } else {
+            None
+        };
+        Ok(ObjectStructure {
+            columns: metadata::column_rows(columns),
+            indexes,
+        })
+    }
+
+    fn preview_sql(&self, database: &str, _schema: &str, name: &str, limit: usize) -> String {
+        format!(
+            "SELECT * FROM {} LIMIT {limit}",
+            quote::qualified(Engine::MySql, &[database, name])
+        )
     }
 
     async fn close(self) -> Result<(), AppError> {
