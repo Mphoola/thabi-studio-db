@@ -1310,7 +1310,7 @@ Update this section as work progresses.
   - Deferred by the owner (2026-10-15) to start Phase 12; Phase 11 stays open
     until they are done, so its "two windows" and "export/import" exit
     criteria are still unmet.
-- [ ] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`) — all three exit criteria met; foreign key navigation, editing conveniences and value display still open
+- [x] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`) — all three exit criteria met (2026-10-15). Foreign key navigation, editing conveniences, value display and .xlsx left open and carried forward.
   - [x] Table data read a page at a time from the server (LIMIT/OFFSET, OFFSET…FETCH on SQL Server), ordered by the primary key, sorted on the server (`docs/decisions/0023-table-paging.md`)
   - [x] Catalog row estimate on open, exact count on request
   - [x] Copy and export stream the table from the server as CSV, TSV, JSON, Markdown, SQL INSERT and SQL UPDATE; copy is capped, export is not (`docs/decisions/0024-transfer-formats.md`)
@@ -1322,7 +1322,7 @@ Update this section as work progresses.
   - [x] Editing a query result: offered when the statement plainly reads one table, the whole primary key is in the result and no key repeats; otherwise read-only with the reason shown (`docs/decisions/0029-editing-query-results.md`)
   - [ ] Foreign key navigation, editing conveniences
   - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
-- [ ] Phase 13 — Smart SQL editor
+- [ ] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`) — exit criteria are autocomplete for aliased joins on all three engines within 100 ms for a 500-table schema, parameters bound by the driver and never spliced into SQL, and plans rendering for a join on all three engines. Starting with query parameters, then autocomplete, then plans.
 - [ ] Phase 14 — Schema and object management
 - [ ] Phase 15 — Import, export, backup and administration
 
