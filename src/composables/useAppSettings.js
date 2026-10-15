@@ -9,11 +9,13 @@ const defaults = {
   sidebarWidth: 240,
   sidebarOpen: true,
   selectedProfileId: null,
+  queryTimeoutSeconds: 0,
 };
 const nativeKeys = {
   themeMode: "theme_mode",
   sidebarWidth: "sidebar_width",
   sidebarOpen: "sidebar_open",
+  queryTimeoutSeconds: "query_timeout_seconds",
 };
 const settings = ref({ ...defaults });
 

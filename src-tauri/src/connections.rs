@@ -8,6 +8,7 @@
 use crate::{
     database::{Capabilities, ConnectParams, ServerInfo, Session},
     errors::AppError,
+    queries::{QueryTab, QueryTabHandle},
 };
 use serde::Serialize;
 use std::{
@@ -44,6 +45,10 @@ struct Entry {
     server: Option<ServerInfo>,
     capabilities: Option<Capabilities>,
     last_used: Instant,
+    /// Kept in memory only, to open query-tab sessions and cancel queries.
+    params: Option<ConnectParams>,
+    /// One session per open query tab, keyed by tab id.
+    tabs: HashMap<String, QueryTabHandle>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -131,6 +136,8 @@ impl ConnectionService {
                     server: None,
                     capabilities: None,
                     last_used: Instant::now(),
+                    params: None,
+                    tabs: HashMap::new(),
                 },
             );
             generation
@@ -162,6 +169,7 @@ impl ConnectionService {
                 entry.session = Some(Arc::new(Mutex::new(Some(session))));
                 entry.state = ConnectionState::Connected;
                 entry.last_used = Instant::now();
+                entry.params = Some(params.clone());
                 Ok(status(profile_id, entry))
             }
             Ok(session) => {
@@ -182,7 +190,7 @@ impl ConnectionService {
     /// Closes the connection if there is one. Always removes the entry, so
     /// nothing is left behind even if the server doesn't answer.
     pub async fn disconnect(&self, profile_id: &str) -> Result<(), AppError> {
-        let (generation, session) = {
+        let (generation, session, tabs) = {
             let mut entries = self.inner.entries.lock().await;
             let Some(entry) = entries.get_mut(profile_id) else {
                 return Ok(());
@@ -196,10 +204,14 @@ impl ConnectionService {
                 ConnectionState::Closing => return Ok(()),
                 ConnectionState::Connected => {
                     entry.state = ConnectionState::Closing;
-                    (entry.generation, entry.session.clone())
+                    let tabs: Vec<_> = entry.tabs.drain().map(|(_, tab)| tab).collect();
+                    (entry.generation, entry.session.clone(), tabs)
                 }
             }
         };
+        for tab in tabs {
+            tab.close().await;
+        }
 
         let result = match session {
             Some(handle) => match tokio::time::timeout(CLOSE_WAIT, handle.lock()).await {
@@ -240,6 +252,55 @@ impl ConnectionService {
         }
     }
 
+    /// The query tab for `tab_id`, created on first use, with the
+    /// connection's parameters for opening its session.
+    pub async fn query_tab(
+        &self,
+        profile_id: &str,
+        tab_id: &str,
+    ) -> Result<(QueryTabHandle, ConnectParams), AppError> {
+        let mut entries = self.inner.entries.lock().await;
+        match entries.get_mut(profile_id) {
+            Some(entry) if entry.state == ConnectionState::Connected => {
+                entry.last_used = Instant::now();
+                let params = entry.params.clone().ok_or_else(AppError::not_connected)?;
+                let tab = entry
+                    .tabs
+                    .entry(tab_id.to_owned())
+                    .or_insert_with(|| Arc::new(QueryTab::default()))
+                    .clone();
+                Ok((tab, params))
+            }
+            Some(entry) if entry.state == ConnectionState::Connecting => {
+                Err(AppError::connection_in_progress())
+            }
+            _ => Err(AppError::not_connected()),
+        }
+    }
+
+    /// Existing query tab, without creating one.
+    pub async fn existing_query_tab(
+        &self,
+        profile_id: &str,
+        tab_id: &str,
+    ) -> Option<(QueryTabHandle, ConnectParams)> {
+        let entries = self.inner.entries.lock().await;
+        let entry = entries.get(profile_id)?;
+        Some((entry.tabs.get(tab_id)?.clone(), entry.params.clone()?))
+    }
+
+    pub async fn close_query_tab(&self, profile_id: &str, tab_id: &str) {
+        let tab = {
+            let mut entries = self.inner.entries.lock().await;
+            entries
+                .get_mut(profile_id)
+                .and_then(|entry| entry.tabs.remove(tab_id))
+        };
+        if let Some(tab) = tab {
+            tab.close().await;
+        }
+    }
+
     pub async fn statuses(&self) -> Vec<ConnectionStatus> {
         let entries = self.inner.entries.lock().await;
         let mut list: Vec<_> = entries.iter().map(|(id, e)| status(id, e)).collect();
@@ -262,6 +323,7 @@ impl ConnectionService {
             entries
                 .iter()
                 .filter(|(_, e)| e.state == ConnectionState::Connected)
+                .filter(|(_, e)| !e.tabs.values().any(|tab| tab.is_running()))
                 .map(|(id, e)| (id.clone(), e.last_used.elapsed(), e.session.clone()))
                 .collect()
         };

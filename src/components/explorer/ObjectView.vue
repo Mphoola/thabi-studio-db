@@ -12,12 +12,12 @@ import DataPreview from "./DataPreview.vue";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
+const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
-const opened = explorer.openObject;
-const node = computed(() => opened.value?.node);
+const node = computed(() => props.tab.node);
 const tab = computed({
-  get: () => opened.value?.tab ?? "data",
-  set: (value) => (opened.value = { ...opened.value, tab: value }),
+  get: () => props.tab.view ?? "data",
+  set: (value) => (props.tab.view = value),
 });
 const tabs = [
   { value: "data", label: "Data" },
@@ -28,7 +28,7 @@ const results = ref({}); // tab -> { status, value?, error? }
 
 async function load(which = tab.value) {
   const target = node.value;
-  const id = explorer.profile.value?.id;
+  const id = props.tab.profileId ?? explorer.profile.value?.id;
   if (!target || !id) return;
   results.value = { ...results.value, [which]: { status: "loading" } };
   try {

@@ -12,11 +12,15 @@ import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StatusBar from "./StatusBar.vue";
 import TitleBar from "./TitleBar.vue";
 import WelcomeView from "./WelcomeView.vue";
-import ObjectView from "../explorer/ObjectView.vue";
+// The workspace carries the SQL editor (CodeMirror); load it on first use.
+const WorkspaceView = defineAsyncComponent(
+  () => import("../workspace/WorkspaceView.vue"),
+);
+import { runCommand } from "../../composables/useCommands.js";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
-import { onConnectionClosed } from "../../lib/tauri/events.js";
+import { onConnectionClosed, onMenuCommand } from "../../lib/tauri/events.js";
 import EnvironmentStrip from "./EnvironmentStrip.vue";
 
 // The component gallery is only bundled in development builds.
@@ -31,6 +35,7 @@ const connections = useConnectionProfiles();
 const toasts = useToasts();
 
 let stopListening = () => {};
+let stopMenu = () => {};
 
 function onClosed({ profileId, reason }) {
   const name =
@@ -50,13 +55,17 @@ onMounted(async () => {
     toasts.error("Saved connections couldn’t be loaded", toUserMessage(error));
   });
   try {
+    stopMenu = await onMenuCommand((id) => runCommand(id));
     stopListening = await onConnectionClosed(onClosed);
   } catch (error) {
     // Not fatal: connections still work; dropped ones just aren't announced.
     console.error("[connection-closed listener]", error);
   }
 });
-onBeforeUnmount(() => stopListening());
+onBeforeUnmount(() => {
+  stopListening();
+  stopMenu();
+});
 
 function dialogModel(name) {
   return {
@@ -77,7 +86,7 @@ function dialogModel(name) {
           :is="ComponentGallery"
           v-if="ComponentGallery && mainView === 'gallery'"
         />
-        <ObjectView v-else-if="mainView === 'object'" />
+        <WorkspaceView v-else-if="mainView === 'workspace'" />
         <WelcomeView v-else />
       </main>
     </div>

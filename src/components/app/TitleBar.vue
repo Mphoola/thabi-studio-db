@@ -1,5 +1,12 @@
 <script setup>
-import { Command, PanelLeft, Search } from "lucide-vue-next";
+import { computed } from "vue";
+import {
+  Command,
+  Database,
+  PanelLeft,
+  Search,
+  SquareTerminal,
+} from "lucide-vue-next";
 import { runCommand } from "../../composables/useCommands.js";
 import { useLayout } from "../../composables/useLayout.js";
 import { isTauri } from "../../lib/tauri/ipc.js";
@@ -7,7 +14,8 @@ import IconButton from "../common/IconButton.vue";
 import KbdShortcut from "../common/KbdShortcut.vue";
 import ConnectionPill from "./ConnectionPill.vue";
 
-const { sidebarOpen } = useLayout();
+const { sidebarOpen, mainView } = useLayout();
+const showingQueries = computed(() => mainView.value === "workspace");
 // The native window has an overlay title bar; leave room for the traffic lights.
 const trafficLightInset = isTauri();
 </script>
@@ -28,6 +36,19 @@ const trafficLightInset = isTauri();
         shortcut="Mod+1"
         :pressed="sidebarOpen"
         @click="runCommand('view.toggleSidebar')"
+      />
+      <IconButton
+        :icon="Database"
+        label="Connections"
+        :pressed="!showingQueries"
+        @click="runCommand('view.connections')"
+      />
+      <IconButton
+        :icon="SquareTerminal"
+        label="Query Tabs"
+        shortcut="Mod+T"
+        :pressed="showingQueries"
+        @click="runCommand(showingQueries ? 'tabs.newQuery' : 'view.workspace')"
       />
     </div>
 

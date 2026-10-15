@@ -11,7 +11,7 @@ import {
   listSchemas,
 } from "../lib/tauri/commands.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
-import { useLayout } from "./useLayout.js";
+import { useTabs } from "./useTabs.js";
 
 /**
  * Explorer state for the selected, connected profile. Children load when a
@@ -21,7 +21,6 @@ import { useLayout } from "./useLayout.js";
 const loaded = reactive(new Map()); // key -> { status, children?, error? }
 const expanded = ref(new Set());
 const selectedKey = ref(null);
-const openObject = ref(null); // { node, tab }
 let forConnection = null;
 
 const ROOT = "root";
@@ -30,12 +29,11 @@ function reset() {
   loaded.clear();
   expanded.value = new Set();
   selectedKey.value = null;
-  openObject.value = null;
 }
 
 export function useExplorer() {
   const store = useConnectionProfiles();
-  const layout = useLayout();
+  const workspace = useTabs();
 
   const profile = store.selectedProfile;
   const status = computed(() =>
@@ -116,10 +114,9 @@ export function useExplorer() {
     visibleRows(roots.value, expanded.value, (key) => stateOf(key).children),
   );
 
-  function open(node, tab = "data") {
+  function open(node, view = "data") {
     selectedKey.value = node.key;
-    openObject.value = { node, tab };
-    layout.mainView.value = "object";
+    workspace.openObject(node, view);
   }
 
   async function refresh(node = null) {
@@ -145,7 +142,6 @@ export function useExplorer() {
     rows,
     expanded,
     selectedKey,
-    openObject,
     stateOf,
     rootState: computed(() => stateOf(ROOT)),
     load,

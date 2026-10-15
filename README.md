@@ -6,8 +6,9 @@ your Mac to your database servers; there is no account, telemetry or cloud
 service.
 
 > Status: early development. You can save connections, connect to MySQL,
-> PostgreSQL and SQL Server (directly or through SSH), and browse databases,
-> tables and views. The query editor is not built yet.
+> PostgreSQL and SQL Server (directly or through SSH), browse databases,
+> tables and views, and run SQL in query tabs. The full results grid and CSV
+> export come next.
 > See [`plan.md`](plan.md) for the roadmap.
 
 ## Prerequisites (macOS)

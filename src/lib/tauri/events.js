@@ -11,3 +11,14 @@ export async function onConnectionClosed(handler) {
   if (!isTauri()) return () => {};
   return listen("connection-closed", (event) => handler(event.payload));
 }
+
+/**
+ * Items chosen in the native menu bar; the payload is a command id
+ * (see src-tauri/src/menu.rs). Returns an unlisten function.
+ *
+ * @param {(commandId: string) => void} handler
+ */
+export async function onMenuCommand(handler) {
+  if (!isTauri()) return () => {};
+  return listen("menu-command", (event) => handler(event.payload));
+}

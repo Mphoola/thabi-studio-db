@@ -3,6 +3,7 @@ import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
 import { useExplorer } from "./useExplorer.js";
+import { useTabs } from "./useTabs.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
@@ -17,6 +18,8 @@ export function useAppCommands() {
   const connections = useConnectionProfiles();
   const layout = useLayout();
   const explorer = useExplorer();
+  const workspace = useTabs();
+  const queryTabActive = () => workspace.active.value?.type === "query";
   const theme = useTheme();
   const toasts = useToasts();
   const hostKeys = useHostKeyTrust();
@@ -102,6 +105,51 @@ export function useAppCommands() {
       title: "About Thabi Studio",
       group: "Help",
       run: () => dialogs.show("about"),
+    },
+    {
+      id: "tabs.newQuery",
+      title: "New Query Tab",
+      group: "Query",
+      shortcut: "Mod+T",
+      run: () => workspace.newQuery(),
+    },
+    {
+      id: "tabs.close",
+      title: "Close Tab",
+      group: "Query",
+      shortcut: "Mod+W",
+      enabled: () => Boolean(workspace.active.value),
+      run: () => workspace.close(),
+    },
+    {
+      id: "query.run",
+      title: "Run Statement",
+      group: "Query",
+      shortcut: "Mod+Enter",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.run(false),
+    },
+    {
+      id: "query.runAll",
+      title: "Run All",
+      group: "Query",
+      shortcut: "Mod+Shift+Enter",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.run(true),
+    },
+    {
+      id: "query.cancel",
+      title: "Cancel Query",
+      group: "Query",
+      shortcut: "Mod+Period",
+      enabled: () => Boolean(workspace.active.value?.running),
+      run: () => workspace.activeHandle()?.cancel(),
+    },
+    {
+      id: "view.workspace",
+      title: "Show Query Tabs",
+      group: "View",
+      run: () => (layout.mainView.value = "workspace"),
     },
     {
       id: "explorer.refresh",

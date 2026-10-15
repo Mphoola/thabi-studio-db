@@ -14,7 +14,6 @@ pub struct PgSession {
     connection: PgConnection,
     info: ServerInfo,
     /// Server process id, used to cancel a running query from another session.
-    #[allow(dead_code)]
     backend_pid: i32,
     host: String,
     port: u16,
@@ -29,6 +28,12 @@ impl PgSession {
             }
             _ => Ok(()),
         }
+    }
+}
+
+impl PgSession {
+    pub fn backend_pid(&self) -> i32 {
+        self.backend_pid
     }
 }
 
@@ -113,7 +118,7 @@ impl DatabaseSession for PgSession {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            cancel_query: false,
+            cancel_query: true,
             schemas: true,
             rows_affected: true,
             multiple_result_sets: false,

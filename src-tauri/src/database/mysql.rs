@@ -14,10 +14,15 @@ pub struct MySqlSession {
     connection: MySqlConnection,
     info: ServerInfo,
     /// Connection id, used to cancel a running query with KILL QUERY.
-    #[allow(dead_code)]
     connection_id: u64,
     host: String,
     port: u16,
+}
+
+impl MySqlSession {
+    pub fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
 }
 
 fn context(params: &ConnectParams) -> error::Context<'_> {
@@ -101,7 +106,7 @@ impl DatabaseSession for MySqlSession {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            cancel_query: false,
+            cancel_query: true,
             schemas: false,
             rows_affected: true,
             multiple_result_sets: false,

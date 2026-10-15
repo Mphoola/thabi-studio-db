@@ -243,6 +243,15 @@ impl Session {
         .map_err(|_| error::timed_out(&params.host, params.port))?
     }
 
+    /// How another session can cancel this one's running statement.
+    pub fn cancel_target(&self) -> Option<CancelTarget> {
+        match &self.driver {
+            Driver::Postgres(s) => Some(CancelTarget::Postgres(s.backend_pid())),
+            Driver::MySql(s) => Some(CancelTarget::MySql(s.connection_id())),
+            Driver::SqlServer(_) => None,
+        }
+    }
+
     /// Local end of the SSH tunnel, if this session uses one.
     pub fn tunnel_addr(&self) -> Option<SocketAddr> {
         self.tunnel.as_ref().map(Tunnel::local_addr)
@@ -331,6 +340,28 @@ impl Session {
         }
         result
     }
+}
+
+/// Identifies a session's server-side process so another session can stop
+/// its running statement.
+#[derive(Clone, Copy, Debug)]
+pub enum CancelTarget {
+    Postgres(i32),
+    MySql(u64),
+}
+
+/// Asks the server to stop the statement running on `target`, from a new,
+/// short-lived session. Best effort; the caller falls back to dropping the
+/// session if this doesn't work.
+pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Result<(), AppError> {
+    let sql = match target {
+        CancelTarget::Postgres(pid) => format!("SELECT pg_cancel_backend({pid})"),
+        CancelTarget::MySql(id) => format!("KILL QUERY {id}"),
+    };
+    let mut session = Session::connect(params).await?;
+    let result = session.execute(&sql, 1).await.map(|_| ());
+    let _ = session.close().await;
+    result
 }
 
 /// Result of a connection test.

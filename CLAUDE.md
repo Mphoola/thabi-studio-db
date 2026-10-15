@@ -25,7 +25,9 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   `phase-5-remote-ssh`. Read `docs/decisions/0007-ssh-tunnels.md`.
 - Phase 6 (database explorer): complete on branch `phase-6-explorer`. Read
   `docs/decisions/0008-explorer.md`.
-- Next: Phase 7 (SQL editor and query execution).
+- Phase 7 (SQL editor): done on branch `phase-7-sql-editor`, not committed
+  (the user reviews before committing). Read `docs/decisions/0009-sql-editor.md`.
+- Next: Phase 8 (results grid, data inspection, CSV export).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -80,6 +82,9 @@ Run `npm run check` after every meaningful change and before calling work done.
 - `src-tauri/src/database/quote.rs` — identifier quoting; use it for every
   generated identifier. Values always go through bind parameters.
 - `src/components/explorer/` — explorer tree, object, structure and data views.
+- `src/components/workspace/` — tab bar, query tab, SQL editor (CodeMirror), results.
+- `src-tauri/src/queries.rs` — query-tab sessions, cancel and timeout.
+- `src-tauri/src/menu.rs` — native menu bar; items forward command ids.
 - `src/dev/mockBackend.js` — `?mock` sample backend for reviewing screens in
   a browser (dev only).
 - `src-tauri/tests/drivers.rs` — integration tests against real databases.
@@ -121,5 +126,7 @@ Run `npm run check` after every meaningful change and before calling work done.
   Encrypt Without Verifying or Off, and only for that connection.
 - Each live connection is one database session; never put a pool behind a
   query editor.
+- Never retry a statement automatically. Ask before risky statements and
+  before writes on Production (`src/lib/sqlSafety.js`).
 - Never accept an unknown or changed SSH host key without the user's
   confirmation. Store SSH key file paths, never key contents.

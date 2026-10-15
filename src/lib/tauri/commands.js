@@ -64,9 +64,21 @@ export function listDatabases(id) {
   return call("list_databases", { id });
 }
 
-/** Runs SQL on the profile's session. Keeps at most 1,000 rows. */
-export function runQuery(id, sql) {
-  return call("run_query", { id, sql });
+/**
+ * Runs one statement on a query tab's own session. Keeps at most 1,000 rows.
+ * Rejects with kind "query_cancelled" or "query_timed_out" when stopped.
+ */
+export function runStatement(id, tabId, { database, sql, timeoutSeconds }) {
+  return call("run_statement", { id, tabId, database, sql, timeoutSeconds });
+}
+
+/** @returns {Promise<boolean>} false when nothing was running. */
+export function cancelStatement(id, tabId) {
+  return call("cancel_statement", { id, tabId });
+}
+
+export function closeQueryTab(id, tabId) {
+  return call("close_query_tab", { id, tabId });
 }
 
 /** Trusts an SSH server's host key after the user checked its fingerprint. */

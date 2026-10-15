@@ -172,20 +172,57 @@ pub async fn preview_object(
     .await
 }
 
-/// Runs user-authored SQL on the profile's session, as written.
+/// Runs one user-authored statement, as written, on the query tab's own
+/// session. Never retried: if the connection drops, the outcome is unknown
+/// and the user decides what to do.
 #[tauri::command]
-pub async fn run_query(
+pub async fn run_statement(
     id: String,
+    tab_id: String,
+    database: Option<String>,
     sql: String,
+    timeout_seconds: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, AppError> {
-    let handle = state.connections.session(&id).await?;
-    let mut guard = handle.lock().await;
-    guard
-        .as_mut()
-        .ok_or_else(AppError::not_connected)?
-        .execute(&sql, MAX_ROWS)
-        .await
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let timeout = timeout_seconds
+        .filter(|s| *s > 0)
+        .map(std::time::Duration::from_secs);
+    let result = tab.run(&params, database, &sql, MAX_ROWS, timeout).await;
+    if let Err(error) = &result
+        && is_connection_failure(error)
+    {
+        // The tab's session is unusable; open a new one next time.
+        state.connections.close_query_tab(&id, &tab_id).await;
+        return Err(database::error::connection_lost());
+    }
+    result
+}
+
+/// Stops the statement running in a query tab. Returns false if nothing ran.
+#[tauri::command]
+pub async fn cancel_statement(
+    id: String,
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, AppError> {
+    Ok(
+        match state.connections.existing_query_tab(&id, &tab_id).await {
+            Some((tab, params)) => tab.cancel(&params),
+            None => false,
+        },
+    )
+}
+
+/// Closes a query tab's session (when the tab closes).
+#[tauri::command]
+pub async fn close_query_tab(
+    id: String,
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.connections.close_query_tab(&id, &tab_id).await;
+    Ok(())
 }
 
 /// Trusts an SSH server's host key after the user checked its fingerprint.

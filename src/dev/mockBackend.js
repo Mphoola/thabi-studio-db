@@ -161,6 +161,49 @@ const handlers = {
   },
 };
 
+let cancelRun = null;
+handlers.run_statement = ({ sql }) =>
+  new Promise((resolve, reject) => {
+    const text = sql.toLowerCase();
+    if (text.includes("missing_table"))
+      return reject({
+        kind: "server",
+        message: "The database returned an error.",
+        detail: 'relation "missing_table" does not exist',
+        code: "42P01",
+      });
+    const finish = () => {
+      cancelRun = null;
+      if (/^\s*(update|delete|insert)/.test(text))
+        return resolve({
+          columns: [],
+          rows: [],
+          rowsAffected: 3,
+          truncated: false,
+          extraResultSets: 0,
+          elapsedMs: 18,
+        });
+      resolve({ ...handlers.preview_object({ name: "orders" }), elapsedMs: 9 });
+    };
+    if (!text.includes("sleep")) return finish();
+    const timer = setTimeout(finish, 4000);
+    cancelRun = () => {
+      clearTimeout(timer);
+      cancelRun = null;
+      reject({
+        kind: "query_cancelled",
+        message: "Query cancelled.",
+        data: { sessionReset: false },
+      });
+    };
+  });
+handlers.cancel_statement = () => {
+  if (!cancelRun) return false;
+  cancelRun();
+  return true;
+};
+handlers.close_query_tab = () => null;
+
 export function installMockBackend() {
   mockIPC(
     (command, args) => {

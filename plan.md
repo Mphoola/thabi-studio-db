@@ -486,36 +486,36 @@ Tasks:
 
 Tasks:
 
-- Integrate CodeMirror 6 or Monaco Editor after evaluating bundle size, licensing, macOS keyboard behaviour, SQL language support, and integration effort.
-- Add SQL syntax highlighting and basic editor features: line numbers, indentation, bracket matching, find, and selection.
-- Support multiple editor tabs and unsaved-change indicators.
-- Allow selecting a connection/database context for each query tab.
-- Implement execute selection, or execute the current statement when there is no selection.
-- Add a visible Run button and documented keyboard shortcut.
-- Execute SQL asynchronously in Rust and keep the UI responsive.
-- Add query timeout configuration and cancellation where supported by the driver.
-- Return column metadata, rows, affected-row count where available, elapsed duration, and structured errors.
-- Support multiple result sets only where the driver can provide them reliably; otherwise report the limitation.
-- Handle statements that return no rows.
-- Keep the active connection and target database visible before execution.
-- Add an explicit confirmation or strong warning for potentially destructive statements, while recognising that SQL parsing is imperfect and cannot guarantee safety.
-- Provide a cancel action and accurate cancelled/running/completed/failed states.
-- Avoid automatically retrying write queries after connection loss because their outcome may be uncertain.
+- [x] Integrate CodeMirror 6 or Monaco Editor after evaluating bundle size, licensing, macOS keyboard behaviour, SQL language support, and integration effort.
+- [x] Add SQL syntax highlighting and basic editor features: line numbers, indentation, bracket matching, find, and selection.
+- [x] Support multiple editor tabs and unsaved-change indicators.
+- [x] Allow selecting a connection/database context for each query tab.
+- [x] Implement execute selection, or execute the current statement when there is no selection.
+- [x] Add a visible Run button and documented keyboard shortcut.
+- [x] Execute SQL asynchronously in Rust and keep the UI responsive.
+- [x] Add query timeout configuration and cancellation where supported by the driver.
+- [x] Return column metadata, rows, affected-row count where available, elapsed duration, and structured errors.
+- [x] Support multiple result sets only where the driver can provide them reliably; otherwise report the limitation (first result set shown, extra sets counted).
+- [x] Handle statements that return no rows.
+- [x] Keep the active connection and target database visible before execution.
+- [x] Add an explicit confirmation or strong warning for potentially destructive statements, while recognising that SQL parsing is imperfect and cannot guarantee safety.
+- [x] Provide a cancel action and accurate cancelled/running/completed/failed states.
+- [x] Avoid automatically retrying write queries after connection loss because their outcome may be uncertain.
 
 **Deliverables:**
 
-- Multi-tab SQL editor.
-- Query execution service.
-- Query status and error panel.
-- Cancellation and timeout handling where supported.
+- [x] Multi-tab SQL editor.
+- [x] Query execution service.
+- [x] Query status and error panel.
+- [x] Cancellation and timeout handling where supported.
 
 **Exit criteria:**
 
-- Queries work against all three engines.
-- Long-running queries do not freeze the UI.
-- Errors identify the active connection and provide useful database error information without exposing secrets.
-- No automatic unsafe retry occurs.
-- Run/cancel states match actual backend state.
+- [x] Queries work against all three engines.
+- [x] Long-running queries do not freeze the UI.
+- [x] Errors identify the active connection and provide useful database error information without exposing secrets.
+- [x] No automatic unsafe retry occurs.
+- [x] Run/cancel states match actual backend state.
 
 ### Phase 8 — Results grid, data inspection, and CSV export
 
@@ -841,7 +841,11 @@ Update this section as work progresses.
   - [x] Structure view (columns, keys, indexes) and read-only 100-row data preview
   - [x] Identifier quoting with tests; permission-denied, lost-connection and empty states
   - [x] 31 integration tests pass, including awkward names on every engine
-- [ ] Phase 7 — SQL editor and query execution
+- [x] Phase 7 — SQL editor and query execution (2026-10-15, branch `phase-7-sql-editor`, not committed)
+  - [x] CodeMirror 6 editor in workspace tabs; run statement/selection/all; database per tab
+  - [x] One session per query tab; cancel (server-side for PostgreSQL/MySQL, session reset for SQL Server); timeout preference; no retries
+  - [x] Confirmation for risky statements and for writes on Production
+  - [x] Native menu bar; 37 integration tests pass
 - [ ] Phase 8 — Results grid, data inspection, and CSV export
 - [ ] Phase 9 — Query history, saved queries, polish, and safeguards
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release

@@ -17,6 +17,9 @@ export default [
     },
     rules: {
       "vue/multi-word-component-names": "off",
+      // Workspace tabs are shared reactive objects passed as props; nested
+      // updates (tab.sql, tab.database) are intended.
+      "vue/no-mutating-props": ["error", { shallowOnly: true }],
       "no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },

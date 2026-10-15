@@ -10,6 +10,8 @@ pub struct AppSettings {
     pub sidebar_width: u16,
     pub sidebar_open: bool,
     pub selected_profile_id: Option<String>,
+    /// 0 means no limit.
+    pub query_timeout_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +58,9 @@ pub fn read_settings(connection: &Connection) -> Result<AppSettings, AppError> {
         sidebar_open,
         selected_profile_id: setting(connection, "selected_profile_id")?
             .filter(|profile_id| !profile_id.is_empty()),
+        query_timeout_seconds: setting(connection, "query_timeout_seconds")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
     })
 }
 
@@ -139,6 +144,11 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             .as_bool()
             .map(|open| open.to_string())
             .ok_or_else(|| AppError::new("validation", "Choose whether the sidebar is open."))?,
+        "query_timeout_seconds" => value
+            .as_u64()
+            .filter(|seconds| *seconds <= 24 * 60 * 60)
+            .ok_or_else(|| AppError::new("validation", "Choose a query timeout."))?
+            .to_string(),
         _ => {
             return Err(AppError::new(
                 "validation",
@@ -223,6 +233,7 @@ mod tests {
                 sidebar_width: 240,
                 sidebar_open: true,
                 selected_profile_id: None,
+                query_timeout_seconds: 0,
             }
         );
     }

@@ -1,8 +1,11 @@
 <script setup>
 import { computed } from "vue";
 
-/** Read-only table of the first rows of an object. */
-const props = defineProps({ result: { type: Object, required: true } });
+/** Read-only table of result rows. */
+const props = defineProps({
+  result: { type: Object, required: true },
+  footnote: { type: String, default: "Read-only preview" },
+});
 
 const NUMERIC =
   /^(int|integer|smallint|bigint|tinyint|mediumint|int[248]|decimal|numeric|real|float|float[48]|double|money|smallmoney|bit|i\d+|f\d+|intn|floatn|decimaln|numericn)/i;
@@ -79,8 +82,8 @@ const summary = computed(() => {
     <footer
       class="flex h-6 shrink-0 items-center border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
     >
-      {{ summary }} · {{ result.elapsedMs.toLocaleString() }} ms · Read-only
-      preview
+      {{ summary }} · {{ result.elapsedMs.toLocaleString() }} ms
+      <template v-if="footnote"> · {{ footnote }}</template>
     </footer>
   </div>
 </template>

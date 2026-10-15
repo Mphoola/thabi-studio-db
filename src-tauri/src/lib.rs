@@ -3,7 +3,9 @@ mod connections;
 mod credentials;
 pub mod database;
 mod errors;
+mod menu;
 mod profiles;
+pub mod queries;
 mod settings;
 pub mod ssh;
 mod state;
@@ -29,6 +31,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             credentials::init_platform_store()?;
+            app.set_menu(menu::build(app.handle())?)?;
+            app.on_menu_event(|app, event| menu::handle_event(app, event.id().as_ref()));
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
             let mut database =
@@ -69,7 +73,9 @@ pub fn run() {
             commands::connections::list_objects,
             commands::connections::describe_object,
             commands::connections::preview_object,
-            commands::connections::run_query,
+            commands::connections::run_statement,
+            commands::connections::cancel_statement,
+            commands::connections::close_query_tab,
             commands::connections::trust_ssh_host_key,
             commands::connections::forget_ssh_host_keys,
             commands::settings::get_app_settings,

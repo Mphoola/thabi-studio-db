@@ -42,4 +42,4 @@ export THABI_IT_MYSQL_PORT="${THABI_IT_MYSQL_PORT:-53306}"
 export THABI_IT_MSSQL_PORT="${THABI_IT_MSSQL_PORT:-51433}"
 export THABI_IT_SSH_PORT="${THABI_IT_SSH_PORT:-52222}"
 
-cargo test --manifest-path "$root/src-tauri/Cargo.toml" --test drivers --test ssh -- --ignored --test-threads=1 "$@"
+cargo test --manifest-path "$root/src-tauri/Cargo.toml" --test drivers --test ssh --test queries -- --ignored --test-threads=1 "$@"
