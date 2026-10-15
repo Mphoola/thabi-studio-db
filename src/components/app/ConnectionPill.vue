@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
+import { runCommand } from "../../composables/useCommands.js";
 
 const store = useConnectionProfiles();
 const { selectedProfile } = store;
@@ -11,23 +12,24 @@ const environment = computed(() =>
     ? environmentFor(selectedProfile.value.environment)
     : null,
 );
-const connected = computed(
-  () => selectedProfile.value && store.isConnected(selectedProfile.value.id),
+const status = computed(() =>
+  selectedProfile.value ? store.statusFor(selectedProfile.value.id) : null,
 );
+const connected = computed(() => status.value?.state === "connected");
+const tooltip = computed(() => {
+  if (!selectedProfile.value) return "No connection selected";
+  if (connected.value) return `Connected to ${status.value.server.version}`;
+  if (status.value?.state === "connecting") return "Connecting…";
+  return "Not connected";
+});
 </script>
 
 <template>
-  <div
-    v-tooltip="
-      selectedProfile
-        ? connected
-          ? 'This profile is connected'
-          : 'This profile is selected but not connected'
-        : 'No connection profile is selected'
-    "
-    class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted"
-    role="status"
-    tabindex="0"
+  <button
+    v-tooltip="tooltip"
+    type="button"
+    class="flex h-6 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-sm text-fg-muted hover:border-line-strong"
+    @click="runCommand('view.connections')"
   >
     <span
       class="size-2 rounded-full"
@@ -41,5 +43,5 @@ const connected = computed(
       </span>
     </template>
     <span v-else>No connection</span>
-  </div>
+  </button>
 </template>

@@ -41,18 +41,178 @@ export function selectConnectionProfile(id) {
   return call("select_connection_profile", { id });
 }
 
-export function testConnectionProfile(id) {
-  return call("test_connection_profile", { id });
+/** Tests unsaved form values; `profileId` lets an edited profile reuse its saved password. */
+export function testConnectionInput(input, profileId = null) {
+  return call("test_connection_input", { input, profileId });
 }
 
-export function connectConnectionProfile(id) {
-  return call("connect_connection_profile", { id });
+/** `database` opens another database for this connection only. */
+export function connectConnectionProfile(id, database = null) {
+  return call("connect_connection_profile", { id, database });
 }
 
 export function disconnectConnectionProfile(id) {
   return call("disconnect_connection_profile", { id });
 }
 
-export function listConnectedProfiles() {
-  return call("list_connected_profiles");
+/** @returns {Promise<Array<{ profileId: string, connectionId: string, state: "connecting" | "connected" | "closing", server: { engine: string, version: string } | null }>>} */
+export function listConnections() {
+  return call("list_connections");
+}
+
+export function listDatabases(id) {
+  return call("list_databases", { id });
+}
+
+/**
+ * Runs one statement on a query tab's own session. Keeps at most 1,000 rows.
+ * Rejects with kind "query_cancelled" or "query_timed_out" when stopped.
+ */
+export function runStatement(
+  id,
+  tabId,
+  { database, sql, timeoutSeconds, maxRows },
+) {
+  return call("run_statement", {
+    id,
+    tabId,
+    database,
+    sql,
+    timeoutSeconds,
+    maxRows,
+  });
+}
+
+/** A page of a kept result in the given sort ({ column, descending }). */
+export function fetchRows(id, tabId, resultId, { offset, limit, sort }) {
+  return call("fetch_rows", { id, tabId, resultId, offset, limit, sort });
+}
+
+/**
+ * Cells as text for the clipboard. scope: { rows?: [start, end],
+ * columns?: number[], includeHeader }. format: "tsv" | "csv".
+ */
+export function copyRows(id, tabId, resultId, { scope, sort, format }) {
+  return call("copy_rows", { id, tabId, resultId, scope, sort, format });
+}
+
+/** @returns {Promise<{ rows: number, path: string }>} */
+export function exportCsv(id, tabId, resultId, { path, scope, sort }) {
+  return call("export_csv", { id, tabId, resultId, path, scope, sort });
+}
+
+/** @returns {Promise<boolean>} false when nothing was running. */
+export function cancelStatement(id, tabId) {
+  return call("cancel_statement", { id, tabId });
+}
+
+export function closeQueryTab(id, tabId) {
+  return call("close_query_tab", { id, tabId });
+}
+
+/** Trusts an SSH server's host key after the user checked its fingerprint. */
+export function trustSshHostKey(host, port, publicKey) {
+  return call("trust_ssh_host_key", { host, port, publicKey });
+}
+
+/** @returns {Promise<{ stillInOpensshKnownHosts: boolean }>} */
+export function forgetSshHostKeys(host, port) {
+  return call("forget_ssh_host_keys", { host, port });
+}
+
+/** @returns {Promise<string[] | null>} null when the engine has no schemas (MySQL). */
+export function listSchemas(id, database) {
+  return call("list_schemas", { id, database });
+}
+
+/** @returns {Promise<Array<{ name: string, kind: "table" | "view" | "materialized_view" | "foreign_table" }>>} */
+export function listObjects(id, database, schema = null) {
+  return call("list_objects", { id, database, schema });
+}
+
+export function describeObject(id, { database, schema, name, kind }) {
+  return call("describe_object", { id, database, schema, name, kind });
+}
+
+/**
+ * Reads a table or view into the object tab's own session. The result pages,
+ * sorts and exports like a query result. Bounded by `maxRows`.
+ */
+/**
+ * Staged row edits on a table tab. target: { database, schema, name };
+ * changes: [{ kind: "update", key, set } | { kind: "delete", key } |
+ * { kind: "insert", values }], each key/set/values a [{ column, value }].
+ * @returns {Promise<string[]>} the statements, for review
+ */
+export function previewRowChanges(id, tabId, target, changes) {
+  return call("preview_row_changes", { id, tabId, target, changes });
+}
+
+/**
+ * Values a foreign key column may take. reference: { schema, table, column }.
+ * @returns {Promise<{ value: string, label: string | null }[]>}
+ */
+export function lookupReference(id, tabId, database, reference, search) {
+  return call("lookup_reference", { id, tabId, database, reference, search });
+}
+
+/** Applies staged row edits in one transaction. @returns {Promise<number>} */
+export function applyRowChanges(id, tabId, target, changes) {
+  return call("apply_row_changes", { id, tabId, target, changes });
+}
+
+/** filters: [{ column, op, value }], AND-ed; op "raw" takes a SQL condition. */
+export function openObjectData(
+  id,
+  tabId,
+  { database, schema, name, maxRows, filters = [] },
+) {
+  return call("open_object_data", {
+    id,
+    tabId,
+    database,
+    schema,
+    name,
+    maxRows,
+    filters,
+  });
+}
+
+export function listHistory({ search = "", limit = 100, offset = 0 } = {}) {
+  return call("list_history", { search, limit, offset });
+}
+
+export function deleteHistoryEntry(id) {
+  return call("delete_history_entry", { id });
+}
+
+/** @returns {Promise<number>} entries removed */
+export function clearHistory() {
+  return call("clear_history");
+}
+
+export function listSavedQueries() {
+  return call("list_saved_queries");
+}
+
+/** input: { id?, name, queryText, profileId?, notes?, folder? } */
+export function saveQuery(input) {
+  return call("save_query", { input });
+}
+
+export function deleteSavedQuery(id) {
+  return call("delete_saved_query", { id });
+}
+
+/** Renames (or, with to = "", removes) a saved-query folder. @returns {Promise<number>} */
+export function renameSavedFolder(from, to) {
+  return call("rename_saved_folder", { from, to });
+}
+
+export function saveWorkspaceTabs(tabs) {
+  return call("save_workspace_tabs", { tabs });
+}
+
+export function loadWorkspaceTabs() {
+  return call("load_workspace_tabs");
 }

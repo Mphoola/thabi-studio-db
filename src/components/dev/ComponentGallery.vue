@@ -115,7 +115,7 @@ async function askDelete() {
         <PasswordInput
           v-model="password"
           label="Password"
-          hint="Stored securely in Keychain."
+          hint="Stored securely in the system credential store."
         />
       </div>
     </section>
@@ -128,7 +128,7 @@ async function askDelete() {
           label="Verify server certificate"
           description="Recommended. Turn off only for a server you trust."
         />
-        <CheckboxInput v-model="remember" label="Save password in Keychain" />
+        <CheckboxInput v-model="remember" label="Save password" />
         <SegmentedControl
           v-model="segment"
           label="Table view"

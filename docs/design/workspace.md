@@ -20,8 +20,9 @@ Based on how TablePlus and DataGrip handle the same jobs:
 2. **Production looks different.** Every connection has an environment tag.
    Production adds a red strip under the title bar and a red dot in the
    status bar, and asks before running statements that can change data.
-3. **Keyboard first, Mac conventions.** Every frequent action has a
-   shortcut that follows macOS habits (⌘. cancels, ⌘, opens settings).
+3. **Keyboard first, platform conventions.** Every frequent action has a
+   shortcut that follows the platform's habits: ⌘ on macOS (⌘. cancels,
+   ⌘, opens settings), Ctrl on Windows and Linux (Ctrl+., Ctrl+,).
    Nothing important needs a mouse.
 4. **Calm by default.** Graphite neutrals, one iris accent, hairline
    dividers instead of boxes. Colour is reserved for meaning: environment,
@@ -59,7 +60,8 @@ Based on how TablePlus and DataGrip handle the same jobs:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Title bar** (unified, macOS overlay style): traffic lights, connection
+- **Title bar** (unified overlay on macOS; the native title bar on Windows
+  and Linux, with this bar below it): traffic lights on macOS, connection
   switcher pill (environment dot, connection name, database), and Open
   Anything on the right. Empty areas drag the window.
 - **Sidebar** (240px, resizable 200–360px, ⌘1 to toggle): a segmented
@@ -106,37 +108,38 @@ Minimum window 860 × 560. Below 1000px wide the sidebar collapses to icons.
 | Settings                   | ⌘,       |
 
 Connect Selected Connection and Disconnect Selected Connection are available
-in Open Anything when a profile is selected.
+in Open Anything when a connection is selected.
 
 ## Copy
 
-Style: Apple's convention. Title Case for buttons, menu items and window
+Style: Title Case for buttons, menu items and window
 titles; sentence case for messages and labels. An ellipsis (…) on any
 command that needs more input. Curly quotes around names. Contractions are
 fine. No "Error:" prefixes, no exclamation marks, no apologies. Numbers
 with units and thousands separators: "1,204 rows", "42 ms".
 
-| Situation              | Copy                                                                                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First launch           | **Save a connection profile** · Profiles stay on this Mac. Saving one doesn't connect. · [New Connection…]                                        |
-| No tabs open           | **No open queries** · Press ⌘T to start a query, or ⌘P to open a table.                                                                           |
-| Testing a connection   | Testing connection…                                                                                                                               |
-| Test succeeded         | Connection test succeeded.                                                                                                                        |
-| Connection refused     | **Couldn't connect to “Production”** · The server refused the connection on port 5432. Check the host and port, and that the database is running. |
-| Wrong password         | **Couldn't sign in to “Production”** · The server rejected the username or password.                                                              |
-| Disconnected           | Disconnected from “Production”. [Reconnect]                                                                                                       |
-| Running                | Running… 3.2 s · [Cancel ⌘.]                                                                                                                      |
-| Rows returned          | 238 rows · 42 ms                                                                                                                                  |
-| Bounded fetch          | First 500 rows fetched. [Fetch More]                                                                                                              |
-| No rows                | Query ran. No rows returned.                                                                                                                      |
-| Statement without rows | 12 rows affected · 18 ms                                                                                                                          |
-| Cancelled              | Query cancelled after 3.2 s.                                                                                                                      |
-| Query failed           | **Query failed on “Production” (orders_db)** · then the driver message in monospace, with the line number if known.                               |
-| Unsupported metadata   | SQL Server doesn't report this for views.                                                                                                         |
-| Empty schema           | No tables in “public”.                                                                                                                            |
-| Data-changing on prod  | **Run on Production?** · This statement can change data in “orders_db”. · [Cancel] [Run]                                                          |
-| No WHERE clause        | **Update every row in “orders”?** · This UPDATE has no WHERE clause. · [Cancel] [Update All Rows]                                                 |
-| Delete connection      | **Delete “Production”?** · Its saved password is also removed from your keychain. This can't be undone. · [Cancel] [Delete]                       |
-| Profile selected       | The title bar and status bar distinguish **Connected** from **Not connected** using the live Rust connection state.                               |
-| Export done            | Exported 238 rows to orders.csv. [Show in Finder]                                                                                                 |
-| Copied                 | Copied 3 rows.                                                                                                                                    |
+| Situation               | Copy                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| First launch            | **Connect to your first database** · Thabi Studio connects straight from this computer (this Mac on macOS) to MySQL, PostgreSQL or SQL Server. · [New Connection…] |
+| No tabs open            | **No open queries** · Press ⌘T to start a query, or ⌘P to open a table.                                                                                            |
+| Testing a connection    | Testing connection…                                                                                                                                                |
+| Test succeeded          | Connected to PostgreSQL 16.4 in 38 ms.                                                                                                                             |
+| Connection refused      | **Couldn't connect to “Production”** · The server refused the connection on port 5432. Check the host and port, and that the database is running.                  |
+| Wrong password          | **Couldn't connect to “Production”** · The server rejected the user name or password.                                                                              |
+| Disconnected            | Disconnected from “Production”. [Reconnect]                                                                                                                        |
+| Running                 | Running… 3.2 s · [Cancel ⌘.]                                                                                                                                       |
+| Rows returned           | 238 rows · 42 ms                                                                                                                                                   |
+| Bounded fetch           | First 500 rows fetched. [Fetch More]                                                                                                                               |
+| No rows                 | Query ran. No rows returned.                                                                                                                                       |
+| Statement without rows  | 12 rows affected · 18 ms                                                                                                                                           |
+| Cancelled               | Query cancelled after 3.2 s.                                                                                                                                       |
+| Query failed            | **Query failed on “Production” (orders_db)** · then the driver message in monospace, with the line number if known.                                                |
+| Unsupported metadata    | SQL Server doesn't report this for views.                                                                                                                          |
+| Empty schema            | No tables in “public”.                                                                                                                                             |
+| Data-changing on prod   | **Run on Production?** · This statement can change data in “orders_db”. · [Cancel] [Run]                                                                           |
+| No WHERE clause         | **Update every row in “orders”?** · This UPDATE has no WHERE clause. · [Cancel] [Update All Rows]                                                                  |
+| Delete connection       | **Delete “Production”?** · Its saved password is also removed from your keychain. This can't be undone. · [Cancel] [Delete]                                        |
+| Certificate not trusted | **The server's certificate couldn't be verified.** · Check the host name, choose its CA certificate, or, for a server you trust, use Encrypt Without Verifying.    |
+| TLS off, remote host    | Not encrypted. Passwords and data cross the network in plain text.                                                                                                 |
+| Export done             | Exported 238 rows to orders.csv. [Show in Finder]                                                                                                                  |
+| Copied                  | Copied 3 rows.                                                                                                                                                     |

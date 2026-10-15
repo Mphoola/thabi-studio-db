@@ -2,6 +2,7 @@
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
 import { useAppInfo } from "../../composables/useAppInfo.js";
+import SecurityIndicator from "./SecurityIndicator.vue";
 
 const { info, error } = useAppInfo();
 const store = useConnectionProfiles();
@@ -23,13 +24,18 @@ const { selectedProfile } = store;
         aria-hidden="true"
       />
       <template v-if="selectedProfile">
-        {{ selectedProfile.name }} ·
-        {{
-          store.isConnected(selectedProfile.id) ? "Connected" : "Not connected"
-        }}
+        <b class="font-medium text-fg">{{ selectedProfile.name }}</b>
+        <span v-if="store.isConnected(selectedProfile.id)">
+          {{ store.statusFor(selectedProfile.id).server.version }} ·
+          {{ selectedProfile.username }}@{{ selectedProfile.host }}:{{
+            selectedProfile.port
+          }}
+        </span>
+        <span v-else>Not connected</span>
       </template>
       <template v-else>No connection</template>
     </span>
+    <SecurityIndicator v-if="selectedProfile" :profile="selectedProfile" />
     <span class="ml-auto" />
     <span v-if="info">v{{ info.version }}</span>
     <span v-else-if="error" :title="error">Backend unavailable</span>

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Integration test credentials (generated)
+tests/integration/.env
+tests/integration/.ssh/

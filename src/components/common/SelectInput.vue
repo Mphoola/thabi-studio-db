@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-vue-next";
 import FormField from "./FormField.vue";
 import { borderClass, describedBy, fieldClass } from "./fieldClasses.js";
 
-/** Native <select>, styled to match TextInput. Keeps macOS keyboard behaviour. */
+/** Native <select>, styled to match TextInput. Keeps the platform's keyboard behaviour. */
 const props = defineProps({
   label: { type: String, default: "" },
   hint: { type: String, default: "" },
@@ -12,6 +12,8 @@ const props = defineProps({
   /** @type {{ value: string, label: string, disabled?: boolean }[]} */
   options: { type: Array, required: true },
   disabled: { type: Boolean, default: false },
+  /** Accessible name when there's no visible label. */
+  ariaLabel: { type: String, default: "" },
   id: { type: String, default: "" },
 });
 
@@ -27,6 +29,7 @@ const selectId = props.id || autoId;
         :id="selectId"
         v-model="model"
         :disabled="disabled"
+        :aria-label="ariaLabel || undefined"
         :aria-invalid="!!error || undefined"
         :aria-describedby="describedBy(selectId, { error, hint })"
         :class="[fieldClass, borderClass(error)]"

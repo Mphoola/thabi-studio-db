@@ -1,30 +1,41 @@
 import { useCommandRegistration } from "./useCommands.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
+import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
+import { useExplorer } from "./useExplorer.js";
+import { useTabs } from "./useTabs.js";
+import { useQuerySave } from "./useQuerySave.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
-import { toUserMessage } from "../lib/errors.js";
+import { toUserDetail } from "../lib/errors.js";
 
 /**
- * App-wide commands. Shortcuts follow macOS conventions and are reserved
+ * App-wide commands. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere) and are reserved
  * in docs/design/workspace.md so later phases don't collide.
  */
 export function useAppCommands() {
   const dialogs = useDialogs();
   const connections = useConnectionProfiles();
   const layout = useLayout();
+  const explorer = useExplorer();
+  const workspace = useTabs();
+  const queryTabActive = () => workspace.active.value?.type === "query";
+  const saver = useQuerySave();
   const theme = useTheme();
   const toasts = useToasts();
+  const hostKeys = useHostKeyTrust();
 
   async function connectSelected() {
     const profile = connections.selectedProfile.value;
     if (!profile) return;
     try {
-      await connections.connect(profile.id);
-      toasts.success(`Connected to ${profile.name}`);
+      await hostKeys.run(() => connections.connect(profile.id));
     } catch (error) {
-      toasts.error("Couldn't connect to database", toUserMessage(error));
+      toasts.error(
+        `Couldn’t connect to “${profile.name}”`,
+        toUserDetail(error),
+      );
     }
   }
 
@@ -33,9 +44,11 @@ export function useAppCommands() {
     if (!profile) return;
     try {
       await connections.disconnect(profile.id);
-      toasts.success(`Disconnected from ${profile.name}`);
     } catch (error) {
-      toasts.error("Couldn't disconnect from database", toUserMessage(error));
+      toasts.error(
+        `Couldn’t disconnect from “${profile.name}”`,
+        toUserDetail(error),
+      );
     }
   }
 
@@ -94,6 +107,93 @@ export function useAppCommands() {
       title: "About Thabi Studio",
       group: "Help",
       run: () => dialogs.show("about"),
+    },
+    {
+      id: "connections.switch",
+      title: "Switch Connection…",
+      group: "Connections",
+      shortcut: "Mod+Shift+K",
+      enabled: () => connections.profiles.value.length > 0,
+      run: () => dialogs.show("switcher"),
+    },
+    {
+      id: "tabs.newQuery",
+      title: "New Query Tab",
+      group: "Query",
+      shortcut: "Mod+T",
+      run: () => workspace.newQuery(),
+    },
+    {
+      id: "tabs.close",
+      title: "Close Tab",
+      group: "Query",
+      shortcut: "Mod+W",
+      enabled: () => Boolean(workspace.active.value),
+      run: () => workspace.close(),
+    },
+    {
+      id: "query.save",
+      title: "Save Query",
+      group: "Query",
+      shortcut: "Mod+S",
+      enabled: queryTabActive,
+      run: () => saver.saveActive(),
+    },
+    {
+      id: "query.focusEditor",
+      title: "Focus Editor",
+      group: "Query",
+      shortcut: "Mod+E",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.focus(),
+    },
+    {
+      id: "query.run",
+      title: "Run Statement",
+      group: "Query",
+      shortcut: "Mod+Enter",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.run(false),
+    },
+    {
+      id: "query.runAll",
+      title: "Run All",
+      group: "Query",
+      shortcut: "Mod+Shift+Enter",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.run(true),
+    },
+    {
+      id: "query.cancel",
+      title: "Cancel Query",
+      group: "Query",
+      shortcut: "Mod+Period",
+      enabled: () => Boolean(workspace.active.value?.running),
+      run: () => workspace.activeHandle()?.cancel(),
+    },
+    {
+      id: "view.workspace",
+      title: "Show Query Tabs",
+      group: "View",
+      run: () => (layout.mainView.value = "workspace"),
+    },
+    {
+      id: "explorer.refresh",
+      title: "Refresh Explorer",
+      group: "View",
+      shortcut: "Mod+R",
+      enabled: () => explorer.connected.value,
+      run: () => {
+        layout.sidebarView.value = "explorer";
+        layout.sidebarOpen.value = true;
+        explorer.refresh();
+      },
+    },
+    {
+      id: "view.connections",
+      title: "Show Connections",
+      group: "View",
+      run: () => (layout.mainView.value = "welcome"),
     },
     {
       id: "view.toggleSidebar",

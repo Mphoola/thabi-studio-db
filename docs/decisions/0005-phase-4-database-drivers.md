@@ -1,6 +1,6 @@
 # 0005 — Phase 4 database drivers
 
-**Status:** accepted for the Phase 4 proof of concept · **Date:** 2026-10-14
+**Status:** accepted for the Phase 4 proof of concept · **Date:** 2026-10-14 · Parts superseded by 0006 (sessions, TLS modes, errors).
 
 ## Context
 

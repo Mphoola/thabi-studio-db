@@ -31,17 +31,19 @@ const enabledItems = () => [
   ...(menu.value?.querySelectorAll('[role="menuitem"]:not([disabled])') ?? []),
 ];
 
-async function show(focus = "first") {
+async function show(focus = "first", anchor = null) {
   menu.value.showPopover();
   await nextTick();
   position.value = placeFloating(
-    trigger().getBoundingClientRect(),
+    anchor ?? trigger().getBoundingClientRect(),
     menu.value.getBoundingClientRect(),
-    { align: props.align },
+    { align: props.align, gap: anchor ? 0 : 4 },
   );
   const items = enabledItems();
   (focus === "last" ? items.at(-1) : items[0])?.focus();
 }
+
+let returnFocus = null;
 
 function toggle() {
   if (open.value) menu.value.hidePopover();
@@ -50,8 +52,10 @@ function toggle() {
 
 function onToggle(event) {
   open.value = event.newState === "open";
-  if (!open.value && menu.value.contains(document.activeElement))
-    trigger()?.focus();
+  if (!open.value && menu.value.contains(document.activeElement)) {
+    (returnFocus ?? trigger())?.focus();
+    returnFocus = null;
+  }
 }
 
 function onTriggerKeydown(event) {
@@ -82,6 +86,14 @@ function choose(item) {
   menu.value.hidePopover();
   emit("select", item.id);
 }
+
+/** Opens the menu at a point, for context menus. */
+function openAt(x, y) {
+  returnFocus = document.activeElement;
+  if (open.value) menu.value.hidePopover();
+  show("first", new DOMRect(x, y, 0, 0));
+}
+defineExpose({ openAt });
 
 const triggerProps = {
   "aria-haspopup": "menu",

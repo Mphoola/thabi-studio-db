@@ -1,29 +1,67 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// What the user knows their OS credential store as.
+#[cfg(target_os = "macos")]
+pub const CREDENTIAL_STORE: &str = "Keychain";
+#[cfg(target_os = "windows")]
+pub const CREDENTIAL_STORE: &str = "Windows Credential Manager";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const CREDENTIAL_STORE: &str = "The system keyring";
+
+/// Error returned to the frontend as `{ kind, message, detail?, code?, fields? }`.
+///
+/// `message` is written for the user. `detail` carries the database server's
+/// own message when there is one, already sanitised (see
+/// `database::error::sanitise`). Secrets must never reach any field.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     pub kind: &'static str,
-    pub message: &'static str,
+    pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<BTreeMap<String, String>>,
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Box<BTreeMap<String, String>>>,
+    /// Structured extras for errors the UI acts on, such as the SSH host
+    /// key to show when asking whether to trust a server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Box<serde_json::Value>>,
 }
 
 impl AppError {
-    pub fn new(kind: &'static str, message: &'static str) -> Self {
+    pub fn new(kind: &'static str, message: impl Into<String>) -> Self {
         Self {
             kind,
-            message,
+            message: message.into(),
+            detail: None,
+            code: None,
             fields: None,
+            data: None,
         }
+    }
+
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(Box::new(data));
+        self
+    }
+
+    pub fn with_detail(mut self, detail: Option<String>) -> Self {
+        self.detail = detail.filter(|value| !value.is_empty());
+        self
+    }
+
+    pub fn with_code(mut self, code: Option<String>) -> Self {
+        self.code = code.filter(|value| !value.is_empty());
+        self
     }
 
     pub fn validation(fields: BTreeMap<String, String>) -> Self {
         Self {
-            kind: "validation",
-            message: "Check the highlighted fields.",
-            fields: Some(fields),
+            fields: Some(Box::new(fields)),
+            ..Self::new("validation", "Check the highlighted fields.")
         }
     }
 
@@ -31,64 +69,36 @@ impl AppError {
         Self::new("storage", "Local data couldn't be accessed.")
     }
 
+    pub fn background_task() -> Self {
+        Self::new("internal", "Thabi Studio couldn't finish that request.")
+    }
+
     pub fn credential_access() -> Self {
         Self::new(
             "credential_access",
-            "Keychain couldn't be accessed. Check Keychain Access and try again.",
+            format!("{CREDENTIAL_STORE} couldn't be accessed. Unlock it and try again."),
         )
     }
 
     pub fn credential_missing() -> Self {
         Self::new(
             "credential_missing",
-            "A saved password is missing from Keychain. Enter it again to continue.",
+            format!(
+                "A saved password is missing from {CREDENTIAL_STORE}. Enter it again to continue."
+            ),
         )
+    }
+
+    pub fn not_found() -> Self {
+        Self::new("not_found", "That saved connection couldn't be found.")
     }
 
     pub fn unsupported_driver() -> Self {
         Self::new("unsupported_driver", "That database type isn't supported.")
     }
 
-    pub fn unsupported_tls_mode() -> Self {
-        Self::new(
-            "tls_configuration",
-            "This profile uses a TLS mode that isn't supported yet.",
-        )
-    }
-
-    pub fn unsupported_ssh() -> Self {
-        Self::new(
-            "ssh_unavailable",
-            "SSH-tunneled connections aren't available yet. Direct connections only.",
-        )
-    }
-
-    pub fn connection_failed() -> Self {
-        Self::new(
-            "connection",
-            "Couldn't connect. Check the host, port, credentials, and database name.",
-        )
-    }
-
-    pub fn authentication_failed() -> Self {
-        Self::new(
-            "authentication",
-            "The database rejected the login or selected database.",
-        )
-    }
-
-    pub fn connection_timeout() -> Self {
-        Self::new(
-            "timeout",
-            "The database connection timed out. Check the host and port.",
-        )
-    }
-
-    pub fn tls_verification_failed() -> Self {
-        Self::new(
-            "tls",
-            "The database TLS connection couldn't be verified. Check its certificate and host name.",
-        )
+    pub fn not_connected() -> Self {
+        Self::new("not_connected", "That connection isn't open.")
     }
 
     pub fn connection_in_progress() -> Self {
@@ -96,6 +106,10 @@ impl AppError {
             "connection_in_progress",
             "This connection is still opening. Try again in a moment.",
         )
+    }
+
+    pub fn connection_cancelled() -> Self {
+        Self::new("cancelled", "Connecting was cancelled.")
     }
 
     pub fn connection_close_failed() -> Self {
@@ -108,7 +122,7 @@ impl AppError {
 
 impl std::fmt::Display for AppError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.message)
+        formatter.write_str(&self.message)
     }
 }
 

@@ -4,6 +4,7 @@ import { readonly, ref } from "vue";
  * @typedef {object} ConfirmOptions
  * @property {string} title
  * @property {string} [message]
+ * @property {string} [detail]  Shown in monospace, e.g. a key fingerprint.
  * @property {string} [confirmLabel]
  * @property {string} [cancelLabel]
  * @property {boolean} [destructive]

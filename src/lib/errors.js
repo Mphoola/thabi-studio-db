@@ -14,3 +14,18 @@ export function toUserMessage(error) {
   }
   return "An unknown error occurred.";
 }
+
+/**
+ * Message plus the server's own detail and error code, when Rust sent them.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function toUserDetail(error) {
+  const parts = [toUserMessage(error)];
+  if (error && typeof error === "object") {
+    if (error.detail) parts.push(String(error.detail));
+    if (error.code) parts.push(`Code ${error.code}`);
+  }
+  return parts.join(" · ");
+}

@@ -1,5 +1,5 @@
 <script setup>
-import { defineAsyncComponent, onMounted } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, onMounted } from "vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useAppCommands } from "../../composables/useAppCommands.js";
 import { useDialogs } from "../../composables/useDialogs.js";
@@ -12,9 +12,20 @@ import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StatusBar from "./StatusBar.vue";
 import TitleBar from "./TitleBar.vue";
 import WelcomeView from "./WelcomeView.vue";
+// The workspace carries the SQL editor (CodeMirror); load it on first use.
+const WorkspaceView = defineAsyncComponent(
+  () => import("../workspace/WorkspaceView.vue"),
+);
+import { runCommand } from "../../composables/useCommands.js";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
+import ConnectionRail from "../connections/ConnectionRail.vue";
+import ConnectionSwitcher from "../connections/ConnectionSwitcher.vue";
+import SaveQueryDialog from "../library/SaveQueryDialog.vue";
+import { startTabPersistence } from "../../composables/useTabPersistence.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
+import { onConnectionClosed, onMenuCommand } from "../../lib/tauri/events.js";
+import EnvironmentStrip from "./EnvironmentStrip.vue";
 
 // The component gallery is only bundled in development builds.
 const ComponentGallery = import.meta.env.DEV
@@ -27,10 +38,44 @@ const dialogs = useDialogs();
 const connections = useConnectionProfiles();
 const toasts = useToasts();
 
-onMounted(() => {
-  connections.load().catch((error) => {
-    toasts.error("Saved connections couldn't be loaded", toUserMessage(error));
-  });
+let stopListening = () => {};
+let stopMenu = () => {};
+
+function onClosed({ profileId, reason }) {
+  const name =
+    connections.profiles.value.find((p) => p.id === profileId)?.name ?? "";
+  connections.forgetStatus(profileId);
+  if (reason === "idle")
+    toasts.info(`Disconnected from “${name}”`, "It was unused for an hour.");
+  else
+    toasts.error(
+      `Lost the connection to “${name}”`,
+      "The server stopped responding.",
+    );
+}
+
+onMounted(async () => {
+  connections
+    .load()
+    // Restore open query tabs once connections are known.
+    .then(() => startTabPersistence())
+    .catch((error) => {
+      toasts.error(
+        "Saved connections couldn’t be loaded",
+        toUserMessage(error),
+      );
+    });
+  try {
+    stopMenu = await onMenuCommand((id) => runCommand(id));
+    stopListening = await onConnectionClosed(onClosed);
+  } catch (error) {
+    // Not fatal: connections still work; dropped ones just aren't announced.
+    console.error("[connection-closed listener]", error);
+  }
+});
+onBeforeUnmount(() => {
+  stopListening();
+  stopMenu();
 });
 
 function dialogModel(name) {
@@ -44,13 +89,16 @@ function dialogModel(name) {
 <template>
   <div class="flex h-screen flex-col bg-canvas text-fg">
     <TitleBar />
+    <EnvironmentStrip />
     <div class="flex min-h-0 flex-1">
+      <ConnectionRail />
       <AppSidebar v-if="sidebarOpen" />
       <main class="min-w-0 flex-1 overflow-auto" aria-label="Workspace">
         <component
           :is="ComponentGallery"
           v-if="ComponentGallery && mainView === 'gallery'"
         />
+        <WorkspaceView v-else-if="mainView === 'workspace'" />
         <WelcomeView v-else />
       </main>
     </div>
@@ -61,5 +109,7 @@ function dialogModel(name) {
     <SettingsDialog v-bind="dialogModel('settings')" />
     <ShortcutsDialog v-bind="dialogModel('shortcuts')" />
     <CommandPalette v-bind="dialogModel('palette')" />
+    <ConnectionSwitcher v-bind="dialogModel('switcher')" />
+    <SaveQueryDialog v-bind="dialogModel('saveQuery')" />
   </div>
 </template>
