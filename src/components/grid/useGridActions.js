@@ -58,11 +58,21 @@ export function useGridActions(props, data, selection) {
   }
 
   const menuItems = computed(() => [
-    { id: "copy", label: "Copy", icon: ClipboardCopy, shortcut: "Mod+C" },
-    { id: "copy-header", label: "Copy with Headers", shortcut: "Mod+Shift+C" },
-    { id: "copy-csv", label: "Copy as CSV" },
-    { id: "copy-rows", label: "Copy Rows" },
-    { separator: true },
+    // A source that has nothing to copy from (a table read a page at a time,
+    // until export re-reads it) simply doesn't offer copying.
+    ...(props.source.copy
+      ? [
+          { id: "copy", label: "Copy", icon: ClipboardCopy, shortcut: "Mod+C" },
+          {
+            id: "copy-header",
+            label: "Copy with Headers",
+            shortcut: "Mod+Shift+C",
+          },
+          { id: "copy-csv", label: "Copy as CSV" },
+          { id: "copy-rows", label: "Copy Rows" },
+          { separator: true },
+        ]
+      : []),
     { id: "inspect", label: "Inspect Value", icon: Search },
     ...(props.editor?.enabled.value
       ? [

@@ -1,16 +1,43 @@
 use crate::{
     connections::{ConnectionStatus, SessionHandle},
-    database::{self, DbObject, ObjectKind, ObjectStructure, QueryResult, Session, TestResult},
+    database::{
+        self, DbObject, ObjectKind, ObjectStructure, QueryResult, Session, TestResult, values::Cell,
+    },
     errors::AppError,
     profiles::{self, ProfileInput},
+    queries::QueryTabHandle,
     state::AppState,
 };
+use serde::Serialize;
 use tauri::State;
 
 /// Default rows fetched per statement; the user can raise it in Settings.
 const DEFAULT_MAX_ROWS: usize = 10_000;
 /// Upper bound on rows kept per statement, whatever the setting says.
 const MAX_ROWS_LIMIT: usize = 1_000_000;
+/// Rows a table tab reads from the server at a time (Phase 12).
+const DEFAULT_PAGE_ROWS: usize = 200;
+
+/// One page of a table, as the grid's source needs it.
+///
+/// Deliberately not a kept `QueryResult`: a table's pages are read from the
+/// server on demand, so there is nothing to keep in Rust between them. A query
+/// tab's result is the opposite and still keeps its rows (`result_id`).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectPage {
+    pub columns: Vec<database::values::ColumnMeta>,
+    pub rows: Vec<Vec<Cell>>,
+    /// The page was cut short at `limit`, so another page may exist.
+    pub truncated: bool,
+    /// Catalog estimate of the table's rows; `None` means unknown.
+    pub estimated_total: Option<u64>,
+    /// Exact count, once the user asks for it.
+    pub total_rows: Option<u64>,
+    /// Always `None` for a table page: pages come from the server, not a store.
+    pub result_id: Option<String>,
+    pub elapsed_ms: u64,
+}
 
 /// Tests the values currently in the connection form. Nothing is saved.
 /// `profile_id` lets an edited profile reuse its saved password.
@@ -198,6 +225,9 @@ pub async fn describe_object(
 
 /// Reads a table or view into an object tab's own session, so its rows
 /// scroll, sort and export like a query result. Bounded by `max_rows`.
+///
+/// Phase 12: this returns one page plus the catalog's row estimate. Further
+/// pages and server-side sorting come from `fetch_table_page`.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
 pub async fn open_object_data(
@@ -208,31 +238,161 @@ pub async fn open_object_data(
     name: String,
     max_rows: Option<usize>,
     filters: Option<Vec<database::filter::RowFilter>>,
+    primary_key: Option<Vec<String>>,
+    order: Option<database::paging::PageOrder>,
     state: State<'_, AppState>,
-) -> Result<QueryResult, AppError> {
+) -> Result<ObjectPage, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
     let filter =
         database::filter::where_clause(params.engine, filters.as_deref().unwrap_or_default())?;
-    let max_rows = max_rows
-        .unwrap_or(DEFAULT_MAX_ROWS)
+    let limit = max_rows
+        .unwrap_or(DEFAULT_PAGE_ROWS)
         .clamp(1, MAX_ROWS_LIMIT);
-    // Ask for one extra row so the result knows when there are more.
-    let sql = database::object_data_sql(
+    let schema = schema.unwrap_or_default();
+    let primary_key = primary_key.unwrap_or_default();
+    let estimated = table_estimate(&tab, &params, &database, &schema, &name).await;
+
+    let sql = database::paging::page_sql(
         params.engine,
         &database,
-        schema.as_deref().unwrap_or_default(),
+        &schema,
         &name,
         &filter,
-        max_rows + 1,
+        order.as_ref(),
+        &primary_key,
+        0,
+        limit + 1,
     );
-    let result = tab.run(&params, Some(database), &sql, max_rows, None).await;
-    if let Err(error) = &result
-        && is_connection_failure(error)
-    {
-        state.connections.close_query_tab(&id, &tab_id).await;
-        return Err(database::error::connection_lost());
+    let result = tab.run(&params, Some(database), &sql, limit, None).await;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if is_connection_failure(&error) {
+                state.connections.close_query_tab(&id, &tab_id).await;
+                return Err(database::error::connection_lost());
+            }
+            return Err(error);
+        }
+    };
+    Ok(ObjectPage {
+        columns: result.columns,
+        rows: result.rows,
+        truncated: result.truncated,
+        estimated_total: estimated,
+        total_rows: None,
+        result_id: None,
+        elapsed_ms: result.elapsed_ms,
+    })
+}
+
+/// One page of a table as the grid asks for it, read from the server.
+///
+/// Sorting re-queries rather than reordering rows already fetched, so the
+/// whole table is sortable and not just the page that happened to be loaded.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
+pub async fn fetch_table_page(
+    id: String,
+    tab_id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    filters: Option<Vec<database::filter::RowFilter>>,
+    primary_key: Option<Vec<String>>,
+    order: Option<database::paging::PageOrder>,
+    offset: usize,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<Vec<Cell>>, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let filter =
+        database::filter::where_clause(params.engine, filters.as_deref().unwrap_or_default())?;
+    // A query tab hands back one page of rows and keeps the rest, so asking
+    // for more than that would silently return fewer rows than the grid
+    // counted on. A table page never needs more than one page anyway.
+    let limit = limit.clamp(1, crate::results::FIRST_PAGE);
+    let sql = database::paging::page_sql(
+        params.engine,
+        &database,
+        &schema.unwrap_or_default(),
+        &name,
+        &filter,
+        order.as_ref(),
+        primary_key.as_deref().unwrap_or_default(),
+        offset,
+        limit,
+    );
+    let result = tab
+        .run(&params, Some(database), &sql, limit, None)
+        .await
+        .map_err(|error| {
+            if is_connection_failure(&error) {
+                AppError::new(
+                    "connection_lost",
+                    "The connection to this server was lost. Reconnect and try again.",
+                )
+            } else {
+                error
+            }
+        })?;
+    Ok(result.rows)
+}
+
+/// The exact number of rows, when the user asks for it instead of the
+/// catalog's estimate.
+#[tauri::command]
+pub async fn count_table_rows(
+    id: String,
+    tab_id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    filters: Option<Vec<database::filter::RowFilter>>,
+    state: State<'_, AppState>,
+) -> Result<u64, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let filter =
+        database::filter::where_clause(params.engine, filters.as_deref().unwrap_or_default())?;
+    let sql = database::paging::count_sql(
+        params.engine,
+        &database,
+        &schema.unwrap_or_default(),
+        &name,
+        &filter,
+    );
+    let result = tab.run(&params, Some(database), &sql, 1, None).await?;
+    Ok(result
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(|cell| match cell {
+            Cell::Value(value) => value.parse::<u64>().ok(),
+            _ => None,
+        })
+        .unwrap_or_default())
+}
+
+/// The catalog's estimate of a table's rows, or `None` when it has none.
+///
+/// Best effort: a view, a database without statistics, or a permission the
+/// catalog denies must not stop the rows themselves from loading, so a failure
+/// here is swallowed and reported as "unknown".
+async fn table_estimate(
+    tab: &QueryTabHandle,
+    params: &database::ConnectParams,
+    database: &str,
+    schema: &str,
+    name: &str,
+) -> Option<u64> {
+    let sql = database::paging::estimate_sql(params.engine, database, schema, name);
+    let result = tab
+        .run(params, Some(database.to_owned()), &sql, 1, None)
+        .await
+        .ok()?;
+    match result.rows.first()?.first()? {
+        Cell::Value(value) => value.parse::<u64>().ok(),
+        _ => None,
     }
-    result
 }
 
 /// The statements staged row edits would run, for the user to review.

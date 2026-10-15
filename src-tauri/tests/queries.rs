@@ -558,3 +558,153 @@ async fn a_failing_startup_command_stops_the_connect() {
     assert!(detail.contains("nonexistent_setting"), "{detail}");
     tab.close().await;
 }
+
+/// Phase 12: a table is read a page at a time from the server, ordered by its
+/// primary key, and sorting a page re-queries rather than reordering what
+/// happens to be loaded. 10,000 rows over a composite key, so a page boundary
+/// that loses or repeats a row shows up.
+async fn pages_through_a_table(engine: Engine, database: &str, schema: &str) {
+    use thabi_studio_lib::database::paging::{PageOrder, count_sql, page_sql};
+    const ROWS: i64 = 10_000;
+    let tab = std::sync::Arc::new(QueryTab::default());
+    let p = params(engine);
+    let name = "thabi_page_it";
+    let qualified = match engine {
+        Engine::Postgres => format!("\"{schema}\".\"{name}\""),
+        Engine::MySql => format!("`{database}`.`{name}`"),
+        Engine::SqlServer => format!("[{database}].[{schema}].[{name}]"),
+    };
+    let drop = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{name}') IS NOT NULL DROP TABLE {name}"),
+        _ => format!("DROP TABLE IF EXISTS {name}"),
+    };
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!("CREATE TABLE {name} (tenant_id INT NOT NULL, id INT NOT NULL, value_txt VARCHAR(40) NULL, PRIMARY KEY (tenant_id, id))"),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Two tenants, so a page boundary lands in the middle of one of them.
+    for tenant in 0..2 {
+        for id in 0..(ROWS / 2) {
+            tab.run(
+                &p,
+                None,
+                &format!("INSERT INTO {name} VALUES ({tenant}, {id}, 'row-{tenant}-{id}')"),
+                1,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let key = vec!["tenant_id".to_owned(), "id".to_owned()];
+    let page = |offset: usize, limit: usize, order: Option<PageOrder>| {
+        let sql = page_sql(
+            engine,
+            database,
+            schema,
+            name,
+            "",
+            order.as_ref(),
+            &key,
+            offset,
+            limit,
+        );
+        let tab = tab.clone();
+        let p = p.clone();
+        async move {
+            let result = tab.run(&p, None, &sql, limit, None).await.unwrap();
+            result
+                .rows
+                .into_iter()
+                .map(|row| match &row[2] {
+                    thabi_studio_lib::database::Cell::Value(value) => value.clone(),
+                    _ => String::new(),
+                })
+                .collect::<Vec<String>>()
+        }
+    };
+
+    // Walk the whole table a page at a time: every row exactly once, in key order.
+    let size = 200;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0;
+    loop {
+        let rows = page(offset, size, None).await;
+        if rows.is_empty() {
+            break;
+        }
+        assert!(
+            rows.len() <= size,
+            "a page never returns more than it asked for"
+        );
+        seen.extend(rows);
+        offset += size;
+        if offset > ROWS as usize + size {
+            break;
+        }
+    }
+    assert_eq!(seen.len(), ROWS as usize, "every row is reached once");
+    // Key order is tenant, then id: comparing against that exact sequence
+    // proves the pages neither lost, repeated nor reordered a row.
+    let expected: Vec<String> = (0..2)
+        .flat_map(|tenant| (0..(ROWS / 2)).map(move |id| format!("row-{tenant}-{id}")))
+        .collect();
+    assert_eq!(seen, expected, "rows come back once each, in key order");
+
+    // Sorting by a column re-queries: the first page of a descending sort is
+    // the largest value, which sorting the loaded rows could never produce.
+    // Sorted as text, so the largest value is not the largest id.
+    let largest = expected.iter().max().cloned().expect("rows exist");
+    let sorted = page(
+        0,
+        10,
+        Some(PageOrder {
+            column: "value_txt".into(),
+            descending: true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        sorted.first().cloned(),
+        Some(largest),
+        "sorted on the server"
+    );
+
+    // The exact count is available when the estimate isn't trusted.
+    let count_sql = count_sql(engine, database, schema, name, "");
+    let result = tab.run(&p, None, &count_sql, 1, None).await.unwrap();
+    let count = match &result.rows[0][0] {
+        thabi_studio_lib::database::Cell::Value(value) => value.parse::<i64>().unwrap(),
+        _ => panic!("expected a count"),
+    };
+    assert_eq!(count, ROWS, "{engine:?}: exact count over {qualified}");
+
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_pages_a_large_table() {
+    pages_through_a_table(Engine::Postgres, "thabi_it", "public").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_pages_a_large_table() {
+    pages_through_a_table(Engine::MySql, "thabi_it", "").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_pages_a_large_table() {
+    pages_through_a_table(Engine::SqlServer, "master", "dbo").await;
+}

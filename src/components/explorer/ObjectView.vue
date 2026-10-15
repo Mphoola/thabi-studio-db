@@ -1,18 +1,16 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { Eye, ListFilter, Plus, RefreshCw, Table2 } from "lucide-vue-next";
-import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useExplorer } from "../../composables/useExplorer.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
-import { useAppSettings } from "../../composables/useAppSettings.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 import InlineAlert from "../common/InlineAlert.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
-import { remoteSource } from "../../lib/gridSources.js";
-import { limitsFor } from "../../lib/limits.js";
+import { PAGE_SIZE } from "../../composables/useGridData.js";
+import { tableSource } from "../../lib/gridSources.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
 import AddRowDialog from "./AddRowDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
@@ -24,8 +22,6 @@ import StructureView from "./StructureView.vue";
 /** A table or view opened from the explorer: read-only data or structure. */
 const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
-const { settings } = useAppSettings();
-const profiles = useConnectionProfiles();
 const node = computed(() => props.tab.node);
 const tab = computed({
   get: () => props.tab.view ?? "data",
@@ -79,14 +75,10 @@ async function load(which = tab.value) {
       which === "data"
         ? await openObjectData(id, props.tab.id, {
             ...target,
-            maxRows: limitsFor(
-              profiles.profiles.value.find(
-                (p) =>
-                  p.id === (props.tab.profileId ?? explorer.profile.value?.id),
-              ),
-              settings.value,
-            ).maxRows,
+            // One page at a time, ordered by the key (Phase 12).
+            maxRows: PAGE_SIZE,
             filters: request,
+            primaryKey: editing.primaryKey.value,
           })
         : await describeObject(id, target);
     if (node.value !== target) return;
@@ -110,13 +102,22 @@ watch(tab, (value) => !results.value[value] && load(value));
 if (node.value) load();
 
 const current = computed(() => results.value[tab.value] ?? { status: "idle" });
+/** The page just read, and the estimate of how many rows the table has. */
+const page = computed(() =>
+  current.value.status === "loaded" ? current.value.value : null,
+);
+
 const previewSource = computed(() =>
-  tab.value === "data" && current.value.status === "loaded"
-    ? remoteSource({
-        profileId: props.tab.profileId,
+  tab.value === "data" && page.value
+    ? tableSource({
+        profileId: props.tab.profileId ?? explorer.profile.value?.id,
         tabId: props.tab.id,
-        result: current.value.value,
-        exportName: node.value.name,
+        target: node.value,
+        filters: toRequest(filters.value),
+        primaryKey: editing.primaryKey.value,
+        estimate: page.value.estimatedTotal ?? null,
+        columns: page.value.columns,
+        firstRows: page.value.rows,
       })
     : null,
 );

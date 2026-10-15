@@ -11,10 +11,11 @@ pub mod error;
 pub mod filter;
 pub mod metadata;
 mod mysql;
+pub mod paging;
 mod postgres;
 pub mod quote;
 mod sqlserver;
-mod values;
+pub mod values;
 
 use crate::{
     errors::AppError,

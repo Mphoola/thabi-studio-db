@@ -178,11 +178,24 @@ export function applyRowChanges(id, tabId, target, changes) {
   return call("apply_row_changes", { id, tabId, target, changes });
 }
 
-/** filters: [{ column, op, value }], AND-ed; op "raw" takes a SQL condition. */
+/**
+ * One page of a table, read from the server (Phase 12).
+ * `filters`: [{ column, op, value }], AND-ed; op "raw" takes a SQL condition.
+ * `primaryKey`: the table's key, so pages have a stable order.
+ * `order`: { column, descending } to sort on the server.
+ */
 export function openObjectData(
   id,
   tabId,
-  { database, schema, name, maxRows, filters = [] },
+  {
+    database,
+    schema,
+    name,
+    maxRows,
+    filters = [],
+    primaryKey = [],
+    order = null,
+  },
 ) {
   return call("open_object_data", {
     id,
@@ -191,6 +204,45 @@ export function openObjectData(
     schema,
     name,
     maxRows,
+    filters,
+    primaryKey,
+    order,
+  });
+}
+
+/** One page of a table at `offset`, sorted on the server. */
+export function fetchTablePage(
+  id,
+  tabId,
+  { database, schema, name, filters = [], primaryKey = [], order = null },
+  { offset, limit },
+) {
+  return call("fetch_table_page", {
+    id,
+    tabId,
+    database,
+    schema,
+    name,
+    filters,
+    primaryKey,
+    order,
+    offset,
+    limit,
+  });
+}
+
+/** The exact number of rows, when the catalog estimate isn't trusted. */
+export function countTableRows(
+  id,
+  tabId,
+  { database, schema, name, filters = [] },
+) {
+  return call("count_table_rows", {
+    id,
+    tabId,
+    database,
+    schema,
+    name,
     filters,
   });
 }

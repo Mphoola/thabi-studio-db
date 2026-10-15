@@ -1307,7 +1307,16 @@ Update this section as work progresses.
   - [x] Mutual TLS: client certificate and key as paths, on MySQL, PostgreSQL and SQL Server (`docs/decisions/0021-mutual-tls.md`)
   - [x] Per-connection query timeout and row limit overriding the app default, shown on the connection row (`docs/decisions/0022-connection-limits.md`)
   - [ ] Import/export without secrets, multiple windows, reconnect
-- [ ] Phase 12 — Table data and results power-ups
+  - Deferred by the owner (2026-10-15) to start Phase 12; Phase 11 stays open
+    until they are done, so its "two windows" and "export/import" exit
+    criteria are still unmet.
+- [ ] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`)
+  - [x] Table data read a page at a time from the server (LIMIT/OFFSET, OFFSET…FETCH on SQL Server), ordered by the primary key, sorted on the server (`docs/decisions/0023-table-paging.md`)
+  - [x] Catalog row estimate on open, exact count on request
+  - [ ] Copy and export re-read the table from the server (CSV, TSV, JSON, Markdown, SQL INSERT/UPDATE, .xlsx)
+  - [ ] Row detail panel (Mod+Alt+I), column controls, saved filter presets
+  - [ ] Foreign key navigation, editing query results, editing conveniences
+  - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
 - [ ] Phase 13 — Smart SQL editor
 - [ ] Phase 14 — Schema and object management
 - [ ] Phase 15 — Import, export, backup and administration
