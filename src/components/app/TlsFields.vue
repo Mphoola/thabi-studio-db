@@ -32,7 +32,13 @@ async function chooseCa() {
       v-model="mode"
       label="TLS"
       :options="TLS_MODES"
-      :hint="tlsHint(form.tlsMode, form.host)"
+      :hint="
+        form.sshEnabled &&
+        form.tlsMode === 'verify-full' &&
+        form.driver !== 'sqlserver'
+          ? 'Through SSH, the certificate chain is checked but not the host name.'
+          : tlsHint(form.tlsMode, form.host)
+      "
       :error="fields.tlsMode"
     />
     <div v-if="form.tlsMode === 'verify-full'" class="flex flex-col gap-1">

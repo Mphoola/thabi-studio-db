@@ -12,9 +12,13 @@ mod postgres;
 mod sqlserver;
 mod values;
 
-use crate::errors::AppError;
+use crate::{
+    errors::AppError,
+    ssh::{SshParams, Tunnel},
+};
 use serde::Serialize;
 use std::{
+    net::SocketAddr,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -23,6 +27,8 @@ pub use values::{Cell, ColumnMeta, QueryResult};
 
 /// Upper bound for opening a session, including DNS and TLS.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Upper bound when an SSH tunnel has to be opened first.
+pub const TUNNEL_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Upper bound for a health check.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -86,6 +92,11 @@ pub struct ConnectParams {
     pub tls: TlsMode,
     /// Custom CA certificate (PEM) used with `TlsMode::Verify`.
     pub ca_path: Option<PathBuf>,
+    /// Reach the database through this SSH server.
+    pub ssh: Option<SshParams>,
+    /// Where to open the TCP connection when it differs from host:port
+    /// (the local end of an SSH tunnel). Set by `Session::connect`.
+    pub connect_to: Option<SocketAddr>,
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -99,6 +110,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("tls", &self.tls)
             .field("ca_path", &self.ca_path)
+            .field("ssh", &self.ssh)
             .finish()
     }
 }
@@ -135,47 +147,97 @@ pub trait DatabaseSession: Sized {
     async fn close(self) -> Result<(), AppError>;
 }
 
-/// A session for any supported engine.
-pub enum Session {
+enum Driver {
     MySql(mysql::MySqlSession),
     Postgres(postgres::PgSession),
     SqlServer(Box<sqlserver::SqlServerSession>),
 }
 
+/// A session for any supported engine, plus the SSH tunnel it runs
+/// through, if any. Closing the session closes the tunnel.
+pub struct Session {
+    driver: Driver,
+    tunnel: Option<Tunnel>,
+}
+
 macro_rules! dispatch {
     ($self:expr, $session:ident => $body:expr) => {
-        match $self {
-            Session::MySql($session) => $body,
-            Session::Postgres($session) => $body,
-            Session::SqlServer($session) => $body,
+        match &mut $self.driver {
+            Driver::MySql($session) => $body,
+            Driver::Postgres($session) => $body,
+            Driver::SqlServer($session) => $body,
         }
     };
 }
 
+impl Driver {
+    async fn connect(params: &ConnectParams) -> Result<Self, AppError> {
+        Ok(match params.engine {
+            Engine::MySql => Self::MySql(mysql::MySqlSession::connect(params).await?),
+            Engine::Postgres => Self::Postgres(postgres::PgSession::connect(params).await?),
+            Engine::SqlServer => Self::SqlServer(Box::new(
+                sqlserver::SqlServerSession::connect(params).await?,
+            )),
+        })
+    }
+}
+
 impl Session {
-    /// Opens a session with an overall timeout. DNS is checked first so a
-    /// typo in the host name gets its own message.
+    /// Opens a session with an overall timeout, through an SSH tunnel when
+    /// the params ask for one. Without a tunnel, DNS is checked first so a
+    /// typo in the host name gets its own message. With a tunnel the
+    /// database host only has to resolve on the SSH server.
     pub async fn connect(params: &ConnectParams) -> Result<Self, AppError> {
-        tokio::time::timeout(CONNECT_TIMEOUT, async {
-            error::check_host_resolves(&params.host, params.port).await?;
-            Ok(match params.engine {
-                Engine::MySql => Self::MySql(mysql::MySqlSession::connect(params).await?),
-                Engine::Postgres => Self::Postgres(postgres::PgSession::connect(params).await?),
-                Engine::SqlServer => Self::SqlServer(Box::new(
-                    sqlserver::SqlServerSession::connect(params).await?,
-                )),
+        let Some(ssh) = &params.ssh else {
+            return tokio::time::timeout(CONNECT_TIMEOUT, async {
+                error::check_host_resolves(&params.host, params.port).await?;
+                Ok(Self {
+                    driver: Driver::connect(params).await?,
+                    tunnel: None,
+                })
             })
+            .await
+            .map_err(|_| error::timed_out(&params.host, params.port))?;
+        };
+
+        tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, async {
+            let tunnel = crate::ssh::open_tunnel(ssh, &params.host, params.port).await?;
+            let mut through = params.clone();
+            through.connect_to = Some(tunnel.local_addr());
+            match Driver::connect(&through).await {
+                Ok(driver) => Ok(Self {
+                    driver,
+                    tunnel: Some(tunnel),
+                }),
+                Err(error) => {
+                    tunnel.close().await;
+                    Err(error)
+                }
+            }
         })
         .await
         .map_err(|_| error::timed_out(&params.host, params.port))?
     }
 
+    /// Local end of the SSH tunnel, if this session uses one.
+    pub fn tunnel_addr(&self) -> Option<SocketAddr> {
+        self.tunnel.as_ref().map(Tunnel::local_addr)
+    }
+
     pub fn server_info(&self) -> &ServerInfo {
-        dispatch!(self, s => s.server_info())
+        match &self.driver {
+            Driver::MySql(s) => s.server_info(),
+            Driver::Postgres(s) => s.server_info(),
+            Driver::SqlServer(s) => s.server_info(),
+        }
     }
 
     pub fn capabilities(&self) -> Capabilities {
-        dispatch!(self, s => s.capabilities())
+        match &self.driver {
+            Driver::MySql(s) => s.capabilities(),
+            Driver::Postgres(s) => s.capabilities(),
+            Driver::SqlServer(s) => s.capabilities(),
+        }
     }
 
     pub async fn ping(&mut self) -> Result<(), AppError> {
@@ -201,11 +263,15 @@ impl Session {
     }
 
     pub async fn close(self) -> Result<(), AppError> {
-        match self {
-            Session::MySql(s) => s.close().await,
-            Session::Postgres(s) => s.close().await,
-            Session::SqlServer(s) => s.close().await,
+        let result = match self.driver {
+            Driver::MySql(s) => s.close().await,
+            Driver::Postgres(s) => s.close().await,
+            Driver::SqlServer(s) => s.close().await,
+        };
+        if let Some(tunnel) = self.tunnel {
+            tunnel.close().await;
         }
+        result
     }
 }
 
@@ -257,6 +323,8 @@ mod tests {
             password: Some("hunter2".into()),
             tls: TlsMode::Verify,
             ca_path: None,
+            ssh: None,
+            connect_to: None,
         };
         assert!(!format!("{params:?}").contains("hunter2"));
     }

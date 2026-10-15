@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { Copy, Pencil, Trash2 } from "lucide-vue-next";
 import { confirm } from "../../composables/useConfirm.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
+import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail, toUserMessage } from "../../lib/errors.js";
 import { environmentFor } from "../../lib/environments.js";
@@ -10,6 +11,7 @@ import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 
 const store = useConnectionProfiles();
+const hostKeys = useHostKeyTrust();
 const toasts = useToasts();
 const busyProfileIds = ref(new Set());
 
@@ -63,7 +65,7 @@ async function toggleConnection(profile) {
       await store.disconnect(profile.id);
     } else {
       await store.select(profile.id);
-      await store.connect(profile.id);
+      await hostKeys.run(() => store.connect(profile.id));
     }
   } catch (error) {
     toasts.error(

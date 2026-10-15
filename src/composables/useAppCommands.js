@@ -1,5 +1,6 @@
 import { useCommandRegistration } from "./useCommands.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
+import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
 import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
@@ -16,12 +17,13 @@ export function useAppCommands() {
   const layout = useLayout();
   const theme = useTheme();
   const toasts = useToasts();
+  const hostKeys = useHostKeyTrust();
 
   async function connectSelected() {
     const profile = connections.selectedProfile.value;
     if (!profile) return;
     try {
-      await connections.connect(profile.id);
+      await hostKeys.run(() => connections.connect(profile.id));
     } catch (error) {
       toasts.error(
         `Couldn’t connect to “${profile.name}”`,

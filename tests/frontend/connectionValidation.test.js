@@ -107,3 +107,24 @@ describe("validateConnectionProfile", () => {
     });
   });
 });
+
+describe("SSH sign-in", () => {
+  const ssh = {
+    ...validProfile,
+    sshEnabled: true,
+    sshHost: "bastion.example.com",
+    sshUsername: "deploy",
+  };
+
+  it("needs a key file for key authentication", () => {
+    expect(
+      validateConnectionProfile({ ...ssh, sshAuthMode: "key", sshKeyPath: "" }),
+    ).toMatchObject({ sshKeyPath: "Choose your SSH private key file." });
+  });
+
+  it("accepts the agent without a password or key", () => {
+    expect(validateConnectionProfile({ ...ssh, sshAuthMode: "agent" })).toEqual(
+      {},
+    );
+  });
+});

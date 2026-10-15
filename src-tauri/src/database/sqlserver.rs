@@ -57,9 +57,13 @@ impl DatabaseSession for SqlServerSession {
             TlsMode::Off => config.encryption(EncryptionLevel::NotSupported),
         }
 
-        let tcp = TcpStream::connect((params.host.as_str(), params.port))
-            .await
-            .map_err(|e| error::from_io(e.kind(), &e.to_string(), ctx))?;
+        // Through a tunnel, TCP goes to the local end while TLS still checks
+        // the real host name (config.host above).
+        let tcp = match params.connect_to {
+            Some(address) => TcpStream::connect(address).await,
+            None => TcpStream::connect((params.host.as_str(), params.port)).await,
+        }
+        .map_err(|e| error::from_io(e.kind(), &e.to_string(), ctx))?;
         tcp.set_nodelay(true)
             .map_err(|e| error::from_io(e.kind(), &e.to_string(), ctx))?;
         let client = Client::connect(config, tcp.compat_write())

@@ -421,33 +421,33 @@ Tasks:
 
 Tasks:
 
-- Implement direct TCP connectivity for each supported driver.
-- Configure TLS and certificate verification with secure defaults, subject to driver capabilities.
-- Support explicit trust configuration where appropriate; clearly warn about disabling certificate verification.
-- Implement SSH local port forwarding with a maintained Rust SSH library after checking platform compatibility.
-- Support SSH host, port, username, and selected authentication methods.
-- Verify SSH host keys; do not silently accept unknown or changed host keys.
-- Support SSH key selection/passphrase handling only through a safe, documented design.
-- Map the local forwarded endpoint to the selected database connection without exposing the remote database publicly.
-- Tie tunnel lifetime to the associated database connection; close the tunnel on disconnect, profile deletion, app shutdown, and failed connection setup.
-- Handle tunnel conflicts, SSH authentication errors, host-key mismatch, network loss, and remote endpoint failure.
-- Add test coverage for connection and tunnel cleanup.
-- Document that the user's existing VPN/private network can be used where applicable.
+- [x] Implement direct TCP connectivity for each supported driver.
+- [x] Configure TLS and certificate verification with secure defaults, subject to driver capabilities.
+- [x] Support explicit trust configuration where appropriate (custom CA file); clearly warn about disabling certificate verification.
+- [x] Implement SSH local port forwarding with a maintained Rust SSH library (`russh`) after checking platform compatibility.
+- [x] Support SSH host, port, username, and password, key file and agent authentication.
+- [x] Verify SSH host keys; do not silently accept unknown or changed host keys.
+- [x] Support SSH key selection/passphrase handling only through a safe, documented design (`docs/decisions/0007-ssh-tunnels.md`).
+- [x] Map the local forwarded endpoint (127.0.0.1 only) to the selected database connection without exposing the remote database publicly.
+- [x] Tie tunnel lifetime to the associated database connection; close the tunnel on disconnect, profile deletion, app shutdown, and failed connection setup.
+- [x] Handle tunnel conflicts (random local ports), SSH authentication errors, host-key mismatch, network loss (keepalive + health checks), and remote endpoint failure.
+- [x] Add test coverage for connection and tunnel cleanup.
+- [x] Document that the user's existing VPN/private network can be used where applicable.
 
 **Deliverables:**
 
-- Direct remote connections.
-- TLS configuration.
-- SSH tunnel management.
-- Clear connection security indicators.
+- [x] Direct remote connections.
+- [x] TLS configuration.
+- [x] SSH tunnel management.
+- [x] Clear connection security indicators (status bar).
 
 **Exit criteria:**
 
-- A user can connect to a remote database directly when network access permits.
-- A user can connect to a private database through an SSH tunnel.
-- TLS and SSH host-key failures are surfaced rather than bypassed.
-- No tunnel is left running after the owning connection is closed.
-- Secrets and private key material never appear in logs.
+- [ ] A user can connect to a remote database directly when network access permits. (Code path is the same as local; not yet checked against a real remote server.)
+- [x] A user can connect to a private database through an SSH tunnel (Docker bastion, all three engines).
+- [x] TLS and SSH host-key failures are surfaced rather than bypassed.
+- [x] No tunnel is left running after the owning connection is closed.
+- [x] Secrets and private key material never appear in logs or errors.
 
 ### Phase 6 — Database explorer and metadata
 
@@ -830,7 +830,12 @@ Update this section as work progresses.
   - [x] 23 integration tests pass against PostgreSQL 16, MySQL 8.4 and SQL Server 2022 on Apple Silicon
   - [x] Review fixes applied: `docs/reviews/2026-10-15-phase-3-4-review.md`, `docs/decisions/0006-connection-model.md`
   - Open: verify against a remote server per engine; query cancellation moves to Phase 7 (capabilities report it as unsupported)
-- [ ] Phase 5 — Remote connectivity, TLS, and SSH tunnelling
+- [x] Phase 5 — Remote connectivity, TLS, and SSH tunnelling (2026-10-15, branch `phase-5-remote-ssh`)
+  - [x] SSH tunnels with russh: password, key file (+ passphrase) and agent sign-in
+  - [x] Host keys checked against Thabi's trusted keys and ~/.ssh/known_hosts; unknown keys need confirmation, changed keys are refused
+  - [x] Tunnel closes with its session; 5 SSH integration tests pass against a Docker bastion
+  - [x] Status bar security indicator
+  - Open: check a real remote server directly and through SSH
 - [ ] Phase 6 — Database explorer and metadata
 - [ ] Phase 7 — SQL editor and query execution
 - [ ] Phase 8 — Results grid, data inspection, and CSV export

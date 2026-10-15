@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from "vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
+import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import BaseButton from "../common/BaseButton.vue";
 
 /**
@@ -16,6 +17,7 @@ const props = defineProps({
 });
 const emit = defineEmits(["result"]);
 const store = useConnectionProfiles();
+const hostKeys = useHostKeyTrust();
 const testing = ref(false);
 
 async function testConnection() {
@@ -24,7 +26,7 @@ async function testConnection() {
   testing.value = true;
   emit("result", null);
   try {
-    const result = await store.test(input, props.profileId);
+    const result = await hostKeys.run(() => store.test(input, props.profileId));
     emit("result", { ok: true, ...result });
   } catch (error) {
     emit("result", { ok: false, error });

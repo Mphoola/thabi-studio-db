@@ -21,7 +21,9 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 - Phase 4 (database drivers and connection lifecycle): complete. Read
   `docs/decisions/0006-connection-model.md` before touching connections.
   Remote-server verification is still open (see plan.md).
-- Next: Phase 5 (remote connectivity, TLS and SSH tunnelling).
+- Phase 5 (remote connectivity and SSH tunnels): complete on branch
+  `phase-5-remote-ssh`. Read `docs/decisions/0007-ssh-tunnels.md`.
+- Next: Phase 6 (database explorer and metadata).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
@@ -72,6 +74,7 @@ Run `npm run check` after every meaningful change and before calling work done.
   session type per engine, result values and error mapping (`error.rs`).
 - `src-tauri/src/connections.rs` — live connections and their states.
 - `src-tauri/src/profiles/` — profile validation and storage.
+- `src-tauri/src/ssh/` — SSH tunnels and trusted host keys.
 - `src-tauri/tests/drivers.rs` — integration tests against real databases.
 - `src-tauri/migrations/` — versioned SQLite schema migrations.
 - `src-tauri/capabilities/default.json` — keep to least privilege.
@@ -111,3 +114,5 @@ Run `npm run check` after every meaningful change and before calling work done.
   Encrypt Without Verifying or Off, and only for that connection.
 - Each live connection is one database session; never put a pool behind a
   query editor.
+- Never accept an unknown or changed SSH host key without the user's
+  confirmation. Store SSH key file paths, never key contents.

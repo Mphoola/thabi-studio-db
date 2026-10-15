@@ -22,6 +22,12 @@ const open = computed({
     :title="request.title"
     :description="request.message"
   >
+    <p
+      v-if="request.detail"
+      class="selectable rounded-md bg-surface-hover px-3 py-2 font-mono text-sm break-all text-fg"
+    >
+      {{ request.detail }}
+    </p>
     <template #footer>
       <BaseButton :autofocus="request.destructive" @click="settle(false)">
         {{ request.cancelLabel ?? "Cancel" }}

@@ -9,6 +9,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_local_profiles.sql"),
     include_str!("../migrations/0002_profile_security_settings.sql"),
     include_str!("../migrations/0003_tls_ca_path.sql"),
+    include_str!("../migrations/0004_ssh_auth.sql"),
 ];
 
 pub fn migrate(connection: &mut Connection) -> Result<(), AppError> {

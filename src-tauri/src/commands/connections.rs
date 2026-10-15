@@ -95,3 +95,45 @@ pub async fn run_query(
         .execute(&sql, MAX_ROWS)
         .await
 }
+
+/// Trusts an SSH server's host key after the user checked its fingerprint.
+/// Returns the stored fingerprint.
+#[tauri::command]
+pub async fn trust_ssh_host_key(
+    host: String,
+    port: u16,
+    public_key: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    state
+        .blocking(move |connection, _| {
+            crate::ssh::trust_host_key(connection, &host, port, &public_key)
+        })
+        .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgetHostKeysResult {
+    /// ~/.ssh/known_hosts still has a key for this server; only the user
+    /// can remove it there (ssh-keygen -R).
+    still_in_openssh_known_hosts: bool,
+}
+
+/// Forgets the SSH host keys Thabi Studio saved for a server.
+#[tauri::command]
+pub async fn forget_ssh_host_keys(
+    host: String,
+    port: u16,
+    state: State<'_, AppState>,
+) -> Result<ForgetHostKeysResult, AppError> {
+    state
+        .blocking(move |connection, _| {
+            Ok(ForgetHostKeysResult {
+                still_in_openssh_known_hosts: crate::ssh::forget_host_keys(
+                    connection, &host, port,
+                )?,
+            })
+        })
+        .await
+}

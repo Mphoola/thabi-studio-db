@@ -46,6 +46,10 @@ const defaults = () => ({
   sshUsername: "",
   sshPassword: "",
   clearSshPassword: false,
+  sshAuthMode: "password",
+  sshKeyPath: "",
+  sshKeyPassphrase: "",
+  clearSshKeyPassphrase: false,
 });
 const form = reactive(defaults());
 const open = computed({
@@ -85,6 +89,8 @@ function resetForm() {
     sshHost: profile.sshHost,
     sshPort: String(profile.sshPort),
     sshUsername: profile.sshUsername,
+    sshAuthMode: profile.sshAuthMode,
+    sshKeyPath: profile.sshKeyPath,
   });
 }
 
@@ -119,9 +125,12 @@ watch(
 function buildInput() {
   fields.value = validateConnectionProfile(form);
   if (Object.keys(fields.value).length) return null;
+  const ssh = form.sshEnabled;
   return {
     ...form,
-    sshPassword: form.sshEnabled ? form.sshPassword : "",
+    sshPassword: ssh && form.sshAuthMode === "password" ? form.sshPassword : "",
+    sshKeyPassphrase:
+      ssh && form.sshAuthMode === "key" ? form.sshKeyPassphrase : "",
   };
 }
 
@@ -185,6 +194,7 @@ async function save() {
         v-model:form="form"
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasSshPassword"
+        :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
       />
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>

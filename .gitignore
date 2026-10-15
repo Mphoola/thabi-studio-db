@@ -25,3 +25,4 @@ dist-ssr
 
 # Integration test credentials (generated)
 tests/integration/.env
+tests/integration/.ssh/

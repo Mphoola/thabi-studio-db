@@ -41,11 +41,21 @@ Later runs start in seconds.
 | `npm run test:integration` | Driver tests against MySQL, PostgreSQL and SQL Server in Docker |
 | `npm run tauri build`      | Build a release `.app` / `.dmg` into `src-tauri/target`         |
 
+## Remote databases and SSH
+
+Connect directly to anything your Mac can reach, including over a VPN. For a
+database that's only reachable from a bastion, turn on **Connect through
+SSH** in the connection settings and sign in with a password, a private key
+file or your ssh-agent. The first time you connect to an SSH server, Thabi
+Studio shows its fingerprint and asks before trusting it. Keys you already
+trust in `~/.ssh/known_hosts` are recognised.
+
 ## Integration tests
 
 `npm run test:integration` starts PostgreSQL 16, MySQL 8.4 and SQL Server
-2022 in Docker (bound to 127.0.0.1), generates a throwaway password in
-`tests/integration/.env` (git-ignored), and runs `src-tauri/tests/drivers.rs`.
+2022 and an OpenSSH bastion in Docker (bound to 127.0.0.1), generates a
+throwaway password and SSH keys in `tests/integration/` (git-ignored), and
+runs `src-tauri/tests/drivers.rs` and `ssh.rs`.
 It needs Docker Desktop; SQL Server runs under Rosetta on Apple Silicon.
 Stop the databases with `scripts/integration-tests.sh down`.
 

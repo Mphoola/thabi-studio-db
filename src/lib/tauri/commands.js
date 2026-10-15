@@ -67,3 +67,13 @@ export function listDatabases(id) {
 export function runQuery(id, sql) {
   return call("run_query", { id, sql });
 }
+
+/** Trusts an SSH server's host key after the user checked its fingerprint. */
+export function trustSshHostKey(host, port, publicKey) {
+  return call("trust_ssh_host_key", { host, port, publicKey });
+}
+
+/** @returns {Promise<{ stillInOpensshKnownHosts: boolean }>} */
+export function forgetSshHostKeys(host, port) {
+  return call("forget_ssh_host_keys", { host, port });
+}

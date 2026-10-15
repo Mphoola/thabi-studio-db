@@ -26,6 +26,8 @@ fn params(engine: Engine, tls: TlsMode) -> ConnectParams {
         password: Some(env("THABI_IT_PASSWORD")),
         tls,
         ca_path: None,
+        ssh: None,
+        connect_to: None,
     }
 }
 

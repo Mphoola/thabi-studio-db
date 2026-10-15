@@ -5,6 +5,7 @@ pub mod database;
 mod errors;
 mod profiles;
 mod settings;
+pub mod ssh;
 mod state;
 mod storage;
 
@@ -65,6 +66,8 @@ pub fn run() {
             commands::connections::list_connections,
             commands::connections::list_databases,
             commands::connections::run_query,
+            commands::connections::trust_ssh_host_key,
+            commands::connections::forget_ssh_host_keys,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
             commands::settings::import_legacy_preferences

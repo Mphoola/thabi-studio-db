@@ -16,7 +16,11 @@ pub struct AppError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fields: Option<BTreeMap<String, String>>,
+    pub fields: Option<Box<BTreeMap<String, String>>>,
+    /// Structured extras for errors the UI acts on, such as the SSH host
+    /// key to show when asking whether to trust a server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Box<serde_json::Value>>,
 }
 
 impl AppError {
@@ -27,7 +31,13 @@ impl AppError {
             detail: None,
             code: None,
             fields: None,
+            data: None,
         }
+    }
+
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(Box::new(data));
+        self
     }
 
     pub fn with_detail(mut self, detail: Option<String>) -> Self {
@@ -42,7 +52,7 @@ impl AppError {
 
     pub fn validation(fields: BTreeMap<String, String>) -> Self {
         Self {
-            fields: Some(fields),
+            fields: Some(Box::new(fields)),
             ..Self::new("validation", "Check the highlighted fields.")
         }
     }
@@ -75,13 +85,6 @@ impl AppError {
 
     pub fn unsupported_driver() -> Self {
         Self::new("unsupported_driver", "That database type isn't supported.")
-    }
-
-    pub fn unsupported_ssh() -> Self {
-        Self::new(
-            "ssh_unavailable",
-            "SSH tunnels aren't available yet. Turn off SSH to connect directly.",
-        )
     }
 
     pub fn not_connected() -> Self {

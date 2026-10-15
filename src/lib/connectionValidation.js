@@ -126,6 +126,11 @@ export function validateConnectionProfile(profile) {
     ) {
       errors.sshUsername = "Use 128 characters or fewer.";
     }
+    const mode = profile.sshAuthMode ?? "password";
+    if (!["password", "key", "agent"].includes(mode))
+      errors.sshAuthMode = "Choose how to sign in to SSH.";
+    if (mode === "key" && !String(profile.sshKeyPath ?? "").trim())
+      errors.sshKeyPath = "Choose your SSH private key file.";
   }
 
   for (const [field, value] of [
@@ -138,6 +143,9 @@ export function validateConnectionProfile(profile) {
   if (profile.clearDatabasePassword && profile.databasePassword)
     errors.databasePassword =
       "Enter a password or choose to remove the saved password, not both.";
+  if (profile.clearSshKeyPassphrase && profile.sshKeyPassphrase)
+    errors.sshKeyPassphrase =
+      "Enter a passphrase or choose to remove the saved one, not both.";
   if (profile.clearSshPassword && profile.sshPassword)
     errors.sshPassword =
       "Enter a password or choose to remove the saved password, not both.";

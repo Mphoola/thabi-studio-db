@@ -32,12 +32,19 @@ fn context(params: &ConnectParams) -> error::Context<'_> {
 
 impl DatabaseSession for MySqlSession {
     async fn connect(params: &ConnectParams) -> Result<Self, AppError> {
+        let (target_host, target_port) = match params.connect_to {
+            Some(address) => (address.ip().to_string(), address.port()),
+            None => (params.host.clone(), params.port),
+        };
         let mut options = MySqlConnectOptions::new()
-            .host(&params.host)
-            .port(params.port)
+            .host(&target_host)
+            .port(target_port)
             .username(&params.username)
             .charset("utf8mb4")
             .ssl_mode(match params.tls {
+                // Through a tunnel the TLS peer is 127.0.0.1, so only the
+                // certificate chain can be checked; SSH host keys protect the path.
+                TlsMode::Verify if params.connect_to.is_some() => MySqlSslMode::VerifyCa,
                 TlsMode::Verify => MySqlSslMode::VerifyIdentity,
                 TlsMode::EncryptOnly => MySqlSslMode::Required,
                 TlsMode::Off => MySqlSslMode::Disabled,

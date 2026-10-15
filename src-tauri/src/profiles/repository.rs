@@ -6,6 +6,7 @@ use crate::{
     credentials::CredentialStore,
     database::{ConnectParams, Engine, TlsMode},
     errors::AppError,
+    ssh::{SshAuth, SshParams},
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
@@ -16,11 +17,15 @@ use std::path::PathBuf;
 struct CredentialBundle {
     database_password: Option<String>,
     ssh_password: Option<String>,
+    #[serde(default)]
+    ssh_key_passphrase: Option<String>,
 }
 
 impl CredentialBundle {
     fn is_empty(&self) -> bool {
-        self.database_password.is_none() && self.ssh_password.is_none()
+        self.database_password.is_none()
+            && self.ssh_password.is_none()
+            && self.ssh_key_passphrase.is_none()
     }
 }
 
@@ -43,6 +48,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         ssh_port: row.get("ssh_port")?,
         ssh_username: row.get("ssh_username")?,
         ssh_auth_mode: row.get("ssh_auth_mode")?,
+        ssh_key_path: row.get("ssh_key_path")?,
+        has_ssh_key_passphrase: row.get::<_, i64>("has_ssh_key_passphrase")? != 0,
         has_database_password: row.get::<_, i64>("has_database_password")? != 0,
         has_ssh_password: row.get::<_, i64>("has_ssh_password")? != 0,
         created_at: row.get("created_at")?,
@@ -54,7 +61,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
 fn profile_columns() -> &'static str {
     "id, name, environment, driver, host, port, database_name, username,
      auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
-     ssh_auth_mode, has_database_password, has_ssh_password, created_at, updated_at,
+     ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
+     has_ssh_key_passphrase, created_at, updated_at,
      last_connected_at"
 }
 
@@ -94,7 +102,10 @@ fn saved_bundle(
         Some(reference) => match credentials.get(reference)? {
             Some(secret) => serde_json::from_str::<CredentialBundle>(&secret)
                 .map_err(|_| AppError::credential_missing())?,
-            None if profile.has_database_password || profile.has_ssh_password => {
+            None if profile.has_database_password
+                || profile.has_ssh_password
+                || profile.has_ssh_key_passphrase =>
+            {
                 return Err(AppError::credential_missing());
             }
             None => CredentialBundle::default(),
@@ -128,22 +139,71 @@ fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectPa
         password,
         tls: TlsMode::from_setting(target.tls_mode)?,
         ca_path: Some(PathBuf::from(target.tls_ca_path)).filter(|_| !target.tls_ca_path.is_empty()),
+        ssh: None,
+        connect_to: None,
     })
 }
 
-/// Everything needed to connect to a saved profile, password included.
-/// SSH profiles are refused until tunnels exist rather than connecting directly.
+/// SSH settings shared by saved profiles and unsaved form input.
+struct SshTarget<'a> {
+    host: &'a str,
+    port: u16,
+    username: &'a str,
+    auth_mode: &'a str,
+    key_path: &'a str,
+    password: Option<String>,
+    passphrase: Option<String>,
+}
+
+fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParams, AppError> {
+    let auth = match target.auth_mode {
+        "password" => SshAuth::Password(target.password.ok_or_else(|| {
+            AppError::new(
+                "ssh_credentials",
+                "Enter the SSH password in the connection settings.",
+            )
+        })?),
+        "key" => SshAuth::KeyFile {
+            path: PathBuf::from(target.key_path),
+            passphrase: target.passphrase,
+        },
+        "agent" => SshAuth::Agent,
+        _ => return Err(AppError::new("validation", "Choose how to sign in to SSH.")),
+    };
+    Ok(SshParams {
+        host: target.host.to_owned(),
+        port: target.port,
+        username: target.username.to_owned(),
+        auth,
+        known_keys: crate::ssh::known_host_keys(connection, target.host, target.port)?,
+    })
+}
+
+/// Everything needed to connect to a saved profile, passwords included.
 pub fn connect_params(
     connection: &Connection,
     credentials: &dyn CredentialStore,
     id: &str,
 ) -> Result<(ConnectionProfile, ConnectParams), AppError> {
     let profile = get_profile(connection, id)?;
-    if profile.ssh_enabled {
-        return Err(AppError::unsupported_ssh());
-    }
     let bundle = saved_bundle(connection, credentials, &profile)?;
-    let params = params_from(
+    let ssh = if profile.ssh_enabled {
+        Some(ssh_params(
+            connection,
+            SshTarget {
+                host: &profile.ssh_host,
+                port: profile.ssh_port,
+                username: &profile.ssh_username,
+                auth_mode: &profile.ssh_auth_mode,
+                key_path: &profile.ssh_key_path,
+                password: bundle.ssh_password.clone(),
+                passphrase: bundle.ssh_key_passphrase.clone(),
+            },
+        )?)
+    } else {
+        None
+    };
+    let mut params = params_from(
         Target {
             driver: &profile.driver,
             host: &profile.host,
@@ -155,30 +215,61 @@ pub fn connect_params(
         },
         bundle.database_password,
     )?;
+    params.ssh = ssh;
     Ok((profile, params))
 }
 
 /// Connection settings for unsaved form values, used by Test Connection.
-/// A typed password wins; otherwise an edited profile's saved password is
-/// used unless the form asks to remove it.
+/// A typed secret wins; otherwise an edited profile's saved secret is used
+/// unless the form asks to remove it.
 pub fn connect_params_for_input(
     connection: &Connection,
     credentials: &dyn CredentialStore,
     profile_id: Option<&str>,
     input: &ValidatedProfile,
 ) -> Result<ConnectParams, AppError> {
-    if input.ssh_enabled {
-        return Err(AppError::unsupported_ssh());
-    }
-    let password = match (&input.database_password, profile_id) {
-        (Some(password), _) => Some(password.clone()),
-        (None, Some(id)) if !input.clear_database_password => {
+    let saved = match profile_id {
+        Some(id) => {
             let profile = get_profile(connection, id)?;
-            saved_bundle(connection, credentials, &profile)?.database_password
+            saved_bundle(connection, credentials, &profile)?
         }
-        _ => None,
+        None => CredentialBundle::default(),
     };
-    params_from(
+    let pick = |typed: &Option<String>, clear: bool, saved: Option<String>| match typed {
+        Some(value) => Some(value.clone()),
+        None if !clear => saved,
+        None => None,
+    };
+    let password = pick(
+        &input.database_password,
+        input.clear_database_password,
+        saved.database_password,
+    );
+    let ssh = if input.ssh_enabled {
+        Some(ssh_params(
+            connection,
+            SshTarget {
+                host: &input.ssh_host,
+                port: input.ssh_port,
+                username: &input.ssh_username,
+                auth_mode: &input.ssh_auth_mode,
+                key_path: &input.ssh_key_path,
+                password: pick(
+                    &input.ssh_password,
+                    input.clear_ssh_password,
+                    saved.ssh_password,
+                ),
+                passphrase: pick(
+                    &input.ssh_key_passphrase,
+                    input.clear_ssh_key_passphrase,
+                    saved.ssh_key_passphrase,
+                ),
+            },
+        )?)
+    } else {
+        None
+    };
+    let mut params = params_from(
         Target {
             driver: &input.driver,
             host: &input.host,
@@ -189,7 +280,9 @@ pub fn connect_params_for_input(
             tls_ca_path: &input.tls_ca_path,
         },
         password,
-    )
+    )?;
+    params.ssh = ssh;
+    Ok(params)
 }
 
 pub fn mark_connected(connection: &Connection, id: &str) -> Result<(), AppError> {
@@ -212,6 +305,7 @@ fn create_bundle(input: &ValidatedProfile) -> CredentialBundle {
     CredentialBundle {
         database_password: input.database_password.clone(),
         ssh_password: input.ssh_password.clone(),
+        ssh_key_passphrase: input.ssh_key_passphrase.clone(),
     }
 }
 
@@ -229,6 +323,11 @@ fn apply_secret_changes(
     } else if let Some(password) = &input.ssh_password {
         bundle.ssh_password = Some(password.clone());
     }
+    if input.clear_ssh_key_passphrase {
+        bundle.ssh_key_passphrase = None;
+    } else if let Some(passphrase) = &input.ssh_key_passphrase {
+        bundle.ssh_key_passphrase = Some(passphrase.clone());
+    }
     bundle
 }
 
@@ -245,7 +344,13 @@ fn read_bundle(
             || input.clear_database_password;
         let ssh_password_can_be_replaced =
             !profile.has_ssh_password || input.ssh_password.is_some() || input.clear_ssh_password;
-        if !database_password_can_be_replaced || !ssh_password_can_be_replaced {
+        let passphrase_can_be_replaced = !profile.has_ssh_key_passphrase
+            || input.ssh_key_passphrase.is_some()
+            || input.clear_ssh_key_passphrase;
+        if !database_password_can_be_replaced
+            || !ssh_password_can_be_replaced
+            || !passphrase_can_be_replaced
+        {
             return Err(AppError::credential_missing());
         }
         return Ok(CredentialBundle::default());
@@ -265,9 +370,11 @@ fn insert_profile(
             "INSERT INTO connection_profiles (
                 id, name, environment, driver, host, port, database_name, username,
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
-                has_database_password, has_ssh_password, tls_mode, tls_ca_path
+                has_database_password, has_ssh_password, tls_mode, tls_ca_path,
+                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                ?18, ?19, ?20
              )",
             params![
                 id,
@@ -287,6 +394,9 @@ fn insert_profile(
                 bundle.ssh_password.is_some(),
                 profile.tls_mode,
                 profile.tls_ca_path,
+                profile.ssh_auth_mode,
+                profile.ssh_key_path,
+                bundle.ssh_key_passphrase.is_some(),
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -372,6 +482,8 @@ pub fn update_validated_profile(
     let old_key = get_credential_key(connection, id)?;
     let secret_changed = profile.database_password.is_some()
         || profile.ssh_password.is_some()
+        || profile.ssh_key_passphrase.is_some()
+        || profile.clear_ssh_key_passphrase
         || profile.clear_database_password
         || profile.clear_ssh_password;
 
@@ -397,6 +509,7 @@ pub fn update_validated_profile(
             CredentialBundle {
                 database_password: existing.has_database_password.then_some(String::new()),
                 ssh_password: existing.has_ssh_password.then_some(String::new()),
+                ssh_key_passphrase: existing.has_ssh_key_passphrase.then_some(String::new()),
             },
             None,
         )
@@ -408,7 +521,8 @@ pub fn update_validated_profile(
             database_name = ?7, username = ?8, ssh_enabled = ?9, ssh_host = ?10,
             ssh_port = ?11, ssh_username = ?12, credential_key = ?13,
             has_database_password = ?14, has_ssh_password = ?15,
-            tls_mode = ?16, tls_ca_path = ?17,
+            tls_mode = ?16, tls_ca_path = ?17, ssh_auth_mode = ?18, ssh_key_path = ?19,
+            has_ssh_key_passphrase = ?20,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -429,6 +543,9 @@ pub fn update_validated_profile(
             bundle.ssh_password.is_some(),
             profile.tls_mode,
             profile.tls_ca_path,
+            profile.ssh_auth_mode,
+            profile.ssh_key_path,
+            bundle.ssh_key_passphrase.is_some(),
         ],
     );
     if update_result.is_err() {
@@ -473,7 +590,10 @@ pub fn duplicate_profile(
             Some(secret) => {
                 serde_json::from_str(&secret).map_err(|_| AppError::credential_missing())?
             }
-            None if source.has_database_password || source.has_ssh_password => {
+            None if source.has_database_password
+                || source.has_ssh_password
+                || source.has_ssh_key_passphrase =>
+            {
                 return Err(AppError::credential_missing());
             }
             None => CredentialBundle::default(),
@@ -494,10 +614,14 @@ pub fn duplicate_profile(
         ssh_host: source.ssh_host.clone(),
         ssh_port: source.ssh_port.to_string(),
         ssh_username: source.ssh_username.clone(),
+        ssh_auth_mode: source.ssh_auth_mode.clone(),
+        ssh_key_path: source.ssh_key_path.clone(),
         database_password: bundle.database_password.clone(),
         ssh_password: bundle.ssh_password.clone(),
         clear_database_password: false,
         clear_ssh_password: false,
+        ssh_key_passphrase: bundle.ssh_key_passphrase.clone(),
+        clear_ssh_key_passphrase: false,
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -880,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn ssh_profiles_are_refused_instead_of_connecting_directly() {
+    fn ssh_profiles_connect_through_a_tunnel_with_saved_secrets() {
         let mut connection = Connection::open_in_memory().unwrap();
         migrate(&mut connection).unwrap();
         let credentials = TestCredentials::default();
@@ -888,14 +1012,21 @@ mod tests {
         create.ssh_enabled = true;
         create.ssh_host = "bastion.example.com".into();
         create.ssh_username = "tunnel".into();
+        create.ssh_password = Some("ssh-secret".into());
         let saved = create_profile(&connection, &credentials, create.clone()).unwrap();
 
-        let error = connect_params(&connection, &credentials, &saved.profile.id).unwrap_err();
-        assert_eq!(error.kind, "ssh_unavailable");
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        let ssh = params.ssh.expect("ssh params");
+        assert_eq!(ssh.host, "bastion.example.com");
+        assert!(matches!(ssh.auth, SshAuth::Password(ref p) if p == "ssh-secret"));
+        assert!(!format!("{ssh:?}").contains("ssh-secret"));
+
+        // Unsaved form values without an SSH password can't connect.
+        create.ssh_password = None;
         let error =
             connect_params_for_input(&connection, &credentials, None, &validate(create).unwrap())
                 .unwrap_err();
-        assert_eq!(error.kind, "ssh_unavailable");
+        assert_eq!(error.kind, "ssh_credentials");
     }
 
     #[test]

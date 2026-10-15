@@ -16,14 +16,20 @@ pub struct ValidatedProfile {
     pub ssh_host: String,
     pub ssh_port: u16,
     pub ssh_username: String,
+    pub ssh_auth_mode: String,
+    pub ssh_key_path: String,
     pub database_password: Option<String>,
     pub ssh_password: Option<String>,
+    pub ssh_key_passphrase: Option<String>,
     pub clear_database_password: bool,
     pub clear_ssh_password: bool,
+    pub clear_ssh_key_passphrase: bool,
 }
 
 /// Largest CA certificate file accepted (a bundle is a few hundred KB at most).
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
+/// Largest private key file accepted (OpenSSH keys are a few KB).
+const MAX_KEY_FILE_BYTES: u64 = 100 * 1024;
 
 pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError> {
     let mut fields = BTreeMap::new();
@@ -101,10 +107,26 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
     } else {
         22
     };
+    let ssh_auth_mode = input.ssh_auth_mode.trim().to_owned();
+    if !matches!(ssh_auth_mode.as_str(), "password" | "key" | "agent") {
+        fields.insert("sshAuthMode".into(), "Choose how to sign in to SSH.".into());
+    }
+    let ssh_key_path = if ssh_auth_mode == "key" {
+        let path = input.ssh_key_path.trim().to_owned();
+        if input.ssh_enabled
+            && let Err(message) = check_key_file(&path)
+        {
+            fields.insert("sshKeyPath".into(), message.into());
+        }
+        path
+    } else {
+        String::new()
+    };
 
     for (field, secret) in [
         ("databasePassword", input.database_password.as_ref()),
         ("sshPassword", input.ssh_password.as_ref()),
+        ("sshKeyPassphrase", input.ssh_key_passphrase.as_ref()),
     ] {
         if secret.is_some_and(|value| value.chars().count() > 4096) {
             fields.insert(field.into(), "Use 4,096 characters or fewer.".into());
@@ -128,6 +150,18 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         );
     }
 
+    if input.clear_ssh_key_passphrase
+        && input
+            .ssh_key_passphrase
+            .as_deref()
+            .is_some_and(|s| !s.is_empty())
+    {
+        fields.insert(
+            "sshKeyPassphrase".into(),
+            "Enter a passphrase or choose to remove the saved one, not both.".into(),
+        );
+    }
+
     if !fields.is_empty() {
         return Err(AppError::validation(fields));
     }
@@ -146,10 +180,14 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         ssh_host,
         ssh_port,
         ssh_username,
+        ssh_auth_mode,
+        ssh_key_path,
         database_password: input.database_password.filter(|value| !value.is_empty()),
         ssh_password: input.ssh_password.filter(|value| !value.is_empty()),
+        ssh_key_passphrase: input.ssh_key_passphrase.filter(|value| !value.is_empty()),
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
+        clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
     })
 }
 
@@ -160,6 +198,21 @@ fn validate_port(value: &str, field: &str, fields: &mut BTreeMap<String, String>
             fields.insert(field.into(), "Enter a port from 1 to 65,535.".into());
             0
         }
+    }
+}
+
+fn check_key_file(path: &str) -> Result<(), &'static str> {
+    if path.is_empty() {
+        return Err("Choose your SSH private key file.");
+    }
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err("Choose the SSH key file again.");
+    }
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() && meta.len() <= MAX_KEY_FILE_BYTES => Ok(()),
+        Ok(meta) if meta.is_file() => Err("That file is too large to be an SSH key."),
+        _ => Err("That SSH key file can't be found."),
     }
 }
 
@@ -248,10 +301,14 @@ pub(crate) mod tests {
             ssh_host: String::new(),
             ssh_port: "22".into(),
             ssh_username: String::new(),
+            ssh_auth_mode: "password".into(),
+            ssh_key_path: String::new(),
             database_password: None,
             ssh_password: None,
             clear_database_password: false,
             clear_ssh_password: false,
+            ssh_key_passphrase: None,
+            clear_ssh_key_passphrase: false,
         }
     }
 
@@ -302,6 +359,21 @@ pub(crate) mod tests {
         assert_eq!(validated.tls_mode, "disable");
         assert!(validated.database_password.is_none());
         assert!(!validated.ssh_enabled);
+    }
+
+    #[test]
+    fn key_authentication_needs_a_readable_key_file() {
+        let mut with_key = input();
+        with_key.ssh_enabled = true;
+        with_key.ssh_host = "bastion.example.com".into();
+        with_key.ssh_username = "deploy".into();
+        with_key.ssh_auth_mode = "key".into();
+        let fields = validate(with_key.clone()).err().unwrap().fields.unwrap();
+        assert_eq!(fields["sshKeyPath"], "Choose your SSH private key file.");
+
+        with_key.ssh_auth_mode = "agent".into();
+        with_key.ssh_key_path = "/ignored".into();
+        assert_eq!(validate(with_key).unwrap().ssh_key_path, "");
     }
 
     #[test]

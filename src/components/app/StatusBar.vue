@@ -2,6 +2,7 @@
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
 import { useAppInfo } from "../../composables/useAppInfo.js";
+import SecurityIndicator from "./SecurityIndicator.vue";
 
 const { info, error } = useAppInfo();
 const store = useConnectionProfiles();
@@ -34,6 +35,7 @@ const { selectedProfile } = store;
       </template>
       <template v-else>No connection</template>
     </span>
+    <SecurityIndicator v-if="selectedProfile" :profile="selectedProfile" />
     <span class="ml-auto" />
     <span v-if="info">v{{ info.version }}</span>
     <span v-else-if="error" :title="error">Backend unavailable</span>

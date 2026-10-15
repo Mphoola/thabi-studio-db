@@ -310,6 +310,8 @@ mod tests {
             password: None,
             tls: TlsMode::Verify,
             ca_path: None,
+            ssh: None,
+            connect_to: None,
         }
     }
 
