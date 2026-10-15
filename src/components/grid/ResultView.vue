@@ -14,6 +14,8 @@ const props = defineProps({
   result: { type: Object, required: true },
   /** Extra note, e.g. "Read-only preview". */
   note: { type: String, default: "" },
+  /** Staged row edits (useRowEdits); makes the grid editable. */
+  editor: { type: Object, default: null },
 });
 const toasts = useToasts();
 
@@ -44,7 +46,7 @@ async function exportCsv() {
 
 <template>
   <div class="flex min-h-0 flex-col">
-    <ResultGrid :source="source" class="min-h-0 flex-1" />
+    <ResultGrid :source="source" :editor="editor" class="min-h-0 flex-1" />
     <footer
       class="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
     >

@@ -111,8 +111,17 @@ export function useTabs() {
     show(tab);
   }
 
+  const hasStagedEdits = (tab) =>
+    Boolean(
+      tab.edits &&
+      (Object.keys(tab.edits.updates).length ||
+        Object.keys(tab.edits.deletes).length ||
+        tab.edits.inserts.length),
+    );
   const isDirty = (tab) =>
-    tab.type === "query" && tab.sql.trim() !== tab.savedSql.trim();
+    tab.type === "query"
+      ? tab.sql.trim() !== tab.savedSql.trim()
+      : hasStagedEdits(tab);
 
   async function close(id = activeId.value) {
     const index = tabs.value.findIndex((tab) => tab.id === id);
@@ -130,7 +139,9 @@ export function useTabs() {
       const ok = await confirm({
         title: `Close “${tab.title}”?`,
         message:
-          "Its changes aren't saved and will be lost. Save it first with Save Query if you want to keep it.",
+          tab.type === "query"
+            ? "Its changes aren't saved and will be lost. Save it first with Save Query if you want to keep it."
+            : "Its staged row changes haven't been applied and will be lost.",
         confirmLabel: "Close",
         destructive: true,
       });

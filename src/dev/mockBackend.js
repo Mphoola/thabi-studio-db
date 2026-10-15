@@ -258,6 +258,21 @@ handlers.open_object_data = ({ name }) =>
       })
     : handlers.run_statement({ sql: "select" });
 
+// Staged row edits: shows plausible SQL; nothing is stored.
+handlers.preview_row_changes = ({ target, changes }) =>
+  changes.map((c) => {
+    const where = (c.key ?? [])
+      .map((k) => `"${k.column}" = '${k.value}'`)
+      .join(" AND ");
+    if (c.kind === "delete")
+      return `DELETE FROM "${target.name}" WHERE ${where}`;
+    if (c.kind === "insert")
+      return `INSERT INTO "${target.name}" (${c.values.map((v) => `"${v.column}"`).join(", ")}) VALUES (…)`;
+    const set = c.set.map((v) => `"${v.column}" = '${v.value}'`).join(", ");
+    return `UPDATE "${target.name}" SET ${set} WHERE ${where}`;
+  });
+handlers.apply_row_changes = ({ changes }) => changes.length;
+
 handlers.cancel_statement = () => {
   if (!cancelRun) return false;
   cancelRun();

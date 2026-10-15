@@ -195,6 +195,47 @@ pub async fn open_object_data(
     result
 }
 
+/// The statements staged row edits would run, for the user to review.
+#[tauri::command]
+pub async fn preview_row_changes(
+    id: String,
+    tab_id: String,
+    target: database::edit::TableTarget,
+    changes: Vec<database::edit::RowChange>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    database::edit::statements(params.engine, &target, &changes)
+}
+
+/// Applies staged row edits in one transaction on the table tab's session.
+/// All or nothing; returns how many statements ran.
+#[tauri::command]
+pub async fn apply_row_changes(
+    id: String,
+    tab_id: String,
+    target: database::edit::TableTarget,
+    changes: Vec<database::edit::RowChange>,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let statements = database::edit::statements(params.engine, &target, &changes)?;
+    let result = tab
+        .apply(&params, Some(target.database.clone()), &statements)
+        .await;
+    if let Err(error) = &result
+        && is_connection_failure(error)
+    {
+        state.connections.close_query_tab(&id, &tab_id).await;
+        // If it dropped during COMMIT, the server may or may not have saved.
+        return Err(AppError::new(
+            "connection_lost",
+            "The connection was lost while saving. Reconnect and reload the table to see whether the changes were saved.",
+        ));
+    }
+    result
+}
+
 /// Runs one user-authored statement, as written, on the query tab's own
 /// session. Never retried: if the connection drops, the outcome is unknown
 /// and the user decides what to do.

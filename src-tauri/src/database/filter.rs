@@ -22,14 +22,7 @@ pub struct RowFilter {
     pub value: String,
 }
 
-/// A string literal with the engine's escaping.
-fn literal(engine: Engine, value: &str) -> String {
-    match engine {
-        Engine::Postgres => format!("'{}'", value.replace('\'', "''")),
-        Engine::MySql => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''")),
-        Engine::SqlServer => format!("N'{}'", value.replace('\'', "''")),
-    }
-}
+use quote::literal;
 
 /// The column as text, for LIKE on any column type.
 fn as_text(engine: Engine, column: &str) -> String {

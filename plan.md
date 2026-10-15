@@ -853,11 +853,16 @@ Update this section as work progresses.
   - [x] Explorer and query tabs scoped to a connection's saved database; USE follows
   - [x] 39 integration tests pass
 - [x] Extra (2026-10-15, branch `connections-and-table-data`, not committed): table data in the full grid with export; connections page grouped by environment with search, richer rows, recent connections, quick switcher (⇧⌘K) and connection URL paste (`docs/decisions/0011`)
-- [x] Phase 9 — Query history, saved queries, polish, and safeguards (2026-10-15, branch `phase-9-history-saved-queries`, not committed)
+- [x] Phase 9 — Query history, saved queries, polish, and safeguards (2026-10-15, branch `phase-9-history-saved-queries`)
   - [x] Cross-platform (macOS, Windows, Linux): credential stores, window chrome, menus, SSH agent, wording, CI for all three
   - [x] Query history (recorded per run, searchable, retention, clear) and saved queries (⌘S)
   - [x] Open query tabs restored after quitting; editor font size and history preferences
   - [x] Privacy note in About and `docs/PRIVACY.md`; accessibility pass
+  - [x] Saved-query folders; SSH keyboard-interactive and legacy PEM keys; connection rail; table row filters
+- [x] Phase 9b — Inline data editing, added as its own milestone (2026-10-15, branch `phase-9b-inline-editing`, not committed)
+  - [x] Edit cells, Set to NULL, delete rows and add rows on tables with a primary key; staged until applied
+  - [x] Review the exact SQL; apply all changes in one transaction; each must change exactly one row or nothing is saved
+  - [x] Asks before deleting rows and before any change on Production; integration-tested on all three engines
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release
 
 **Final principle:** Build the smallest genuinely reliable database client first. A polished connection flow, accurate query results, safe credential handling, and dependable remote access are more valuable than many incomplete features.

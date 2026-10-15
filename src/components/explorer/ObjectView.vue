@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { Eye, ListFilter, RefreshCw, Table2 } from "lucide-vue-next";
+import { Eye, ListFilter, Plus, RefreshCw, Table2 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import { useAppSettings } from "../../composables/useAppSettings.js";
@@ -12,7 +12,11 @@ import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
 import { remoteSource } from "../../lib/gridSources.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
+import AddRowDialog from "./AddRowDialog.vue";
+import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
+import EditChangesBar from "./EditChangesBar.vue";
 import FilterBar from "./FilterBar.vue";
+import { useTableEditing } from "./useTableEditing.js";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
@@ -46,8 +50,20 @@ const columns = ref([]);
 function toggleFilters() {
   props.tab.showFilters = !props.tab.showFilters;
   if (props.tab.showFilters && !filters.value.length)
-    filters.value = [newFilter(columns.value[0] ?? "")];
+    filters.value = [newFilter(columns.value[0]?.name ?? "")];
 }
+
+const editing = useTableEditing({
+  tab: props.tab,
+  node,
+  profileId: computed(() => props.tab.profileId ?? explorer.profile.value?.id),
+  columns,
+  reload: () => load("data"),
+});
+const editor = editing.editor;
+const addingRow = ref(false);
+// Save (Mod+S) in this tab applies the staged edits.
+props.tab.applyEdits = editing.apply;
 
 async function load(which = tab.value) {
   const target = node.value;
@@ -67,7 +83,7 @@ async function load(which = tab.value) {
     if (node.value !== target) return;
     results.value = { ...results.value, [which]: { status: "loaded", value } };
     if (which === "data") {
-      columns.value = value.columns.map((column) => column.name);
+      columns.value = value.columns;
       appliedCount.value = request.length;
     }
   } catch (error) {
@@ -123,6 +139,12 @@ const location = computed(() =>
         label="Object view"
       />
       <IconButton
+        v-if="tab === 'data' && editor.enabled.value && columns.length"
+        :icon="Plus"
+        label="Add Row"
+        @click="addingRow = true"
+      />
+      <IconButton
         v-if="tab === 'data'"
         :icon="ListFilter"
         :label="appliedCount ? `Filters (${appliedCount})` : 'Filter Rows'"
@@ -139,10 +161,18 @@ const location = computed(() =>
     <FilterBar
       v-if="showFilters && columns.length"
       v-model:filters="filters"
-      :columns="columns"
+      :columns="columns.map((c) => c.name)"
       :applied-count="appliedCount"
       :loading="current.status === 'loading'"
       @apply="load('data')"
+    />
+    <EditChangesBar
+      v-if="tab === 'data' && editor.summary.value.total"
+      :summary="editor.summary.value"
+      :applying="editing.applying.value"
+      @preview="editing.showPreview"
+      @discard="editing.discard"
+      @apply="editing.apply"
     />
     <div
       v-if="current.status === 'loading' || current.status === 'idle'"
@@ -167,13 +197,29 @@ const location = computed(() =>
       class="min-h-0 flex-1"
       :source="previewSource"
       :result="current.value"
-      note="Read-only"
+      :editor="editor.enabled.value ? editor : null"
+      :note="
+        editing.readOnlyReason.value ||
+        (editor.enabled.value ? 'Double-click a cell to edit' : '')
+      "
     />
     <StructureView
       v-else
       class="min-h-0 flex-1"
       :structure="current.value"
       :kind="node.kind"
+    />
+    <AddRowDialog
+      v-model:open="addingRow"
+      :columns="columns"
+      :table="node.name"
+      @add="editor.addRow"
+    />
+    <ChangesPreviewDialog
+      :statements="editing.preview.value"
+      :applying="editing.applying.value"
+      @close="editing.preview.value = null"
+      @apply="editing.apply"
     />
   </section>
 </template>

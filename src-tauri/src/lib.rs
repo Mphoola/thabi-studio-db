@@ -77,6 +77,8 @@ pub fn run() {
             commands::connections::list_objects,
             commands::connections::describe_object,
             commands::connections::open_object_data,
+            commands::connections::preview_row_changes,
+            commands::connections::apply_row_changes,
             commands::connections::run_statement,
             commands::connections::cancel_statement,
             commands::connections::close_query_tab,

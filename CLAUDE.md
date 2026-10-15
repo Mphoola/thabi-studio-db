@@ -37,6 +37,8 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   Read `docs/decisions/0012-cross-platform.md` and `0013-history-saved-queries.md`.
   Also on this branch: saved-query folders, SSH fixes (keyboard-interactive,
   legacy PEM keys), the connection rail and table row filters (`0014`).
+- Phase 9b (inline data editing): on `phase-9b-inline-editing`, not
+  committed. Read `docs/decisions/0015-inline-editing.md`.
 - Next: Phase 10 (testing, packaging for all three platforms, release).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.

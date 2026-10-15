@@ -138,6 +138,21 @@ export function describeObject(id, { database, schema, name, kind }) {
  * Reads a table or view into the object tab's own session. The result pages,
  * sorts and exports like a query result. Bounded by `maxRows`.
  */
+/**
+ * Staged row edits on a table tab. target: { database, schema, name };
+ * changes: [{ kind: "update", key, set } | { kind: "delete", key } |
+ * { kind: "insert", values }], each key/set/values a [{ column, value }].
+ * @returns {Promise<string[]>} the statements, for review
+ */
+export function previewRowChanges(id, tabId, target, changes) {
+  return call("preview_row_changes", { id, tabId, target, changes });
+}
+
+/** Applies staged row edits in one transaction. @returns {Promise<number>} */
+export function applyRowChanges(id, tabId, target, changes) {
+  return call("apply_row_changes", { id, tabId, target, changes });
+}
+
 /** filters: [{ column, op, value }], AND-ed; op "raw" takes a SQL condition. */
 export function openObjectData(
   id,

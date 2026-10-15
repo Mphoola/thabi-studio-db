@@ -10,19 +10,25 @@ import {
 } from "vue";
 import { useGridData } from "../../composables/useGridData.js";
 import { useGridSelection } from "../../composables/useGridSelection.js";
-import { displayText, isNumericType } from "../../lib/gridText.js";
+import { isNumericType } from "../../lib/gridText.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import GridHeader from "./GridHeader.vue";
+import GridRow from "./GridRow.vue";
 import ValueInspector from "./ValueInspector.vue";
 import { useGridActions } from "./useGridActions.js";
+import { useGridEditing } from "./useGridEditing.js";
 
 /**
- * Virtualised, read-only results grid. Only the rows on screen are
+ * Virtualised results grid, read-only unless an `editor` (useRowEdits) is
+ * given. Only the rows on screen are
  * rendered and only nearby pages are fetched from `source`:
  * { columns, total, firstRows, sortable, load(offset, limit, sort),
  *   copy(scope, format, sort), export?(scope, sort) }.
  */
-const props = defineProps({ source: { type: Object, required: true } });
+const props = defineProps({
+  source: { type: Object, required: true },
+  editor: { type: Object, default: null },
+});
 
 const ROW = 26;
 const OVERSCAN = 8;
@@ -80,6 +86,7 @@ const template = computed(
 );
 
 const actions = useGridActions(props, data, selection);
+
 const menu = ref(null);
 const inspector = ref(null);
 
@@ -93,6 +100,7 @@ function scrollIntoView(row) {
 }
 
 function onKeydown(event) {
+  if (editing.value) return;
   if (
     selection.move(event, Math.max(1, Math.floor(viewport.value / ROW) - 1))
   ) {
@@ -106,9 +114,18 @@ function onKeydown(event) {
   } else if (event.metaKey && event.key.toLowerCase() === "c") {
     event.preventDefault();
     actions.copy("tsv", event.shiftKey);
-  } else if (event.key === "Enter" || event.key === " ") {
+  } else if (event.key === "Enter" || event.key === "F2") {
+    event.preventDefault();
+    if (!startEdit()) openInspector();
+  } else if (event.key === " ") {
     event.preventDefault();
     openInspector();
+  } else if (
+    props.editor?.enabled.value &&
+    (event.key === "Delete" || event.key === "Backspace")
+  ) {
+    event.preventDefault();
+    toggleDeleteSelected();
   }
 }
 
@@ -117,6 +134,21 @@ function openInspector() {
   const cells = data.rowAt(row);
   if (cells) inspector.value?.open(columns.value[col], cells[col]);
 }
+const {
+  editing,
+  startEdit,
+  commitEdit,
+  endEdit,
+  toggleDeleteSelected,
+  onMenuSelect,
+} = useGridEditing({
+  props,
+  data,
+  selection,
+  scroller,
+  openInspector,
+  actions,
+});
 
 function onCellDown(event, row, col) {
   if (event.button === 2 && selection.isSelected(row, col)) return;
@@ -157,57 +189,21 @@ function resize(index, width) {
         @resize="resize"
       />
       <div class="relative" :style="{ height: `${rowCount * ROW}px` }">
-        <div
+        <GridRow
           v-for="row in visible"
           :key="row.index"
-          role="row"
-          :aria-rowindex="row.index + 2"
-          class="absolute left-0 grid min-w-full"
-          :class="row.index % 2 && 'bg-grid-row-alt'"
-          :style="{
-            top: `${row.index * ROW}px`,
-            height: `${ROW}px`,
-            gridTemplateColumns: template,
-          }"
-        >
-          <span
-            class="sticky left-0 z-[1] border-r border-line bg-grid-header px-2 text-right leading-[26px] text-fg-disabled tabular-nums"
-          >
-            {{ (row.index + 1).toLocaleString() }}
-          </span>
-          <template v-if="row.cells">
-            <span
-              v-for="(cell, col) in row.cells"
-              :key="col"
-              role="gridcell"
-              class="truncate border-r border-line px-2.5 leading-[26px]"
-              :class="[
-                numeric[col] &&
-                  cell.kind === 'value' &&
-                  'text-right tabular-nums',
-                cell.kind === 'null' && 'text-grid-null italic',
-                cell.kind === 'binary' && 'text-fg-muted',
-                cell.kind === 'value' && cell.value === '' && 'text-fg-subtle',
-                selection.isSelected(row.index, col) && 'bg-selection',
-                selection.focus.value.row === row.index &&
-                  selection.focus.value.col === col &&
-                  selection.active.value &&
-                  'outline-2 -outline-offset-2 outline-accent',
-              ]"
-              @mousedown="onCellDown($event, row.index, col)"
-              @dblclick="openInspector"
-            >
-              {{
-                cell.kind === "value" && cell.value === ""
-                  ? "''"
-                  : displayText(cell)
-              }}
-            </span>
-          </template>
-          <span v-else class="px-2.5 leading-[26px] text-fg-subtle"
-            >Loading…</span
-          >
-        </div>
+          :index="row.index"
+          :cells="row.cells"
+          :template="template"
+          :numeric="numeric"
+          :selection="selection"
+          :editor="editor"
+          :editing-col="editing?.row === row.index ? editing.col : -1"
+          @celldown="onCellDown"
+          @celldblclick="(r, c) => startEdit(r, c) || openInspector()"
+          @commit="commitEdit"
+          @cancel="endEdit('stay')"
+        />
       </div>
     </div>
     <p
@@ -221,7 +217,7 @@ function resize(index, width) {
       ref="menu"
       :items="actions.menuItems.value"
       label="Result actions"
-      @select="(id) => (id === 'inspect' ? openInspector() : actions.run(id))"
+      @select="onMenuSelect"
     />
     <ValueInspector ref="inspector" />
   </div>

@@ -17,6 +17,8 @@ export function useQuerySave() {
 
   async function saveActive() {
     const tab = workspace.active.value;
+    // In a table tab, Save applies its staged row edits.
+    if (tab?.type === "object") return tab.applyEdits?.();
     if (tab?.type !== "query") return;
     if (!tab.savedQueryId) {
       pending.value = { tab };

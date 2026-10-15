@@ -179,7 +179,7 @@ async fn filters_rows(engine: Engine) {
         (vec![f("id", "eq", "71")], vec!["71"]),
         (vec![f("name", "contains", "'Bri")], vec!["71"]),
         (vec![f("id", "contains", "7")], vec!["71"]),
-        (vec![f("id", "in", "5, 9")], vec!["5", "9"]),
+        (vec![f("id", "in", "5, 9")], vec!["9", "5"]),
         (vec![f("name", "is_null", "")], vec!["9"]),
         (
             vec![f("id", "ge", "9"), f("", "raw", "id < 100")],

@@ -6,6 +6,7 @@
 //! statements run on the same server session, and cancelling a query needs
 //! to know which backend is running it.
 
+pub mod edit;
 pub mod error;
 pub mod filter;
 pub mod metadata;
@@ -375,19 +376,10 @@ pub fn object_data_sql(
     filter: &str,
     limit: usize,
 ) -> String {
+    let table = quote::table(engine, database, schema, name);
     match engine {
-        Engine::Postgres => format!(
-            "SELECT * FROM {}{filter} LIMIT {limit}",
-            quote::qualified(engine, &[schema, name])
-        ),
-        Engine::MySql => format!(
-            "SELECT * FROM {}{filter} LIMIT {limit}",
-            quote::qualified(engine, &[database, name])
-        ),
-        Engine::SqlServer => format!(
-            "SELECT TOP ({limit}) * FROM {}{filter}",
-            quote::qualified(engine, &[database, schema, name])
-        ),
+        Engine::SqlServer => format!("SELECT TOP ({limit}) * FROM {table}{filter}"),
+        _ => format!("SELECT * FROM {table}{filter} LIMIT {limit}"),
     }
 }
 

@@ -12,7 +12,7 @@
 //! Queries are never retried automatically.
 
 use crate::{
-    database::{CancelTarget, ConnectParams, QueryResult, Session, cancel_backend},
+    database::{CancelTarget, Cell, ConnectParams, Engine, QueryResult, Session, cancel_backend},
     errors::AppError,
     results::{StoredResult, into_first_page},
 };
@@ -124,22 +124,7 @@ impl QueryTab {
         timeout: Option<Duration>,
     ) -> Result<QueryResult, AppError> {
         let mut guard = self.session.try_lock().map_err(|_| query_running())?;
-
-        let wanted = database
-            .filter(|d| !d.is_empty())
-            .or_else(|| params.database.clone());
-        let same_database = *self.database.lock().expect("tab lock") == wanted;
-        if guard.is_none() || !same_database {
-            if let Some(old) = guard.take() {
-                let _ = old.close().await;
-            }
-            let mut tab_params = params.clone();
-            tab_params.database = wanted.clone();
-            let session = Session::connect(&tab_params).await?;
-            *self.cancel_target.lock().expect("tab lock") = session.cancel_target();
-            *self.database.lock().expect("tab lock") = wanted;
-            *guard = Some(session);
-        }
+        self.open_session(&mut guard, params, database).await?;
 
         let token = CancellationToken::new();
         *self.abort.lock().expect("tab lock") = token.clone();
@@ -205,6 +190,98 @@ impl QueryTab {
         }
     }
 
+    /// Opens the tab's session, or a new one if `database` changed.
+    async fn open_session(
+        &self,
+        guard: &mut Option<Session>,
+        params: &ConnectParams,
+        database: Option<String>,
+    ) -> Result<(), AppError> {
+        let wanted = database
+            .filter(|d| !d.is_empty())
+            .or_else(|| params.database.clone());
+        let same_database = *self.database.lock().expect("tab lock") == wanted;
+        if guard.is_none() || !same_database {
+            if let Some(old) = guard.take() {
+                let _ = old.close().await;
+            }
+            let mut tab_params = params.clone();
+            tab_params.database = wanted.clone();
+            let session = Session::connect(&tab_params).await?;
+            *self.cancel_target.lock().expect("tab lock") = session.cancel_target();
+            *self.database.lock().expect("tab lock") = wanted;
+            *guard = Some(session);
+        }
+        Ok(())
+    }
+
+    /// Runs staged row edits in one transaction. Every statement must change
+    /// exactly one row; otherwise everything is rolled back and nothing is
+    /// saved. If the rollback itself fails, the session is dropped, which
+    /// makes the server discard the transaction. Never retried.
+    pub async fn apply(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        statements: &[String],
+    ) -> Result<usize, AppError> {
+        let mut guard = self.session.try_lock().map_err(|_| query_running())?;
+        self.open_session(&mut guard, params, database).await?;
+        let engine = params.engine;
+        let (begin, commit, rollback) = match engine {
+            Engine::Postgres => ("BEGIN", "COMMIT", "ROLLBACK"),
+            Engine::MySql => ("START TRANSACTION", "COMMIT", "ROLLBACK"),
+            Engine::SqlServer => (
+                "BEGIN TRANSACTION",
+                "COMMIT TRANSACTION",
+                "ROLLBACK TRANSACTION",
+            ),
+        };
+        self.running.store(true, Ordering::SeqCst);
+        let session = guard.as_mut().expect("opened above");
+        let outcome: Result<usize, (bool, AppError)> = async {
+            session.execute(begin, 1).await.map_err(|e| (false, e))?;
+            for (index, sql) in statements.iter().enumerate() {
+                let count = match engine {
+                    // Simple queries on SQL Server don't report rows affected.
+                    Engine::SqlServer => session
+                        .execute(&format!("{sql};\nSELECT @@ROWCOUNT"), 1)
+                        .await
+                        .map(|r| match r.rows.first().and_then(|row| row.first()) {
+                            Some(Cell::Value(n)) => n.parse::<u64>().ok(),
+                            _ => None,
+                        }),
+                    _ => session.execute(sql, 1).await.map(|r| r.rows_affected),
+                };
+                match count {
+                    Ok(Some(1)) => {}
+                    Ok(count) => {
+                        return Err((true, not_one_row(index, statements.len(), count)));
+                    }
+                    Err(error) => {
+                        return Err((true, change_failed(index, statements.len(), error)));
+                    }
+                }
+            }
+            session.execute(commit, 1).await.map_err(|e| (false, e))?;
+            Ok(statements.len())
+        }
+        .await;
+        let result = match outcome {
+            Ok(count) => Ok(count),
+            Err((roll_back, error)) => {
+                if roll_back && session.execute(rollback, 1).await.is_ok() {
+                    Err(error)
+                } else {
+                    *guard = None;
+                    Err(error)
+                }
+            }
+        };
+        self.running.store(false, Ordering::SeqCst);
+        result
+    }
+
     fn request_server_cancel(&self, params: &ConnectParams) {
         let target = *self.cancel_target.lock().expect("tab lock");
         let database = self.database.lock().expect("tab lock").clone();
@@ -248,6 +325,30 @@ impl QueryTab {
 }
 
 pub type QueryTabHandle = Arc<QueryTab>;
+
+fn not_one_row(index: usize, total: usize, count: Option<u64>) -> AppError {
+    let found = match count {
+        Some(0) => "found no matching row".to_owned(),
+        Some(n) => format!("would change {n} rows"),
+        None => "couldn't confirm how many rows it changed".to_owned(),
+    };
+    AppError::new(
+        "edit_conflict",
+        format!(
+            "Change {} of {total} {found}, so nothing was saved. The row may have changed or been deleted; reload and try again.",
+            index + 1
+        ),
+    )
+}
+
+fn change_failed(index: usize, total: usize, mut error: AppError) -> AppError {
+    error.message = format!(
+        "Change {} of {total} failed, so nothing was saved. {}",
+        index + 1,
+        error.message
+    );
+    error
+}
 
 /// The database named by a `USE name` statement, without quotes.
 fn use_target(sql: &str) -> Option<String> {

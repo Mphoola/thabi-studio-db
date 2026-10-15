@@ -1,6 +1,7 @@
-//! Identifier quoting for SQL the app generates (never for user SQL).
-//! Values always go through bind parameters; identifiers can't, so they are
-//! quoted here with each engine's rules.
+//! Identifier quoting for SQL the app generates (never for user SQL), plus
+//! string literals for the SQL a user builds and sees: row filters and
+//! staged row edits (see docs/decisions/0014 and 0015). Metadata queries
+//! bind their values instead.
 
 use super::Engine;
 
@@ -22,6 +23,26 @@ pub fn qualified(engine: Engine, parts: &[&str]) -> String {
         .map(|part| ident(engine, part))
         .collect::<Vec<_>>()
         .join(".")
+}
+
+/// A string literal with the engine's escaping, for SQL the user sees and
+/// owns (row filters, staged row edits). The server converts it to the
+/// column's type, so `'71'` works for an integer column.
+pub fn literal(engine: Engine, value: &str) -> String {
+    match engine {
+        Engine::Postgres => format!("'{}'", value.replace('\'', "''")),
+        Engine::MySql => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''")),
+        Engine::SqlServer => format!("N'{}'", value.replace('\'', "''")),
+    }
+}
+
+/// A table's name as each engine addresses it from a session in `database`.
+pub fn table(engine: Engine, database: &str, schema: &str, name: &str) -> String {
+    match engine {
+        Engine::Postgres => qualified(engine, &[schema, name]),
+        Engine::MySql => qualified(engine, &[database, name]),
+        Engine::SqlServer => qualified(engine, &[database, schema, name]),
+    }
 }
 
 #[cfg(test)]

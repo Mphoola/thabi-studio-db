@@ -1,6 +1,13 @@
 import { copyText } from "../../lib/clipboard.js";
 import { computed } from "vue";
-import { ClipboardCopy, Download, Search } from "lucide-vue-next";
+import {
+  ClipboardCopy,
+  Download,
+  Pencil,
+  RotateCcw,
+  Search,
+  Trash2,
+} from "lucide-vue-next";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
 
@@ -57,6 +64,15 @@ export function useGridActions(props, data, selection) {
     { id: "copy-rows", label: "Copy Rows" },
     { separator: true },
     { id: "inspect", label: "Inspect Value", icon: Search },
+    ...(props.editor?.enabled.value
+      ? [
+          { separator: true },
+          { id: "edit-cell", label: "Edit Cell", icon: Pencil },
+          { id: "set-null", label: "Set to NULL" },
+          { id: "delete-rows", label: "Delete Rows", icon: Trash2 },
+          { id: "revert-rows", label: "Revert Changes", icon: RotateCcw },
+        ]
+      : []),
     ...(props.source.export
       ? [
           { separator: true },

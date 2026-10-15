@@ -303,3 +303,129 @@ async fn the_row_limit_is_reported() {
     assert!(result.truncated);
     tab.close().await;
 }
+
+/// Staged row edits run in one transaction; a change that finds no row
+/// rolls back everything before it.
+async fn applies_row_edits(engine: Engine, database: &str, schema: &str) {
+    use thabi_studio_lib::database::{
+        Cell,
+        edit::{ColumnValue, RowChange, TableTarget, statements},
+    };
+    let tab = QueryTab::default();
+    let p = params(engine);
+    let name = "thabi_edit_it";
+    let drop = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{name}') IS NOT NULL DROP TABLE {name}"),
+        _ => format!("DROP TABLE IF EXISTS {name}"),
+    };
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!("CREATE TABLE {name} (id INT PRIMARY KEY, note VARCHAR(50) NULL, total DECIMAL(10, 2) NULL)"),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!("INSERT INTO {name} VALUES (1, 'a', 1.50), (2, 'b', 2.00)"),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let cv = |column: &str, value: Option<&str>| ColumnValue {
+        column: column.into(),
+        value: value.map(Into::into),
+    };
+    let target = TableTarget {
+        database: database.into(),
+        schema: schema.into(),
+        name: name.into(),
+    };
+    let read = async |tab: &QueryTab| {
+        let result = tab
+            .run(
+                &p,
+                None,
+                &format!("SELECT id, note, total FROM {name} ORDER BY id"),
+                10,
+                None,
+            )
+            .await
+            .unwrap();
+        result
+            .rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| match cell {
+                        Cell::Value(v) => v.clone(),
+                        _ => "NULL".into(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("|")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let changes = [
+        RowChange::Update {
+            key: vec![cv("id", Some("1"))],
+            set: vec![cv("note", Some("O'Brien")), cv("total", None)],
+        },
+        RowChange::Delete {
+            key: vec![cv("id", Some("2"))],
+        },
+        RowChange::Insert {
+            values: vec![
+                cv("id", Some("3")),
+                cv("note", Some("x")),
+                cv("total", Some("3.25")),
+            ],
+        },
+    ];
+    let sql = statements(engine, &target, &changes).unwrap();
+    assert_eq!(tab.apply(&p, None, &sql).await.unwrap(), 3);
+    assert_eq!(read(&tab).await, ["1|O'Brien|NULL", "3|x|3.25"]);
+
+    // Deleting row 1 would succeed, but row 99 doesn't exist: nothing is saved.
+    let conflict = [
+        RowChange::Delete {
+            key: vec![cv("id", Some("1"))],
+        },
+        RowChange::Update {
+            key: vec![cv("id", Some("99"))],
+            set: vec![cv("note", Some("z"))],
+        },
+    ];
+    let sql = statements(engine, &target, &conflict).unwrap();
+    let error = tab.apply(&p, None, &sql).await.unwrap_err();
+    assert_eq!(error.kind, "edit_conflict", "{engine:?}: {}", error.message);
+    assert_eq!(read(&tab).await, ["1|O'Brien|NULL", "3|x|3.25"]);
+
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_row_edits() {
+    applies_row_edits(Engine::Postgres, "thabi_it", "public").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_row_edits() {
+    applies_row_edits(Engine::MySql, "thabi_it", "").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_row_edits() {
+    applies_row_edits(Engine::SqlServer, "master", "dbo").await;
+}
