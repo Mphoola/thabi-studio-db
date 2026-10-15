@@ -853,7 +853,7 @@ explain and reuse SQL.
 
 **Already there:** CodeMirror 6 with dialect highlighting, multiple tabs,
 run statement/selection/all, cancel, timeout, history, saved queries in
-                                                                                                                       folders, per-tab database.
+folders, per-tab database.
 
 Tasks:
 
@@ -1322,7 +1322,7 @@ Update this section as work progresses.
   - [x] Editing a query result: offered when the statement plainly reads one table, the whole primary key is in the result and no key repeats; otherwise read-only with the reason shown (`docs/decisions/0029-editing-query-results.md`)
   - [ ] Foreign key navigation, editing conveniences
   - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
-- [ ] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`) — exit criteria are autocomplete for aliased joins on all three engines within 100 ms for a 500-table schema, parameters bound by the driver and never spliced into SQL, and plans rendering for a join on all three engines. Query parameters: placeholder detection and rewriting is done, and binding is done and proven on MySQL (a value holding quotes and a semicolon is stored verbatim, decimals keep precision, NULL stays NULL). PostgreSQL and SQL Server are not yet bound and say so rather than running without the values; their bindings, the values form and the command surface remain open. Then autocomplete, then plans.
+- [ ] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`) — exit criteria are autocomplete for aliased joins on all three engines within 100 ms for a 500-table schema, parameters bound by the driver and never spliced into SQL, and plans rendering for a join on all three engines. Starting with query parameters, then autocomplete, then plans.
 - [ ] Phase 14 — Schema and object management
 - [ ] Phase 15 — Import, export, backup and administration
 
