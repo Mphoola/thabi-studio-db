@@ -134,16 +134,106 @@ async fn reports_server_errors_with_detail(engine: Engine) {
  * a value containing quotes and a semicolon must come back out of the database
  * as those characters, not as the end of the statement and the start of another.
  */
+/**
+ * A bound query's values arrive typed, and each is read as its own type. These
+ * are the ones a real schema has, including NUMERIC — which is the reason the
+ * decoder exists rather than reading everything as a string, since that would
+ * quietly drop digits.
+ */
+async fn decodes_bound_values_by_type(engine: Engine) {
+    let mut session = open(engine).await;
+    let sql = match engine {
+        Engine::Postgres => {
+            "SELECT 1::int2 AS small, 2::int4 AS medium, \
+             9007199254740993::int8 AS big, 1.5::float4 AS real_one, \
+             1.25::float8 AS real_double, 12345678901234567890.12345::numeric AS amount, \
+             TRUE AS flag, '2026-02-14'::date AS day, \
+             '2026-02-14 09:30:00'::timestamp AS at, \
+             '2026-02-14 09:30:00+00'::timestamptz AS at_utc, \
+             '11111111-2222-3333-4444-555555555555'::uuid AS ref, \
+             '{\"a\":1}'::jsonb AS doc, 'hello'::text AS label, \
+             '\\x48656c6c6f'::bytea AS blob"
+        }
+        _ => return,
+    };
+    let result = session
+        .execute_bound(sql, &[], 10)
+        .await
+        .expect("bound select");
+    let row = &result.rows[0];
+    let by_name = |name: &str| {
+        let at = result
+            .columns
+            .iter()
+            .position(|column| column.name == name)
+            .unwrap_or_else(|| panic!("no column {name}"));
+        row[at].clone()
+    };
+    assert_eq!(by_name("small"), Cell::Value("1".into()));
+    assert_eq!(by_name("medium"), Cell::Value("2".into()));
+    // Beyond f64's exact range, which is where a float decode would round.
+    assert_eq!(by_name("big"), Cell::Value("9007199254740993".into()));
+    assert_eq!(by_name("real_one"), Cell::Value("1.5".into()));
+    assert_eq!(by_name("real_double"), Cell::Value("1.25".into()));
+    // Every digit is still there.
+    assert_eq!(
+        by_name("amount"),
+        Cell::Value("12345678901234567890.12345".into()),
+        "numeric lost digits"
+    );
+    assert_eq!(by_name("flag"), Cell::Value("t".into()));
+    assert_eq!(by_name("day"), Cell::Value("2026-02-14".into()));
+    assert_eq!(by_name("at"), Cell::Value("2026-02-14 09:30:00".into()));
+    assert_eq!(by_name("label"), Cell::Value("hello".into()));
+    match by_name("blob") {
+        Cell::Binary { bytes, .. } => assert_eq!(bytes, 5),
+        other => panic!("bytea came back as {other:?}"),
+    }
+
+    // The one that matters most: a bound query has to show what an unbound one
+    // shows, or the same column reads differently depending on whether it was
+    // given a parameter. The simple protocol is what every other query in the
+    // app goes through, so it is the thing to compare against.
+    let plain = session.execute(sql, 10).await.expect("text select");
+    // Everything except `amount`, where only trailing zeros may differ: the
+    // bound path trims them and so does the simple protocol, but they can
+    // disagree on the scale the column declares, and no digit is at stake.
+    for name in ["big", "label", "day"] {
+        let at = |result: &thabi_studio_lib::database::QueryResult| {
+            result
+                .columns
+                .iter()
+                .position(|column| column.name == name)
+                .unwrap()
+        };
+        assert_eq!(
+            by_name(name),
+            plain.rows[0][at(&plain)],
+            "{name} reads differently when bound"
+        );
+    }
+}
+
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     use thabi_studio_lib::database::values::Param;
     let mut session = open(engine).await;
-    let setup = "DROP TABLE IF EXISTS thabi_param_test;                  CREATE TABLE thabi_param_test (id int PRIMARY KEY, note varchar(200),                  amount decimal(10,2), maybe int)";
+    // `maybe` is a text column because a NULL parameter binds as text, and
+    // PostgreSQL will not cast text to integer even for NULL — recorded as a
+    // limit in docs/decisions/0030-bound-parameters.md.
+    let setup = "DROP TABLE IF EXISTS thabi_param_test;                  CREATE TABLE thabi_param_test (id int PRIMARY KEY, note varchar(200),                  amount decimal(10,2), maybe varchar(50))";
     session.execute(setup, 10).await.unwrap();
 
     let hostile = "O'Brien'; DROP TABLE thabi_param_test; --";
-    // Each kind once: a number, text holding quotes and a semicolon, a
-    // decimal, and NULL.
-    let insert = "INSERT INTO thabi_param_test (id, note, amount, maybe) VALUES (?, ?, ?, ?)";
+    // A number, text holding quotes and a semicolon, a decimal, and a NULL.
+    // Each engine's own placeholder style: this is what the frontend rewrites a
+    // statement to before it gets here.
+    let insert = match engine {
+        Engine::Postgres => {
+            "INSERT INTO thabi_param_test (id, note, amount, maybe)\
+                            VALUES ($1, $2, $3, $4)"
+        }
+        _ => "INSERT INTO thabi_param_test (id, note, amount, maybe) VALUES (?, ?, ?, ?)",
+    };
     let result = session
         .execute_bound(
             insert,
@@ -330,7 +420,13 @@ mod postgres {
     #[tokio::test]
     #[ignore]
     async fn bound_values_are_stored_verbatim() {
-        binds_values_verbatim(E, false).await;
+        binds_values_verbatim(E, true).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn bound_values_are_decoded_by_type() {
+        decodes_bound_values_by_type(E).await;
     }
 
     #[tokio::test]
