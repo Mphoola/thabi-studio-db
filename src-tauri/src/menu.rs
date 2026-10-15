@@ -52,6 +52,12 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         )?)
         .item(&item(
             app,
+            "connections.switch",
+            "Switch Connection…",
+            Some("CmdOrCtrl+Shift+K"),
+        )?)
+        .item(&item(
+            app,
             "tabs.newQuery",
             "New Query Tab",
             Some("CmdOrCtrl+T"),

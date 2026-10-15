@@ -852,6 +852,7 @@ Update this section as work progresses.
   - [x] Copy as TSV/CSV and streamed CSV export with the native save dialog
   - [x] Explorer and query tabs scoped to a connection's saved database; USE follows
   - [x] 39 integration tests pass
+- [x] Extra (2026-10-15, branch `connections-and-table-data`, not committed): table data in the full grid with export; connections page grouped by environment with search, richer rows, recent connections, quick switcher (⇧⌘K) and connection URL paste (`docs/decisions/0011`)
 - [ ] Phase 9 — Query history, saved queries, polish, and safeguards
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
@@ -18,6 +18,7 @@ import ConnectionTestAction from "./ConnectionTestAction.vue";
 import ConnectionTestResult from "./ConnectionTestResult.vue";
 import DatabaseFields from "./DatabaseFields.vue";
 import SshProfileFields from "./SshProfileFields.vue";
+import ConnectionUrlField from "../connections/ConnectionUrlField.vue";
 
 const store = useConnectionProfiles();
 const dialogs = useDialogs();
@@ -134,6 +135,16 @@ function buildInput() {
   };
 }
 
+async function fillFromUrl(parsed) {
+  Object.assign(form, parsed);
+  if (parsed.tlsMode) tlsTouched.value = true;
+  if (!form.name.trim()) form.name = parsed.databaseName || parsed.host;
+  fields.value = {};
+  // The driver watcher may reset the port to a default; keep the URL's.
+  await nextTick();
+  form.port = parsed.port;
+}
+
 function onTestResult(result) {
   if (result && !result.ok && result.error?.kind === "validation") {
     fields.value = result.error.fields ?? {};
@@ -170,6 +181,7 @@ async function save() {
       class="flex max-h-[min(62vh,600px)] flex-col gap-4 overflow-y-auto"
       @submit.prevent="save"
     >
+      <ConnectionUrlField @fill="fillFromUrl" />
       <div class="grid grid-cols-2 gap-3">
         <TextInput
           v-model="form.name"

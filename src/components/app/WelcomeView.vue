@@ -4,33 +4,13 @@ import { useConnectionProfiles } from "../../composables/useConnectionProfiles.j
 import { runCommand } from "../../composables/useCommands.js";
 import BaseButton from "../common/BaseButton.vue";
 import EmptyState from "../common/EmptyState.vue";
-import ConnectionProfilesList from "./ConnectionProfilesList.vue";
+import ConnectionsView from "../connections/ConnectionsView.vue";
 
 const { profiles, loaded, nativeAvailable } = useConnectionProfiles();
 </script>
 
 <template>
-  <section
-    v-if="profiles.length"
-    class="mx-auto flex h-full max-w-4xl flex-col gap-5 p-8"
-  >
-    <header class="flex items-start justify-between gap-4">
-      <div class="flex flex-col gap-1">
-        <h1 class="text-xl font-semibold text-fg">Connections</h1>
-        <p class="text-fg-muted">
-          Saved on this Mac. Passwords stay in your Keychain.
-        </p>
-      </div>
-      <BaseButton
-        variant="primary"
-        :icon="Plus"
-        @click="runCommand('connections.new')"
-      >
-        New Connection…
-      </BaseButton>
-    </header>
-    <ConnectionProfilesList />
-  </section>
+  <ConnectionsView v-if="profiles.length" />
   <div
     v-else-if="!loaded && nativeAvailable"
     class="flex h-full items-center justify-center text-sm text-fg-subtle"

@@ -134,7 +134,17 @@ export function describeObject(id, { database, schema, name, kind }) {
   return call("describe_object", { id, database, schema, name, kind });
 }
 
-/** First 100 rows of a table or view. */
-export function previewObject(id, { database, schema, name }) {
-  return call("preview_object", { id, database, schema, name });
+/**
+ * Reads a table or view into the object tab's own session. The result pages,
+ * sorts and exports like a query result. Bounded by `maxRows`.
+ */
+export function openObjectData(id, tabId, { database, schema, name, maxRows }) {
+  return call("open_object_data", {
+    id,
+    tabId,
+    database,
+    schema,
+    name,
+    maxRows,
+  });
 }

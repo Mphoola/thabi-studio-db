@@ -12,6 +12,8 @@ const props = defineProps({
   /** A lucide icon shown inside the field on the left. */
   icon: { type: [Object, Function], default: null },
   mono: { type: Boolean, default: false },
+  /** Accessible name when there's no visible label. */
+  ariaLabel: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
   id: { type: String, default: "" },
   autocomplete: { type: String, default: "off" },
@@ -42,6 +44,7 @@ const inputId = props.id || autoId;
         :disabled="disabled"
         :autocomplete="autocomplete"
         :inputmode="inputMode || undefined"
+        :aria-label="ariaLabel || undefined"
         :aria-invalid="!!error || undefined"
         :aria-describedby="describedBy(inputId, { error, hint })"
         :class="[

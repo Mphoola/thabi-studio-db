@@ -11,8 +11,6 @@ use tauri::State;
 const DEFAULT_MAX_ROWS: usize = 10_000;
 /// Upper bound on rows kept per statement, whatever the setting says.
 const MAX_ROWS_LIMIT: usize = 1_000_000;
-/// Rows shown by the explorer's read-only data preview.
-const PREVIEW_ROWS: usize = 100;
 
 /// Tests the values currently in the connection form. Nothing is saved.
 /// `profile_id` lets an edited profile reuse its saved password.
@@ -158,20 +156,38 @@ pub async fn describe_object(
     .await
 }
 
-/// First 100 rows of a table or view, read-only.
+/// Reads a table or view into an object tab's own session, so its rows
+/// scroll, sort and export like a query result. Bounded by `max_rows`.
 #[tauri::command]
-pub async fn preview_object(
+pub async fn open_object_data(
     id: String,
+    tab_id: String,
     database: String,
     schema: Option<String>,
     name: String,
+    max_rows: Option<usize>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, AppError> {
-    let schema = schema.unwrap_or_default();
-    with_session(&state, &id, async |s| {
-        s.preview(&database, &schema, &name, PREVIEW_ROWS).await
-    })
-    .await
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let max_rows = max_rows
+        .unwrap_or(DEFAULT_MAX_ROWS)
+        .clamp(1, MAX_ROWS_LIMIT);
+    // Ask for one extra row so the result knows when there are more.
+    let sql = database::object_data_sql(
+        params.engine,
+        &database,
+        schema.as_deref().unwrap_or_default(),
+        &name,
+        max_rows + 1,
+    );
+    let result = tab.run(&params, Some(database), &sql, max_rows, None).await;
+    if let Err(error) = &result
+        && is_connection_failure(error)
+    {
+        state.connections.close_query_tab(&id, &tab_id).await;
+        return Err(database::error::connection_lost());
+    }
+    result
 }
 
 /// Runs one user-authored statement, as written, on the query tab's own

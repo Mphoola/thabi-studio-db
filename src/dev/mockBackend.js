@@ -54,7 +54,34 @@ const handlers = {
   }),
   import_legacy_preferences: () => handlers.get_app_settings(),
   set_app_setting: () => null,
-  list_connection_profiles: () => [profile],
+  list_connection_profiles: () => [
+    profile,
+    {
+      ...profile,
+      id: "prod",
+      name: "Orders (production)",
+      environment: "production",
+      driver: "sqlserver",
+      host: "sql-prod.internal",
+      port: 1433,
+      databaseName: "",
+      sshEnabled: false,
+      lastConnectedAt: "2026-10-14 08:00:00",
+    },
+    {
+      ...profile,
+      id: "local",
+      name: "Local MySQL",
+      environment: "local",
+      driver: "mysql",
+      host: "127.0.0.1",
+      port: 3306,
+      databaseName: "app",
+      tlsMode: "disable",
+      sshEnabled: false,
+      lastConnectedAt: new Date(Date.now() - 2 * 3600e3).toISOString(),
+    },
+  ],
   list_connections: () => (connected ? [status()] : []),
   connect_connection_profile: () => {
     connected = true;
@@ -133,32 +160,6 @@ const handlers = {
             },
           ],
   }),
-  preview_object: ({ name }) => {
-    if (name === "customers")
-      throw {
-        kind: "permission_denied",
-        message: "This user doesn't have permission to read that.",
-        detail: "permission denied for table customers",
-        code: "42501",
-      };
-    return {
-      columns: [
-        { name: "id", typeName: "INT8" },
-        { name: "customer_email", typeName: "TEXT" },
-        { name: "total", typeName: "NUMERIC" },
-        { name: "status", typeName: "TEXT" },
-      ],
-      rows: [
-        [v("90412"), v("amara.banda@example.com"), v("1240.00"), v("pending")],
-        [v("90398"), v(null), v("86.50"), v("paid")],
-        [v("9007199254740993"), v("zoë@example.com"), v("0.00"), v("refunded")],
-      ],
-      rowsAffected: null,
-      truncated: false,
-      extraResultSets: 0,
-      elapsedMs: 12,
-    };
-  },
 };
 
 let cancelRun = null;
@@ -246,6 +247,16 @@ handlers.copy_rows = ({ scope }) => {
     .join("\n");
 };
 handlers.export_csv = ({ path }) => ({ rows: bigRows.length, path });
+
+handlers.open_object_data = ({ name }) =>
+  name === "customers"
+    ? Promise.reject({
+        kind: "permission_denied",
+        message: "This user doesn't have permission to read that.",
+        detail: "permission denied for table customers",
+        code: "42501",
+      })
+    : handlers.run_statement({ sql: "select" });
 
 handlers.cancel_statement = () => {
   if (!cancelRun) return false;

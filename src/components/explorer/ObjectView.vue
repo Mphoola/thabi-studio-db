@@ -2,19 +2,21 @@
 import { computed, ref, watch } from "vue";
 import { Eye, RefreshCw, Table2 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
-import { describeObject, previewObject } from "../../lib/tauri/commands.js";
+import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
+import { useAppSettings } from "../../composables/useAppSettings.js";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 import InlineAlert from "../common/InlineAlert.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
-import { localSource } from "../../lib/gridSources.js";
+import { remoteSource } from "../../lib/gridSources.js";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
 const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
+const { settings } = useAppSettings();
 const node = computed(() => props.tab.node);
 const tab = computed({
   get: () => props.tab.view ?? "data",
@@ -35,7 +37,10 @@ async function load(which = tab.value) {
   try {
     const value =
       which === "data"
-        ? await previewObject(id, target)
+        ? await openObjectData(id, props.tab.id, {
+            ...target,
+            maxRows: settings.value.maxResultRows || null,
+          })
         : await describeObject(id, target);
     if (node.value === target)
       results.value = {
@@ -58,7 +63,12 @@ if (node.value) load();
 const current = computed(() => results.value[tab.value] ?? { status: "idle" });
 const previewSource = computed(() =>
   tab.value === "data" && current.value.status === "loaded"
-    ? localSource(current.value.value)
+    ? remoteSource({
+        profileId: props.tab.profileId,
+        tabId: props.tab.id,
+        result: current.value.value,
+        exportName: node.value.name,
+      })
     : null,
 );
 const location = computed(() =>
@@ -118,7 +128,7 @@ const location = computed(() =>
       class="min-h-0 flex-1"
       :source="previewSource"
       :result="current.value"
-      note="First 100 rows · read-only preview"
+      note="Read-only"
     />
     <StructureView
       v-else

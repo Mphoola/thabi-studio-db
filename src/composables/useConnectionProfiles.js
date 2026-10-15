@@ -123,6 +123,11 @@ export function useConnectionProfiles() {
     setStatus(id, { profileId: id, state: "connecting", server: null });
     try {
       setStatus(id, await connectConnectionProfile(id, database));
+      // Rust records the time too; mirror it so "last connected" updates now.
+      const now = new Date().toISOString();
+      profiles.value = profiles.value.map((p) =>
+        p.id === id ? { ...p, lastConnectedAt: now } : p,
+      );
     } catch (error) {
       setStatus(id, null);
       throw error;

@@ -107,8 +107,8 @@ export function useTabs() {
       if (!ok) return false;
     }
     tabs.value.splice(index, 1);
-    if (tab.type === "query" && tab.profileId)
-      closeQueryTab(tab.profileId, tab.id).catch(() => {});
+    // Query and object tabs each have their own database session.
+    if (tab.profileId) closeQueryTab(tab.profileId, tab.id).catch(() => {});
     if (activeId.value === id) {
       const next = tabs.value[index] ?? tabs.value[index - 1] ?? null;
       activeId.value = next?.id ?? null;

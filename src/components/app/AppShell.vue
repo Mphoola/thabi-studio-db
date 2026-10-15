@@ -18,6 +18,7 @@ const WorkspaceView = defineAsyncComponent(
 );
 import { runCommand } from "../../composables/useCommands.js";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
+import ConnectionSwitcher from "../connections/ConnectionSwitcher.vue";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { onConnectionClosed, onMenuCommand } from "../../lib/tauri/events.js";
@@ -97,5 +98,6 @@ function dialogModel(name) {
     <SettingsDialog v-bind="dialogModel('settings')" />
     <ShortcutsDialog v-bind="dialogModel('shortcuts')" />
     <CommandPalette v-bind="dialogModel('palette')" />
+    <ConnectionSwitcher v-bind="dialogModel('switcher')" />
   </div>
 </template>

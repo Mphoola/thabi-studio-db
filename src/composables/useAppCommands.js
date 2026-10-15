@@ -107,6 +107,14 @@ export function useAppCommands() {
       run: () => dialogs.show("about"),
     },
     {
+      id: "connections.switch",
+      title: "Switch Connection…",
+      group: "Connections",
+      shortcut: "Mod+Shift+K",
+      enabled: () => connections.profiles.value.length > 0,
+      run: () => dialogs.show("switcher"),
+    },
+    {
       id: "tabs.newQuery",
       title: "New Query Tab",
       group: "Query",

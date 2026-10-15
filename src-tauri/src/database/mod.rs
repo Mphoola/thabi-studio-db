@@ -364,6 +364,30 @@ pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Res
     result
 }
 
+/// SQL that reads up to `limit` rows of a table or view, fully quoted.
+pub fn object_data_sql(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    name: &str,
+    limit: usize,
+) -> String {
+    match engine {
+        Engine::Postgres => format!(
+            "SELECT * FROM {} LIMIT {limit}",
+            quote::qualified(engine, &[schema, name])
+        ),
+        Engine::MySql => format!(
+            "SELECT * FROM {} LIMIT {limit}",
+            quote::qualified(engine, &[database, name])
+        ),
+        Engine::SqlServer => format!(
+            "SELECT TOP ({limit}) * FROM {}",
+            quote::qualified(engine, &[database, schema, name])
+        ),
+    }
+}
+
 /// Result of a connection test.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -416,6 +440,22 @@ mod tests {
             connect_to: None,
         };
         assert!(!format!("{params:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn object_data_sql_quotes_names_for_each_engine() {
+        assert_eq!(
+            object_data_sql(Engine::Postgres, "shop", "Sales Ü", "Order Details", 10),
+            "SELECT * FROM \"Sales Ü\".\"Order Details\" LIMIT 10"
+        );
+        assert_eq!(
+            object_data_sql(Engine::MySql, "shop", "", "a`b", 5),
+            "SELECT * FROM `shop`.`a``b` LIMIT 5"
+        );
+        assert_eq!(
+            object_data_sql(Engine::SqlServer, "shop", "dbo", "x]y", 5),
+            "SELECT TOP (5) * FROM [shop].[dbo].[x]]y]"
+        );
     }
 
     #[test]
