@@ -15,9 +15,11 @@ import { isNumericType } from "../../lib/gridText.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import GridHeader from "./GridHeader.vue";
 import GridRow from "./GridRow.vue";
+import RowDetailDialog from "./RowDetailDialog.vue";
 import ValueInspector from "./ValueInspector.vue";
 import { useGridActions } from "./useGridActions.js";
 import { useGridEditing } from "./useGridEditing.js";
+import { useRowDetail } from "../../composables/useRowDetail.js";
 
 /**
  * Virtualised results grid, read-only unless an `editor` (useRowEdits) is
@@ -123,6 +125,7 @@ const actions = useGridActions(props, data, selection);
 
 const menu = ref(null);
 const inspector = ref(null);
+const detailOpen = ref(false);
 
 function scrollIntoView(row) {
   const el = scroller.value;
@@ -154,6 +157,9 @@ function onKeydown(event) {
   } else if (event.key === " ") {
     event.preventDefault();
     openInspector();
+  } else if (event.altKey && event.key.toLowerCase() === "i") {
+    event.preventDefault();
+    openDetail();
   } else if (
     props.editor?.enabled.value &&
     (event.key === "Delete" || event.key === "Backspace")
@@ -166,7 +172,15 @@ function onKeydown(event) {
 function openInspector() {
   const { row, col } = selection.focus.value;
   const cells = data.rowAt(row);
-  if (cells) inspector.value?.open(columns.value[col], cells[col]);
+  if (!cells) return;
+  const column = columns.value[col];
+  inspector.value?.open(column, shownCell(cells, column));
+}
+
+/** The row as a whole form, for reading or editing a record properly. */
+function openDetail() {
+  const { row } = selection.focus.value;
+  if (data.rowAt(row)) detailOpen.value = true;
 }
 const {
   editing,
@@ -184,6 +198,11 @@ const {
   actions,
 });
 
+/** A cell as the value inspector and the detail panel want it. */
+function shownCell(cells, column) {
+  return props.editor ? props.editor.display(cells, column) : cells[column];
+}
+
 function onCellDown(event, row, col) {
   if (event.button === 2 && selection.isSelected(row, col)) return;
   selection.select(row, col, event.shiftKey);
@@ -199,6 +218,11 @@ function resize(index, width) {
   fitted.value = null;
   widths.value[index] = Math.min(800, Math.max(60, width));
 }
+
+// Lets the command palette open the panel without a ref through the tree.
+const rowDetail = useRowDetail();
+onMounted(() => rowDetail.set(openDetail));
+onBeforeUnmount(() => rowDetail.set(null));
 
 defineExpose({ fitToContents });
 </script>
@@ -260,5 +284,12 @@ defineExpose({ fitToContents });
       @select="onMenuSelect"
     />
     <ValueInspector ref="inspector" />
+    <RowDetailDialog
+      v-model:open="detailOpen"
+      :columns="columns"
+      :cells="data.rowAt(selection.focus.value.row)"
+      :row="selection.focus.value.row + 1"
+      :editor="editor"
+    />
   </div>
 </template>

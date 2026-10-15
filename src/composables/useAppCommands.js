@@ -1,4 +1,5 @@
 import { useCommandRegistration } from "./useCommands.js";
+import { useRowDetail } from "./useRowDetail.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
@@ -21,6 +22,7 @@ export function useAppCommands() {
   const explorer = useExplorer();
   const workspace = useTabs();
   const queryTabActive = () => workspace.active.value?.type === "query";
+  const rowDetail = useRowDetail();
   const saver = useQuerySave();
   const theme = useTheme();
   const toasts = useToasts();
@@ -130,6 +132,15 @@ export function useAppCommands() {
       shortcut: "Mod+W",
       enabled: () => Boolean(workspace.active.value),
       run: () => workspace.close(),
+    },
+    {
+      id: "grid.rowDetail",
+      title: "Show Row Detail",
+      group: "Query",
+      shortcut: "Mod+Alt+I",
+      // `enabled` is a predicate the registry calls, so unwrap the ref.
+      enabled: () => Boolean(rowDetail.available.value),
+      run: () => rowDetail.open(),
     },
     {
       id: "query.save",

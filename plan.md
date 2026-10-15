@@ -1316,7 +1316,8 @@ Update this section as work progresses.
   - [x] Copy and export stream the table from the server as CSV, TSV, JSON, Markdown, SQL INSERT and SQL UPDATE; copy is capped, export is not (`docs/decisions/0024-transfer-formats.md`)
   - [ ] .xlsx export (needs a spreadsheet crate, recorded and still open)
   - [x] Column controls: hide/show, reorder by drag or arrows, fit to contents, remembered per table (`docs/decisions/0025-columns.md`)
-  - [ ] Row detail panel (Mod+Alt+I), saved filter presets
+  - [x] Row detail panel (Mod+Alt+I, also in the command palette): every column with its type, full text, editable through the same staged changes (`docs/decisions/0026-row-detail.md`)
+  - [ ] Saved filter presets per table
   - [ ] Foreign key navigation, editing query results, editing conveniences
   - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
 - [ ] Phase 13 — Smart SQL editor
