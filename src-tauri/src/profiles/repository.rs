@@ -61,6 +61,7 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         ask_ssh_key_passphrase: row.get::<_, i64>("ask_ssh_key_passphrase")? != 0,
         ssh_keepalive_seconds: u32::try_from(row.get::<_, i64>("ssh_keepalive_seconds")?)
             .unwrap_or(0),
+        startup_commands: row.get("startup_commands")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -73,7 +74,8 @@ fn profile_columns() -> &'static str {
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
      has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
      ask_database_password, ask_ssh_password, ask_ssh_key_passphrase,
-     ssh_keepalive_seconds, created_at, updated_at, last_connected_at"
+     ssh_keepalive_seconds, startup_commands, created_at, updated_at,
+     last_connected_at"
 }
 
 fn get_profile(connection: &Connection, id: &str) -> Result<ConnectionProfile, AppError> {
@@ -152,6 +154,7 @@ fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectPa
         ssh: None,
         connect_to: None,
         read_only: false,
+        startup_commands: Vec::new(),
     })
 }
 
@@ -319,6 +322,7 @@ pub fn connect_params(
     )?;
     params.ssh = ssh;
     params.read_only = profile.safe_mode == "read-only";
+    params.startup_commands = startup_lines(&profile.startup_commands);
     Ok((profile, params))
 }
 
@@ -429,6 +433,15 @@ pub fn required_secret(profile: &ConnectionProfile) -> Option<&'static str> {
     }
 }
 
+/// The statements a profile runs on each new session, in order.
+fn startup_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 pub fn mark_connected(connection: &Connection, id: &str) -> Result<(), AppError> {
     connection
         .execute(
@@ -518,10 +531,11 @@ fn insert_profile(
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
                 ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
                 group_name, colour, sort_order, ask_database_password,
-                ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds
+                ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds,
+                startup_commands
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29
              )",
             params![
                 id,
@@ -552,6 +566,7 @@ fn insert_profile(
                 profile.ask_ssh_password,
                 profile.ask_ssh_key_passphrase,
                 profile.ssh_keepalive_seconds,
+                profile.startup_commands,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -714,6 +729,7 @@ pub fn update_validated_profile(
             group_name = ?22, colour = ?23,
             ask_database_password = ?24, ask_ssh_password = ?25,
             ask_ssh_key_passphrase = ?26, ssh_keepalive_seconds = ?27,
+            startup_commands = ?28,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -744,6 +760,7 @@ pub fn update_validated_profile(
             profile.ask_ssh_password,
             profile.ask_ssh_key_passphrase,
             profile.ssh_keepalive_seconds,
+            profile.startup_commands,
         ],
     );
     if update_result.is_err() {
@@ -827,6 +844,7 @@ pub fn duplicate_profile(
         ask_ssh_password: source.ask_ssh_password,
         ask_ssh_key_passphrase: source.ask_ssh_key_passphrase,
         ssh_keepalive_seconds: source.ssh_keepalive_seconds.to_string(),
+        startup_commands: source.startup_commands.clone(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());

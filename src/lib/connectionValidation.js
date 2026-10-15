@@ -126,6 +126,19 @@ export function validateConnectionProfile(profile) {
   if (!SAFE_COLOURS.has(profile.colour ?? ""))
     errors.colour = "Choose one of the available colours.";
 
+  const startup = String(profile.startupCommands ?? "");
+  const startupLines = startup.split("\n").filter((line) => line.trim());
+  if (startupLines.length > 20 || startup.length > 4000)
+    errors.startupCommands = "Use 20 commands and 4,000 characters or fewer.";
+  if (profile.safeMode === "read-only") {
+    const notSessionOnly = startupLines.find(
+      (line) => !/^(SET|USE|BEGIN|RESET)\b/i.test(line.trim()),
+    );
+    if (notSessionOnly)
+      errors.startupCommands =
+        "A read-only connection only accepts SET or USE commands.";
+  }
+
   const keepalive = Number(profile.sshKeepaliveSeconds || 0);
   if (!Number.isInteger(keepalive) || keepalive < 0 || keepalive > 3600)
     errors.sshKeepaliveSeconds =

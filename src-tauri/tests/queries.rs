@@ -40,6 +40,7 @@ fn params(engine: Engine) -> ConnectParams {
         ssh: None,
         connect_to: None,
         read_only: false,
+        startup_commands: Vec::new(),
     }
 }
 
@@ -520,4 +521,38 @@ async fn mysql_read_only_session() {
 #[ignore]
 async fn sqlserver_has_no_read_only_session() {
     read_only_sessions_refuse_writes(Engine::SqlServer).await;
+}
+
+/// Startup commands run on every new session, including the session a query
+/// tab opens for itself — not just the connection's own.
+#[tokio::test]
+#[ignore]
+async fn startup_commands_apply_to_query_tab_sessions() {
+    let tab = QueryTab::default();
+    let mut p = params(Engine::Postgres);
+    p.startup_commands = vec!["SET search_path = pg_catalog".into()];
+    let result = tab
+        .run(&p, None, "SELECT current_schema() AS schema", 10, None)
+        .await
+        .unwrap();
+    let schema = match &result.rows[0][0] {
+        thabi_studio_lib::database::Cell::Value(value) => value.clone(),
+        other => panic!("expected a schema name, got {other:?}"),
+    };
+    assert_eq!(schema, "pg_catalog", "the tab's session kept the setting");
+    tab.close().await;
+}
+
+/// A startup command that fails stops the connection, with the statement named.
+#[tokio::test]
+#[ignore]
+async fn a_failing_startup_command_stops_the_connect() {
+    let tab = QueryTab::default();
+    let mut p = params(Engine::Postgres);
+    p.startup_commands = vec!["SET nonexistent_setting = 1".into()];
+    let error = tab.run(&p, None, "SELECT 1", 10, None).await.unwrap_err();
+    assert_eq!(error.kind, "startup_command_failed");
+    let detail = error.detail.unwrap_or_default();
+    assert!(detail.contains("nonexistent_setting"), "{detail}");
+    tab.close().await;
 }

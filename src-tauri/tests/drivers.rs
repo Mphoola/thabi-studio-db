@@ -29,6 +29,7 @@ fn params(engine: Engine, tls: TlsMode) -> ConnectParams {
         ssh: None,
         connect_to: None,
         read_only: false,
+        startup_commands: Vec::new(),
     }
 }
 

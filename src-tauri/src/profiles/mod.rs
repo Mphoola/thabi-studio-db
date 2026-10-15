@@ -54,6 +54,8 @@ pub struct ConnectionProfile {
     pub ask_ssh_key_passphrase: bool,
     /// Keep-alive interval for this connection's SSH session; 0 is the default.
     pub ssh_keepalive_seconds: u32,
+    /// Statements run on every new session, one per line.
+    pub startup_commands: String,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -120,6 +122,8 @@ pub struct ProfileInput {
     /// Keep-alive interval in seconds; 0 uses the default.
     #[serde(default)]
     pub ssh_keepalive_seconds: String,
+    #[serde(default)]
+    pub startup_commands: String,
 }
 
 #[derive(Debug, Serialize)]

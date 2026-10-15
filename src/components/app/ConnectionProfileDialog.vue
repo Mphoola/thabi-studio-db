@@ -65,6 +65,7 @@ const defaults = () => ({
   askSshPassword: false,
   askSshKeyPassphrase: false,
   sshKeepaliveSeconds: "0",
+  startupCommands: "",
 });
 const form = reactive(defaults());
 const open = computed({
@@ -115,6 +116,7 @@ function resetForm() {
     askSshPassword: !!profile.askSshPassword,
     askSshKeyPassphrase: !!profile.askSshKeyPassphrase,
     sshKeepaliveSeconds: String(profile.sshKeepaliveSeconds ?? 0),
+    startupCommands: profile.startupCommands ?? "",
   });
 }
 
@@ -275,6 +277,20 @@ async function save() {
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasSshPassword"
         :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
+      />
+      <TextInput
+        v-model="form.startupCommands"
+        label="Startup commands"
+        multiline
+        :rows="3"
+        mono
+        placeholder="SET search_path = my_schema&#10;SET time_zone = 'UTC'"
+        :error="fields.startupCommands"
+        :hint="
+          form.safeMode === 'read-only'
+            ? 'One per line. A read-only connection only accepts SET or USE, because these run on every new session.'
+            : 'One per line. Run on every new session for this connection, including each query tab. If one fails, the connection is not opened.'
+        "
       />
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>

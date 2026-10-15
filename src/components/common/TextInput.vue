@@ -20,6 +20,9 @@ const props = defineProps({
   inputMode: { type: String, default: "" },
   /** Id of a <datalist> with suggestions. */
   list: { type: String, default: "" },
+  /** Renders a <textarea> of `rows` lines, for several lines of text. */
+  multiline: { type: Boolean, default: false },
+  rows: { type: Number, default: 3 },
 });
 
 const model = defineModel({ type: [String, Number], default: "" });
@@ -38,7 +41,21 @@ const inputId = props.id || autoId;
         class="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-fg-subtle"
         aria-hidden="true"
       />
+      <textarea
+        v-if="multiline"
+        :id="inputId"
+        v-model="model"
+        :rows="rows"
+        :placeholder="placeholder"
+        :disabled="disabled"
+        :aria-label="ariaLabel || undefined"
+        :aria-invalid="!!error || undefined"
+        :aria-describedby="describedBy(inputId, { error, hint })"
+        :class="[fieldClass, borderClass(error), mono && 'font-mono']"
+        spellcheck="false"
+      />
       <input
+        v-else
         :id="inputId"
         v-model="model"
         :type="type"

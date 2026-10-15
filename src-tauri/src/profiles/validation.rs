@@ -31,6 +31,56 @@ pub struct ValidatedProfile {
     pub ask_ssh_password: bool,
     pub ask_ssh_key_passphrase: bool,
     pub ssh_keepalive_seconds: u32,
+    /// The user's lines, normalised, for storing back on the profile.
+    pub startup_commands: String,
+}
+
+/// Longest a connection's startup command list may be.
+const MAX_STARTUP_COMMANDS: usize = 20;
+const MAX_STARTUP_CHARS: usize = 4_000;
+
+/// Splits the user's lines into statements, dropping blanks.
+///
+/// A read-only connection may only carry session-level statements, so this
+/// also rejects anything that looks like it changes the server. This is the
+/// app-level half of read-only; the session setting is the other.
+pub fn startup_commands(text: &str, read_only: bool) -> Result<Vec<String>, String> {
+    let commands: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if commands.len() > MAX_STARTUP_COMMANDS {
+        return Err("Use 20 startup commands or fewer.".into());
+    }
+    if text.chars().count() > MAX_STARTUP_CHARS {
+        return Err("Use 4,000 characters or fewer.".into());
+    }
+    for command in &commands {
+        if command.chars().any(|c| c.is_control() && c != '\t') {
+            return Err("Remove the line break inside this startup command.".into());
+        }
+        // Session settings and database switches can't change data on any
+        // engine; anything else might, so read-only stops here.
+        if read_only && !is_session_only(command) {
+            return Err(
+                "A read-only connection can only start with SET or USE commands, because they run on every session."
+                    .into(),
+            );
+        }
+    }
+    Ok(commands)
+}
+
+/// Whether a statement only changes this session's settings.
+fn is_session_only(command: &str) -> bool {
+    let keyword = command
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    matches!(keyword.as_str(), "SET" | "USE" | "BEGIN" | "RESET")
 }
 
 /// Tag tokens a connection may be coloured with (`tag-*` in tokens.css).
@@ -230,6 +280,15 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         (input.ssh_key_passphrase.filter(|v| !v.is_empty()), false)
     };
 
+    let read_only = input.safe_mode.trim() == "read-only";
+    let startup = match startup_commands(&input.startup_commands, read_only) {
+        Ok(commands) => commands,
+        Err(message) => {
+            fields.insert("startupCommands".into(), message);
+            Vec::new()
+        }
+    };
+
     if !fields.is_empty() {
         return Err(AppError::validation(fields));
     }
@@ -257,6 +316,7 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         ask_ssh_password,
         ask_ssh_key_passphrase,
         ssh_keepalive_seconds,
+        startup_commands: startup.join("\n"),
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
@@ -391,6 +451,7 @@ pub(crate) mod tests {
             ask_ssh_password: false,
             ask_ssh_key_passphrase: false,
             ssh_keepalive_seconds: "0".into(),
+            startup_commands: String::new(),
         }
     }
 
@@ -468,5 +529,38 @@ pub(crate) mod tests {
 
         with_ca.tls_mode = "require".into();
         assert_eq!(validate(with_ca).unwrap().tls_ca_path, "");
+    }
+
+    #[test]
+    fn startup_commands_are_split_and_bounded() {
+        assert!(startup_commands("", false).unwrap().is_empty());
+        let commands =
+            startup_commands("  SET search_path = x\n\n SET time_zone = 'UTC'  ", false).unwrap();
+        assert_eq!(commands, ["SET search_path = x", "SET time_zone = 'UTC'"]);
+
+        let too_many = (0..25).map(|_| "SET a = 1").collect::<Vec<_>>().join("\n");
+        assert!(startup_commands(&too_many, false).is_err());
+        assert!(startup_commands(&"x".repeat(5000), false).is_err());
+        assert!(startup_commands("SET a = 1\nSET b = \u{0007}2", false).is_err());
+    }
+
+    #[test]
+    fn a_read_only_connection_only_allows_session_statements() {
+        assert!(startup_commands("SET search_path = x", true).is_ok());
+        assert!(startup_commands("USE other_db", true).is_ok());
+        for writing in [
+            "CREATE TABLE t (id int)",
+            "INSERT INTO t VALUES (1)",
+            "DROP TABLE t",
+            "GRANT ALL ON t TO someone",
+            "DO something()",
+        ] {
+            assert!(
+                startup_commands(writing, true).is_err(),
+                "{writing} must not be allowed on a read-only connection"
+            );
+        }
+        // The same statement is fine on a connection that isn't read-only.
+        assert!(startup_commands("CREATE TABLE t (id int)", false).is_ok());
     }
 }

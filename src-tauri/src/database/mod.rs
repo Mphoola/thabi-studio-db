@@ -106,6 +106,8 @@ pub struct ConnectParams {
     /// "read-only"). The app checks too; this is the backstop for engines
     /// that can set it.
     pub read_only: bool,
+    /// Statements to run on every new session for this connection, in order.
+    pub startup_commands: Vec<String>,
 }
 
 /// The session statement that makes a session read-only, per engine. SQL
@@ -131,6 +133,7 @@ impl std::fmt::Debug for ConnectParams {
             .field("ca_path", &self.ca_path)
             .field("ssh", &self.ssh)
             .field("read_only", &self.read_only)
+            .field("startup_commands", &self.startup_commands.len())
             .finish()
     }
 }
@@ -258,7 +261,7 @@ impl Session {
             .await
             .map_err(|_| error::timed_out(&params.host, params.port))?
         })?;
-        apply_read_only(&mut session, params).await?;
+        apply_session_settings(&mut session, params).await?;
         Ok(session)
     }
 
@@ -383,16 +386,49 @@ pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Res
     result
 }
 
-/// Runs the engine's read-only session statement when the connection asks
-/// for one. SQL Server has no session equivalent, so it is skipped; the app
-/// check is the only guard there and the UI says so.
-async fn apply_read_only(session: &mut Session, params: &ConnectParams) -> Result<(), AppError> {
-    if !params.read_only {
-        return Ok(());
+/// Applies everything a connection wants on every new session: the read-only
+/// guard first, then the connection's startup commands. SQL Server has no
+/// read-only session equivalent, so that step is skipped there and the app
+/// check is the only guard, which the UI says out loud.
+///
+/// A startup command that fails stops the connection. Half-configured session
+/// state is worse than a clear failure with nothing open.
+async fn apply_session_settings(
+    session: &mut Session,
+    params: &ConnectParams,
+) -> Result<(), AppError> {
+    if params.read_only
+        && let Some(sql) = read_only_statement(params.engine)
+    {
+        session.execute(sql, 1).await.map(|_| ())?;
     }
-    match read_only_statement(params.engine) {
-        Some(sql) => session.execute(sql, 1).await.map(|_| ()),
-        None => Ok(()),
+    for command in &params.startup_commands {
+        if let Err(error) = session.execute(command, 1).await {
+            return Err(AppError::new(
+                "startup_command_failed",
+                "A startup command for this connection failed, so it wasn't opened.",
+            )
+            .with_detail(Some(format!(
+                "{}: {}",
+                first_line(command),
+                error.detail.unwrap_or(error.message)
+            )))
+            .with_code(error.code));
+        }
+    }
+    Ok(())
+}
+
+fn first_line(command: &str) -> String {
+    let line = command.trim();
+    let line = line
+        .split_once('\n')
+        .map(|(first, _)| first)
+        .unwrap_or(line);
+    if line.chars().count() > 80 {
+        format!("{}…", line.chars().take(79).collect::<String>())
+    } else {
+        line.to_owned()
     }
 }
 
@@ -464,6 +500,7 @@ mod tests {
             ssh: None,
             connect_to: None,
             read_only: false,
+            startup_commands: Vec::new(),
         };
         assert!(!format!("{params:?}").contains("hunter2"));
     }
