@@ -1,13 +1,15 @@
 <script setup>
-import { computed, ref } from "vue";
-import { Download } from "lucide-vue-next";
+import { computed, ref, toRef } from "vue";
+import { Columns3, Download } from "lucide-vue-next";
 import { EXPORT_FORMATS } from "../../lib/tauri/files.js";
+import { useColumns } from "../../composables/useColumns.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
 import { showInFileManager } from "../../lib/tauri/files.js";
 import { words } from "../../lib/platform.js";
 import BaseButton from "../common/BaseButton.vue";
 import DropdownMenu from "../common/DropdownMenu.vue";
+import ColumnsDialog from "./ColumnsDialog.vue";
 import ResultGrid from "./ResultGrid.vue";
 
 /** A result grid with its summary bar: rows, time, limits and export. */
@@ -28,6 +30,13 @@ const summary = computed(() => {
 });
 
 /** Format for the export; null keeps the source's own default (CSV). */
+const columns = useColumns({
+  columns: computed(() => props.source.columns),
+  layout: toRef(props, "layout"),
+});
+const columnsOpen = ref(false);
+const grid = ref(null);
+
 const format = ref(null);
 const exportMenu = ref(null);
 const formatItems = EXPORT_FORMATS.map((entry) => ({
@@ -65,7 +74,13 @@ async function exportCsv() {
 
 <template>
   <div class="flex min-h-0 flex-col">
-    <ResultGrid :source="source" :editor="editor" class="min-h-0 flex-1" />
+    <ResultGrid
+      ref="grid"
+      :source="source"
+      :editor="editor"
+      :column-indexes="columns.visible.value"
+      class="min-h-0 flex-1"
+    />
     <footer
       class="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
     >
@@ -78,6 +93,14 @@ async function exportCsv() {
         · {{ result.extraResultSets }} more result sets not shown
       </span>
       <span v-if="note">· {{ note }}</span>
+      <BaseButton
+        size="sm"
+        variant="ghost"
+        :icon="Columns3"
+        @click="columnsOpen = true"
+      >
+        Columns
+      </BaseButton>
       <BaseButton
         v-if="source.export"
         class="ml-auto"
@@ -95,5 +118,15 @@ async function exportCsv() {
         @select="chooseFormat"
       />
     </footer>
+    <ColumnsDialog
+      v-model:open="columnsOpen"
+      :columns="source.columns"
+      :visible="columns.visible.value"
+      :is-hidden="columns.isHidden"
+      @toggle="columns.toggle"
+      @move="columns.move"
+      @reset="columns.reset"
+      @fit="grid?.fitToContents()"
+    />
   </div>
 </template>

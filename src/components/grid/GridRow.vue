@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { displayText } from "../../lib/gridText.js";
 import CellPicker from "./CellPicker.vue";
 
@@ -11,10 +11,17 @@ const props = defineProps({
   numeric: { type: Array, required: true },
   selection: { type: Object, required: true },
   editor: { type: Object, default: null },
-  /** Column being edited in this row, or -1. */
+  /** Column being edited in this row (a display position), or -1. */
   editingCol: { type: Number, default: -1 },
+  /** Display position to source column index; all columns when not given. */
+  visible: { type: Array, default: null },
 });
 const emit = defineEmits(["celldown", "celldblclick", "commit", "cancel"]);
+
+/** Display positions, which is what the template's columns decide. */
+const columns = computed(
+  () => props.visible ?? (props.cells ?? []).map((_, index) => index),
+);
 
 const input = ref(null);
 const draft = ref("");
@@ -22,7 +29,7 @@ watch(
   () => props.editingCol,
   async (col) => {
     if (col < 0) return;
-    draft.value = props.editor.valueOf(props.cells, col) ?? "";
+    draft.value = props.editor.valueOf(props.cells, source(col)) ?? "";
     await nextTick();
     input.value?.[0]?.focus();
     input.value?.[0]?.select();
@@ -31,8 +38,16 @@ watch(
 );
 
 const deleted = () => props.editor?.isDeleted(props.cells);
-const shown = (col) =>
-  props.editor ? props.editor.display(props.cells, col) : props.cells[col];
+/** The source column a display position stands for. */
+const source = (position) =>
+  props.visible ? props.visible[position] : position;
+/** What a display position shows: a staged edit when there is one. */
+const shown = (position) => {
+  const column = source(position);
+  return props.editor
+    ? props.editor.display(props.cells, column)
+    : props.cells[column];
+};
 
 function onKeydown(event) {
   // Option/Alt+Return adds a line break; Return saves.
@@ -75,16 +90,16 @@ function onBlur() {
       {{ (index + 1).toLocaleString() }}
     </span>
     <template v-if="cells">
-      <template v-for="(_, col) in cells" :key="col">
+      <template v-for="col in columns" :key="col">
         <span
           v-if="col === editingCol"
           role="gridcell"
           class="border-r border-line"
         >
           <CellPicker
-            v-if="editor.pickerFor?.(col)"
-            :picker="editor.pickerFor(col)"
-            :initial="editor.valueOf(cells, col)"
+            v-if="editor.pickerFor?.(source(col))"
+            :picker="editor.pickerFor(source(col))"
+            :initial="editor.valueOf(cells, source(col))"
             @commit="(value, move) => emit('commit', value, move)"
             @cancel="emit('cancel')"
           />
@@ -113,7 +128,7 @@ function onBlur() {
             shown(col).kind === 'value' &&
               shown(col).value === '' &&
               'text-fg-subtle',
-            editor?.isChanged(cells, col) && 'bg-warning-subtle',
+            editor?.isChanged(cells, source(col)) && 'bg-warning-subtle',
             selection.isSelected(index, col) && 'bg-selection',
             selection.focus.value.row === index &&
               selection.focus.value.col === col &&

@@ -10,6 +10,7 @@ import {
 } from "vue";
 import { useGridData } from "../../composables/useGridData.js";
 import { useGridSelection } from "../../composables/useGridSelection.js";
+import { fitWidth } from "../../lib/columns.js";
 import { isNumericType } from "../../lib/gridText.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import GridHeader from "./GridHeader.vue";
@@ -28,6 +29,8 @@ import { useGridEditing } from "./useGridEditing.js";
 const props = defineProps({
   source: { type: Object, required: true },
   editor: { type: Object, default: null },
+  /** Source column indexes to show; all of them when not given. */
+  columnIndexes: { type: Array, default: null },
 });
 
 const ROW = 26;
@@ -36,7 +39,18 @@ const NUMBER_COL = 52;
 
 const sourceRef = toRef(props, "source");
 const data = useGridData(sourceRef);
-const columns = computed(() => props.source.columns);
+
+/**
+ * Source column indexes the grid renders, left to right. Everything inside
+ * the grid speaks display positions; `visible` maps them back to the source
+ * column so selection, editing and copy keep addressing the right one.
+ */
+const columnIndexes = computed(
+  () => props.columnIndexes ?? props.source.columns.map((_, index) => index),
+);
+const columns = computed(() =>
+  columnIndexes.value.map((index) => props.source.columns[index]),
+);
 const rowCount = computed(() => props.source.total);
 const selection = useGridSelection(
   rowCount,
@@ -46,12 +60,32 @@ const numeric = computed(() =>
   columns.value.map((c) => isNumericType(c.typeName)),
 );
 const widths = ref([]);
+/** Fit-to-contents widths, applied until the user resizes a column. */
+const fitted = ref(null);
 watch(
   columns,
-  (cols) =>
-    (widths.value = cols.map((c) => (isNumericType(c.typeName) ? 120 : 180))),
+  (cols) => {
+    if (fitted.value?.length === cols.length) {
+      widths.value = [...fitted.value];
+      return;
+    }
+    widths.value = cols.map((c) => (isNumericType(c.typeName) ? 120 : 180));
+  },
   { immediate: true },
 );
+
+/** Widths that fit the rows loaded so far. */
+function fitToContents() {
+  const rows = data.loadedRows();
+  fitted.value = columns.value.map((column, position) =>
+    fitWidth(
+      rows.map((row) => row?.[columnIndexes.value[position]]?.value ?? ""),
+      0,
+      column.typeName,
+    ),
+  );
+  widths.value = [...fitted.value];
+}
 
 const scroller = ref(null);
 const scrollTop = ref(0);
@@ -161,8 +195,12 @@ function onContextMenu(event) {
 }
 
 function resize(index, width) {
+  // A manual resize wins over "fit to contents" until the columns change.
+  fitted.value = null;
   widths.value[index] = Math.min(800, Math.max(60, width));
 }
+
+defineExpose({ fitToContents });
 </script>
 
 <template>
@@ -181,6 +219,7 @@ function resize(index, width) {
     >
       <GridHeader
         :columns="columns"
+        :visible="columnIndexes"
         :template="template"
         :widths="widths"
         :sort="data.sort.value"
@@ -194,6 +233,7 @@ function resize(index, width) {
           :key="row.index"
           :index="row.index"
           :cells="row.cells"
+          :visible="columnIndexes"
           :template="template"
           :numeric="numeric"
           :selection="selection"

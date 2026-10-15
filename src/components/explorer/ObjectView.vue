@@ -9,6 +9,7 @@ import InlineAlert from "../common/InlineAlert.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
+import { columnLayoutRef } from "../../composables/useColumns.js";
 import { PAGE_SIZE } from "../../composables/useGridData.js";
 import { tableSource } from "../../lib/gridSources.js";
 import { newFilter, toRequest } from "../../lib/rowFilters.js";
@@ -51,6 +52,9 @@ function toggleFilters() {
   if (props.tab.showFilters && !filters.value.length)
     filters.value = [newFilter(columns.value[0]?.name ?? "")];
 }
+
+// Column layout lives on the tab, so a table remembers it next time.
+const columnLayout = columnLayoutRef(props.tab);
 
 const editing = useTableEditing({
   tab: props.tab,
@@ -208,6 +212,7 @@ const location = computed(() =>
       :source="previewSource"
       :result="current.value"
       :editor="editing.editable.value ? editor : null"
+      :layout="columnLayout"
       :note="
         editing.readOnlyReason.value ||
         (editing.editable.value ? 'Double-click a cell to edit' : '')

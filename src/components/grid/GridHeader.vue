@@ -6,6 +6,8 @@ defineProps({
   columns: { type: Array, required: true },
   template: { type: String, required: true },
   widths: { type: Array, required: true },
+  /** Display position to source column index, for the copy menu later. */
+  visible: { type: Array, default: null },
   sort: { type: Object, default: null },
   sortable: { type: Boolean, default: true },
 });

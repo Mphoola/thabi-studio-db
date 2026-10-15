@@ -77,5 +77,12 @@ export function useGridData(source) {
   });
   reset();
 
-  return { rowAt, sort, toggleSort, version, error };
+  /** Every row loaded so far, for measuring columns. */
+  function loadedRows() {
+    const rows = [];
+    for (const page of pages.value.values()) rows.push(...page);
+    return rows;
+  }
+
+  return { rowAt, loadedRows, sort, toggleSort, version, error };
 }
