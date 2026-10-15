@@ -729,3 +729,99 @@ pub async fn export_csv(
     .await
     .map_err(|_| AppError::background_task())?
 }
+
+/// Copies from a table, re-reading it from the server.
+///
+/// Capped at the connection's row limit: the clipboard is not a place to put a
+/// million rows, and a silent truncation would be worse than a number.
+#[tauri::command]
+pub async fn copy_table(
+    id: String,
+    tab_id: String,
+    request: database::transfer::TransferRequest,
+    format: database::transfer::TransferFormat,
+    max_rows: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let limit = max_rows
+        .unwrap_or(DEFAULT_MAX_ROWS)
+        .clamp(1, MAX_ROWS_LIMIT);
+    let mut text: Vec<u8> = Vec::new();
+    database::transfer::stream_table(&tab, &params, &request, format, Some(limit), &mut text)
+        .await?;
+    Ok(String::from_utf8(text).unwrap_or_default())
+}
+
+/// Exports a table, streaming it straight to the chosen file.
+///
+/// The extension decides the format, and the extension is added when it is
+/// missing, so a file always opens as what it claims to be.
+#[tauri::command]
+pub async fn export_table(
+    id: String,
+    tab_id: String,
+    request: database::transfer::TransferRequest,
+    format: database::transfer::TransferFormat,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<crate::results::ExportSummary, AppError> {
+    use database::transfer::TransferFormat;
+    let path = match format {
+        TransferFormat::Csv => crate::results::export_path(&path)?,
+        other => results_extension(&path, other),
+    };
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    // Writing a file is blocking work, so it runs off the async workers. This
+    // is a blocking pool thread, where blocking on the runtime is allowed.
+    let handle = tokio::runtime::Handle::current();
+    let destination = path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        let file = std::fs::File::create(&path).map_err(|_| {
+            AppError::new(
+                "export_failed",
+                "That file couldn't be created. Check the folder and try again.",
+            )
+        })?;
+        let mut writer = std::io::BufWriter::new(file);
+        let written = handle.block_on(database::transfer::stream_table(
+            &tab,
+            &params,
+            &request,
+            format,
+            None,
+            &mut writer,
+        ))?;
+        writer.flush().ok();
+        Ok(crate::results::ExportSummary {
+            rows: written.rows,
+            path: destination.to_string_lossy().into_owned(),
+        })
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
+}
+
+/// The extension each format should end up with.
+fn results_extension(path: &str, format: database::transfer::TransferFormat) -> std::path::PathBuf {
+    use database::transfer::TransferFormat;
+    use std::path::PathBuf;
+    let wanted = match format {
+        TransferFormat::Csv | TransferFormat::Tsv => "csv",
+        TransferFormat::Json => "json",
+        TransferFormat::Markdown => "md",
+        TransferFormat::SqlInsert | TransferFormat::SqlUpdate => "sql",
+    };
+    let path = PathBuf::from(path);
+    // TSV and CSV both end in .csv on purpose: spreadsheets open either.
+    let already = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .is_some_and(|e| matches!(e.as_str(), "csv" | "tsv" | "json" | "md" | "sql"));
+    if already {
+        path
+    } else {
+        path.with_extension(wanted)
+    }
+}

@@ -1,11 +1,13 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { Download } from "lucide-vue-next";
+import { EXPORT_FORMATS } from "../../lib/tauri/files.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
 import { showInFileManager } from "../../lib/tauri/files.js";
 import { words } from "../../lib/platform.js";
 import BaseButton from "../common/BaseButton.vue";
+import DropdownMenu from "../common/DropdownMenu.vue";
 import ResultGrid from "./ResultGrid.vue";
 
 /** A result grid with its summary bar: rows, time, limits and export. */
@@ -25,9 +27,26 @@ const summary = computed(() => {
   return props.result.truncated ? `First ${total} rows fetched` : rows;
 });
 
+/** Format for the export; null keeps the source's own default (CSV). */
+const format = ref(null);
+const exportMenu = ref(null);
+const formatItems = EXPORT_FORMATS.map((entry) => ({
+  id: entry.value,
+  label: entry.label,
+}));
+
+function chooseFormat(value) {
+  format.value = value;
+  exportCsv();
+}
+
 async function exportCsv() {
   try {
-    const done = await props.source.export({ includeHeader: true }, null);
+    const done = await props.source.export(
+      { includeHeader: true },
+      null,
+      format.value,
+    );
     if (!done) return;
     const file = done.path.split("/").pop();
     toasts.success(
@@ -65,10 +84,16 @@ async function exportCsv() {
         size="sm"
         variant="ghost"
         :icon="Download"
-        @click="exportCsv"
+        @click="(event) => exportMenu?.openAt(event.clientX, event.clientY)"
       >
-        Export CSV…
+        Export…
       </BaseButton>
+      <DropdownMenu
+        ref="exportMenu"
+        :items="formatItems"
+        label="Export format"
+        @select="chooseFormat"
+      />
     </footer>
   </div>
 </template>

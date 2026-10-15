@@ -41,11 +41,13 @@ export function useGridActions(props, data, selection) {
     }
   }
 
-  async function exportAll() {
+  /** `format` comes from the export menu; null means the source's default. */
+  async function exportAll(format = null) {
     try {
       const summary = await props.source.export?.(
         { includeHeader: true },
         data.sort.value,
+        format,
       );
       if (summary)
         toasts.success(
@@ -96,6 +98,7 @@ export function useGridActions(props, data, selection) {
     if (id === "copy-header") return copy("tsv", true);
     if (id === "copy-csv") return copy("csv", true);
     if (id === "copy-rows") return copy("tsv", false, true);
+    // The toolbar's Export… menu offers every format; here the default (CSV).
     if (id === "export") return exportAll();
   }
 

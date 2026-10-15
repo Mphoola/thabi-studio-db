@@ -80,6 +80,8 @@ pub fn run() {
             commands::connections::open_object_data,
             commands::connections::fetch_table_page,
             commands::connections::count_table_rows,
+            commands::connections::copy_table,
+            commands::connections::export_table,
             commands::connections::preview_row_changes,
             commands::connections::apply_row_changes,
             commands::connections::lookup_reference,

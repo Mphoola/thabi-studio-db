@@ -1,11 +1,17 @@
 import {
   copyRows,
+  copyTable,
   countTableRows,
   exportCsv,
+  exportTable,
   fetchRows,
   fetchTablePage,
 } from "./tauri/commands.js";
-import { pickCsvDestination } from "./tauri/files.js";
+import {
+  EXPORT_FORMATS,
+  pickExportDestination,
+  pickCsvDestination,
+} from "./tauri/files.js";
 
 /**
  * A grid source for a query result kept in Rust: pages, sorting, copying
@@ -48,6 +54,7 @@ export function tableSource({
   estimate,
   columns = [],
   firstRows = [],
+  maxRows,
 }) {
   return {
     columns,
@@ -70,8 +77,55 @@ export function tableSource({
         },
         { offset, limit },
       ),
-    // Copy and export re-read the whole table, which the next increment adds;
-    // until then they are absent rather than quietly covering one page.
+    // Copy and export re-read the table from the server, so they cover the
+    // whole table and not just the page on screen.
+    copy: (scope, format, sort) =>
+      copyTable(
+        profileId,
+        tabId,
+        {
+          ...target,
+          filters,
+          primaryKey: primaryKey ?? [],
+          columns: columns.map((column) => column.name),
+          order: sort
+            ? { column: sort.column, descending: sort.descending }
+            : null,
+        },
+        { format, maxRows: maxRows ?? null, scope: toScope(scope) },
+      ),
+    async export(scope, sort, format) {
+      const chosen =
+        EXPORT_FORMATS.find((f) => f.value === format) ?? EXPORT_FORMATS[0];
+      const path = await pickExportDestination(
+        target?.name || "table",
+        chosen.extension,
+      );
+      if (!path) return null;
+      return exportTable(
+        profileId,
+        tabId,
+        {
+          ...target,
+          filters,
+          primaryKey: primaryKey ?? [],
+          columns: columns.map((column) => column.name),
+          order: sort
+            ? { column: sort.column, descending: sort.descending }
+            : null,
+        },
+        { format: chosen.value, path, scope: toScope(scope) },
+      );
+    },
     count: () => countTableRows(profileId, tabId, { ...target, filters }),
+  };
+}
+
+/** The grid's copy scope in the shape the transfer commands take. */
+function toScope(scope = {}) {
+  return {
+    columns: scope.columns ?? [],
+    rows: scope.rows ?? null,
+    includeHeader: scope.includeHeader ?? true,
   };
 }

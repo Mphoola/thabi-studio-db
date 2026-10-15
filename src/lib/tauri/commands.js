@@ -231,6 +231,79 @@ export function fetchTablePage(
   });
 }
 
+/**
+ * Copies from a table, re-reading it from the server.
+ * `format`: "csv" | "tsv" | "json" | "markdown" | "sqlInsert" | "sqlUpdate".
+ */
+export function copyTable(
+  id,
+  tabId,
+  {
+    database,
+    schema,
+    name,
+    filters = [],
+    primaryKey = [],
+    columns = [],
+    order = null,
+  },
+  { format, maxRows = null, scope = {} } = {},
+) {
+  return call("copy_table", {
+    id,
+    tabId,
+    request: {
+      database,
+      schema,
+      name,
+      filters,
+      primaryKey,
+      order,
+      columns,
+      columnsScope: scope.columns ?? [],
+      rows: scope.rows ?? null,
+      includeHeader: scope.includeHeader ?? true,
+    },
+    format,
+    maxRows,
+  });
+}
+
+/** Exports a table to a file, streaming from the server. */
+export function exportTable(
+  id,
+  tabId,
+  {
+    database,
+    schema,
+    name,
+    filters = [],
+    primaryKey = [],
+    columns = [],
+    order = null,
+  },
+  { format, path, scope = {} } = {},
+) {
+  return call("export_table", {
+    id,
+    tabId,
+    request: {
+      database,
+      schema,
+      name,
+      filters,
+      primaryKey,
+      order,
+      columns,
+      columnsScope: scope.columns ?? [],
+      rows: scope.rows ?? null,
+      includeHeader: scope.includeHeader ?? true,
+    },
+    format,
+    path,
+  });
+}
+
 /** The exact number of rows, when the catalog estimate isn't trusted. */
 export function countTableRows(
   id,

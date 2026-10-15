@@ -708,3 +708,166 @@ async fn mysql_pages_a_large_table() {
 async fn sqlserver_pages_a_large_table() {
     pages_through_a_table(Engine::SqlServer, "master", "dbo").await;
 }
+
+/// Phase 12: copy and export re-read the table from the server, so a whole
+/// table is covered rather than one page, and the text round-trips Unicode,
+/// NULLs, quotes and a big number.
+async fn streams_a_table_out(engine: Engine, database: &str, schema: &str) {
+    use thabi_studio_lib::database::transfer::{TransferFormat, TransferRequest, stream_table};
+    let tab = std::sync::Arc::new(QueryTab::default());
+    let p = params(engine);
+    let name = "thabi_copy_it";
+    let drop = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{name}') IS NOT NULL DROP TABLE {name}"),
+        _ => format!("DROP TABLE IF EXISTS {name}"),
+    };
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.run(
+        &p,
+        None,
+        // NVARCHAR on SQL Server, and the sample text stays inside Latin-1:
+        // the test container's default collation cannot store U+2713, and a
+        // character the server cannot hold would fail here rather than in the
+        // app. The app itself round-trips whatever the server returns.
+        &format!(
+            "CREATE TABLE {name} (id INT PRIMARY KEY, label {} NULL)",
+            if engine == Engine::SqlServer {
+                "NVARCHAR(80)"
+            } else {
+                "VARCHAR(80)"
+            }
+        ),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!(
+            "INSERT INTO {name} VALUES (1, 'plain'), (2, 'Zoë ünïcode'), (3, 'O''Brien'), (4, NULL), (5, '12345678901234567890'), (6, 'a,b \"c\"')"
+        ),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let request = |rows: Option<(usize, usize)>, header: bool| TransferRequest {
+        database: database.into(),
+        schema: schema.into(),
+        name: name.into(),
+        primary_key: vec!["id".into()],
+        columns: vec!["id".into(), "label".into()],
+        rows,
+        include_header: header,
+        ..TransferRequest::default()
+    };
+
+    // Everything, not just the first page.
+    let mut csv: Vec<u8> = Vec::new();
+    let written = stream_table(
+        &tab,
+        &p,
+        &request(None, true),
+        TransferFormat::Csv,
+        None,
+        &mut csv,
+    )
+    .await
+    .unwrap();
+    assert_eq!(written.rows, 6, "{engine:?}: every row, not one page");
+    let csv = String::from_utf8(csv).unwrap();
+    assert!(csv.starts_with("id,label\r\n"), "{csv}");
+    assert!(csv.contains("Zoë ünïcode"), "Unicode survives: {csv}");
+    assert!(
+        csv.contains("3,O'Brien\r\n"),
+        "an apostrophe needs no quotes: {csv}"
+    );
+    assert!(
+        csv.contains("\"a,b \"\"c\"\"\""),
+        "a comma and quotes are escaped RFC 4180: {csv}"
+    );
+    assert!(
+        csv.contains("12345678901234567890"),
+        "big numbers stay text: {csv}"
+    );
+    assert!(
+        csv.contains("1,plain\r\n") && csv.contains("4,\r\n"),
+        "{csv}"
+    );
+
+    // A scope: only some rows, without the header.
+    let mut slice: Vec<u8> = Vec::new();
+    let written = stream_table(
+        &tab,
+        &p,
+        &request(Some((1, 3)), false),
+        TransferFormat::Csv,
+        None,
+        &mut slice,
+    )
+    .await
+    .unwrap();
+    assert_eq!(written.rows, 2);
+    let slice = String::from_utf8(slice).unwrap();
+    assert!(!slice.contains("id,label"), "no header when not asked for");
+    assert!(
+        slice.contains("Zoë ünïcode") && !slice.contains("plain"),
+        "{slice}"
+    );
+
+    // The SQL statements are the ones a user would actually run.
+    let mut insert: Vec<u8> = Vec::new();
+    stream_table(
+        &tab,
+        &p,
+        &request(None, false),
+        TransferFormat::SqlInsert,
+        None,
+        &mut insert,
+    )
+    .await
+    .unwrap();
+    let insert = String::from_utf8(insert).unwrap();
+    assert_eq!(
+        insert.lines().filter(|l| l.starts_with("INSERT")).count(),
+        6
+    );
+
+    // Copy is capped, so a huge table cannot become a gigabyte of clipboard.
+    let mut capped: Vec<u8> = Vec::new();
+    let written = stream_table(
+        &tab,
+        &p,
+        &request(None, false),
+        TransferFormat::Csv,
+        Some(2),
+        &mut capped,
+    )
+    .await
+    .unwrap();
+    assert_eq!(written.rows, 2, "the cap is honoured");
+
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_streams_a_table_out() {
+    streams_a_table_out(Engine::Postgres, "thabi_it", "public").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_streams_a_table_out() {
+    streams_a_table_out(Engine::MySql, "thabi_it", "").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_streams_a_table_out() {
+    streams_a_table_out(Engine::SqlServer, "master", "dbo").await;
+}

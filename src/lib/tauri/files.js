@@ -64,6 +64,28 @@ export async function pickCsvDestination(defaultName) {
   return typeof path === "string" ? path : null;
 }
 
+/** The formats a table or result can be written out as, with extensions. */
+export const EXPORT_FORMATS = [
+  { value: "csv", label: "CSV", extension: "csv" },
+  { value: "tsv", label: "TSV (tab-separated)", extension: "csv" },
+  { value: "json", label: "JSON", extension: "json" },
+  { value: "markdown", label: "Markdown table", extension: "md" },
+  { value: "sqlInsert", label: "SQL INSERT statements", extension: "sql" },
+  { value: "sqlUpdate", label: "SQL UPDATE statements", extension: "sql" },
+];
+
+/**
+ * Native save dialog for an export. `format` picks the default extension, so
+ * the file the user chooses is the kind they asked for.
+ */
+export async function pickExportDestination(defaultName, extension = "csv") {
+  const path = await save({
+    title: "Export",
+    defaultPath: `${defaultName.replace(/[\\/:*?"<>|]/g, "_")}.${extension}`,
+  });
+  return typeof path === "string" ? path : null;
+}
+
 /** Reveals a file in Finder, File Explorer or the Linux file manager. */
 export function showInFileManager(path) {
   return revealItemInDir(path);

@@ -1313,7 +1313,8 @@ Update this section as work progresses.
 - [ ] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`)
   - [x] Table data read a page at a time from the server (LIMIT/OFFSET, OFFSET…FETCH on SQL Server), ordered by the primary key, sorted on the server (`docs/decisions/0023-table-paging.md`)
   - [x] Catalog row estimate on open, exact count on request
-  - [ ] Copy and export re-read the table from the server (CSV, TSV, JSON, Markdown, SQL INSERT/UPDATE, .xlsx)
+  - [x] Copy and export stream the table from the server as CSV, TSV, JSON, Markdown, SQL INSERT and SQL UPDATE; copy is capped, export is not (`docs/decisions/0024-transfer-formats.md`)
+  - [ ] .xlsx export (needs a spreadsheet crate, recorded and still open)
   - [ ] Row detail panel (Mod+Alt+I), column controls, saved filter presets
   - [ ] Foreign key navigation, editing query results, editing conveniences
   - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
