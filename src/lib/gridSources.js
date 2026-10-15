@@ -22,6 +22,7 @@ import {
 export function remoteSource({ profileId, tabId, result, exportName }) {
   const id = result.resultId;
   return {
+    kind: "result",
     columns: result.columns,
     total: result.totalRows ?? result.rows.length,
     firstRows: result.rows,
@@ -68,6 +69,7 @@ export function tableSource({
       return columnsRef.value;
     },
     /** The grid shows "of about N" while this is all that is known. */
+    kind: "table",
     total: estimate ?? Number.MAX_SAFE_INTEGER,
     estimated: true,
     firstRows,

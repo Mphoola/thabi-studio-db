@@ -2,6 +2,7 @@
 import { computed, ref, toRef } from "vue";
 import { Columns3, Download } from "lucide-vue-next";
 import { EXPORT_FORMATS } from "../../lib/tauri/files.js";
+import { resultFooter } from "../../lib/resultFooter.js";
 import { PAGE_SIZE } from "../../composables/useGridData.js";
 import { useColumns } from "../../composables/useColumns.js";
 import { useToasts } from "../../composables/useToasts.js";
@@ -24,11 +25,7 @@ const props = defineProps({
 });
 const toasts = useToasts();
 
-const summary = computed(() => {
-  const total = props.source.total.toLocaleString();
-  const rows = props.source.total === 1 ? "1 row" : `${total} rows`;
-  return props.result.truncated ? `First ${total} rows fetched` : rows;
-});
+const footer = computed(() => resultFooter(props.source, props.result));
 
 /** Format for the export; null keeps the source's own default (CSV). */
 const columns = useColumns({
@@ -101,14 +98,14 @@ async function exportCsv() {
     <footer
       class="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
     >
-      <span>{{ summary }}</span>
-      <span>· {{ result.elapsedMs.toLocaleString() }} ms</span>
-      <span v-if="result.truncated" class="text-warning-text">
-        · More rows exist. Add a WHERE or LIMIT, or raise the limit in Settings.
-      </span>
-      <span v-else-if="result.extraResultSets">
-        · {{ result.extraResultSets }} more result sets not shown
-      </span>
+      <span v-if="footer.summary">{{ footer.summary }}</span>
+      <span v-if="footer.elapsedMs">· {{ footer.elapsedMs }}</span>
+      <span
+        v-for="warning in footer.warnings"
+        :key="warning"
+        class="text-warning-text"
+        >· {{ warning }}</span
+      >
       <span v-if="note">· {{ note }}</span>
       <BaseButton
         size="sm"

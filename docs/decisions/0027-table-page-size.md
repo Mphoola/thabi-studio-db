@@ -38,6 +38,18 @@ opened as 200 rows of nothing and no way to say "page 500".
    position-to-offset conversion goes through it, since a page half the size it
    was asked to be would show the wrong rows quietly.
 
+8. **A table's results bar says nothing about rows.** A query result's `total`
+   is how many rows were fetched and being cut short is worth warning about; a
+   table's `total` is how many rows the table has and being cut short is the
+   whole point, since the pager is how the rest is reached. Reading one with the
+   other's rules put "First 1,109,100 rows fetched — add a WHERE or LIMIT" above
+   "Rows 1–1,000 of about 1,109,100". The source carries a `kind`, and a table's
+   bar keeps to the elapsed time, which is all it can stand behind.
+9. **One request at a time.** A tab runs one statement, and the server answers a
+   second with "a query is already running on this tab" — which a scroll and a
+   page jump can provoke together. Page reads queue in the grid rather than
+   racing, and a jump waits for its rows before it scrolls.
+
 ## Known limits
 
 - The pager says "of about N" for a catalog estimate and only "of N" after an

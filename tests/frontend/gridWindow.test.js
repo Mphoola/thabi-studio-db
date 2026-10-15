@@ -89,7 +89,8 @@ describe("the grid holds a window of a large table", () => {
     const data = useGridData(source);
     await data.goto(500);
     expect(data.windowStart.value).toBe(500);
-    expect(data.loaded.value).toBe(501_000);
+    // One page tall, wherever in the table the window now sits.
+    expect(data.loaded.value).toBe(1_000);
     // One request, for the page jumped to.
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ offset: 500_000, limit: 1_000 });
@@ -120,6 +121,51 @@ describe("the grid holds a window of a large table", () => {
     await nextTick();
     expect(data.windowStart.value).toBe(0);
     expect(data.loaded.value).toBe(1_000);
+  });
+
+  it("shows the jumped-to rows, not the table's first rows", async () => {
+    const { source } = makeSource();
+    const data = useGridData(source);
+    await data.goto(500);
+    // The top of the window is page 500's first row, not page 0's. Reading it
+    // as page 0 changed the page number and left the data alone.
+    expect(data.rowAt(0)?.value).toBe("500000");
+    expect(data.rowAt(999)?.value).toBe("500999");
+    // And the scroller is one page tall again, whatever the table's size.
+    expect(data.loaded.value).toBe(1_000);
+  });
+
+  it("keeps reading from the window after a jump", async () => {
+    const { source } = makeSource();
+    const data = useGridData(source);
+    await data.goto(500);
+    await data.extend();
+    expect(data.rowAt(1_000)?.value).toBe("501000");
+    expect(data.loaded.value).toBe(2_000);
+    expect(data.hasMore.value).toBe(true);
+  });
+
+  it("asks for one page at a time, as a tab runs one statement", async () => {
+    const { source } = makeSource();
+    let running = 0;
+    let overlapped = false;
+    const inner = source.value.load.bind(source.value);
+    source.value = {
+      ...source.value,
+      load(offset, limit, sort) {
+        running += 1;
+        if (running > 1) overlapped = true;
+        return inner(offset, limit, sort).finally(() => (running -= 1));
+      },
+    };
+    const data = useGridData(source);
+    // A scroll and a page jump can both ask at once; the server runs one
+    // statement per tab and answers the second with an error.
+    data.extend();
+    await data.goto(10);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(overlapped).toBe(false);
+    expect(data.error.value).toBeNull();
   });
 
   it("loads nothing beyond a table whose size is unknown", async () => {

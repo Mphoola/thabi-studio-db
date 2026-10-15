@@ -22,6 +22,9 @@ export function useGridData(source) {
   const version = ref(0); // bumps when pages change, for re-rendering
   const error = ref(null);
   let inflight = new Map();
+  /** Pages asked for but not yet finished, so none is asked for twice. */
+  const requested = new Set();
+  let queue = Promise.resolve();
   let generation = 0;
 
   /** Rows in one page for the current source. */
@@ -32,6 +35,8 @@ export function useGridData(source) {
   function reset() {
     generation += 1;
     inflight = new Map();
+    requested.clear();
+    queue = Promise.resolve();
     const map = new Map();
     const size = pageSize();
     if (!sort.value && source.value.firstRows?.length) {
@@ -45,12 +50,24 @@ export function useGridData(source) {
     version.value += 1;
   }
 
-  async function loadPage(index) {
-    if (pages.value.has(index) || inflight.has(index)) return;
+  /**
+   * Loads one page, one request at a time.
+   *
+   * A tab runs one statement at a time, and the server says so: two pages
+   * asked for together come back as "a query is already running on this tab".
+   * Scrolling and a page jump can both ask, so requests queue here rather than
+   * racing each other.
+   */
+  function loadPage(index) {
+    if (pages.value.has(index)) return Promise.resolve();
+    if (inflight.has(index)) return inflight.get(index);
     const mine = generation;
     const size = pageSize();
-    const request = source.value
-      .load(index * size, size, sort.value)
+    requested.add(index);
+    // Returned, not just queued: a page jump has to wait for its rows before it
+    // scrolls, or the pager moves first and the grid catches up afterwards.
+    const request = queue
+      .then(() => source.value.load(index * size, size, sort.value))
       .then((rows) => {
         if (mine !== generation) return;
         const next = new Map(pages.value);
@@ -61,20 +78,40 @@ export function useGridData(source) {
       .catch((e) => {
         if (mine === generation) error.value = e;
       })
-      .finally(() => inflight.delete(index));
+      .finally(() => {
+        requested.delete(index);
+        inflight.delete(index);
+      });
+    queue = request;
     inflight.set(index, request);
+    return request;
   }
 
-  /** Row at a display position, or null while its page loads. */
+  /** Highest page index loaded, which is where the window ends. */
+  function lastLoaded() {
+    let last = windowStart.value;
+    for (const index of pages.value.keys()) last = Math.max(last, index);
+    return last;
+  }
+
+  /**
+   * Row at a display position, or null while its page loads.
+   *
+   * A position is relative to the window, not to the table: after a jump to
+   * page 500 the top row of the screen is page 500's first row, so reading
+   * position 0 as page 0 would show the table's opening rows under a header
+   * that says otherwise.
+   */
   function rowAt(position) {
     const size = pageSize();
-    const index = Math.floor(position / size);
+    const inWindow = Math.floor(position / size);
+    const index = windowStart.value + inWindow;
     const page = pages.value.get(index);
     if (!page) {
       loadPage(index);
       return null;
     }
-    return page[position - index * size] ?? null;
+    return page[position - inWindow * size] ?? null;
   }
 
   function toggleSort(column) {
@@ -104,12 +141,12 @@ export function useGridData(source) {
     loadPage(Math.floor(position / pageSize()));
   }
 
-  /** Rows loaded locally, which is what the scroller is tall enough to show. */
+  /** Rows in the window, which is what the scroller is tall enough to show. */
   const loaded = computed(() => {
     void version.value;
-    let last = 0;
-    for (const index of pages.value.keys()) last = Math.max(last, index + 1);
-    return Math.min(last * pageSize(), source.value.total);
+    const size = pageSize();
+    const end = Math.min((lastLoaded() + 1) * size, source.value.total);
+    return Math.max(0, end - windowStart.value * size);
   });
 
   /**
@@ -119,15 +156,16 @@ export function useGridData(source) {
    * so there is no page after it however large the catalog estimate is.
    */
   const hasMore = computed(() => {
-    const end = loaded.value;
-    if (end >= source.value.total) return false;
-    const lastIndex = Math.ceil(end / pageSize()) - 1;
-    return (pages.value.get(lastIndex)?.length ?? 0) === pageSize();
+    void version.value;
+    const size = pageSize();
+    const last = lastLoaded();
+    if ((last + 1) * size >= source.value.total) return false;
+    return (pages.value.get(last)?.length ?? 0) === size;
   });
 
   /** Scrolls forward by one page, which is how scrolling keeps going. */
   function extend() {
-    loadPage(Math.ceil(loaded.value / pageSize()));
+    return loadPage(lastLoaded() + 1);
   }
 
   /**
@@ -147,7 +185,7 @@ export function useGridData(source) {
     windowStart.value = target;
     error.value = null;
     version.value += 1;
-    await loadPage(target);
+    return loadPage(target);
   }
 
   return {
