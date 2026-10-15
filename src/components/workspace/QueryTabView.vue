@@ -69,6 +69,9 @@ function onResizeKey(event) {
 }
 
 const workspace = useTabs();
+// Re-reading the result after an edit goes through here; the results panel is
+// what asks, since that is where staged edits are applied from.
+props.tab.rerunQuery = () => run();
 onMounted(() => {
   workspace.registerHandle(props.tab.id, {
     run,

@@ -1,10 +1,18 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { CircleAlert, CircleCheck, CircleSlash, Clock } from "lucide-vue-next";
 import InlineAlert from "../common/InlineAlert.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
+import ChangesPreviewDialog from "../explorer/ChangesPreviewDialog.vue";
+import EditChangesBar from "../explorer/EditChangesBar.vue";
+import { useTableEditing } from "../explorer/useTableEditing.js";
 import { remoteSource } from "../../lib/gridSources.js";
+import {
+  resultEditability,
+  singleTableSelect,
+} from "../../lib/queryEditability.js";
+import { describeObject } from "../../lib/tauri/commands.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 
 /** Results of the last run: one tab per statement, plus messages. */
@@ -21,6 +29,73 @@ const source = computed(() =>
       })
     : null,
 );
+/**
+ * Editing a query's result, when it is safe.
+ *
+ * The same staged editing a table tab uses, pointed at the table the statement
+ * reads. Safe means one plainly-read table whose whole key is in the result and
+ * whose rows are not repeated — otherwise a cell would be edited by row number
+ * rather than by key, and the write would land somewhere else. See
+ * lib/queryEditability.js, which is where that is decided and tested.
+ */
+const resultColumns = computed(() => run.value?.result?.columns ?? []);
+const editNode = ref(null);
+const whyNotEditable = ref("");
+
+async function checkEditability(entry) {
+  editNode.value = null;
+  whyNotEditable.value = "";
+  if (!entry?.result?.columns.length || !props.tab.profileId) return;
+  const parsed = singleTableSelect(entry.sql);
+  if (!parsed) {
+    whyNotEditable.value =
+      "Read-only: only a plain SELECT from one table can be edited from here.";
+    return;
+  }
+  try {
+    const structure = await describeObject(props.tab.profileId, {
+      database: props.tab.database ?? "",
+      schema: parsed.schema || null,
+      name: parsed.table,
+      kind: "table",
+    });
+    const primaryKey = structure.columns
+      .filter((column) => column.primaryKey)
+      .sort((a, b) => a.primaryKey - b.primaryKey)
+      .map((column) => column.name);
+    const answer = resultEditability({
+      statement: entry.sql,
+      columns: entry.result.columns,
+      primaryKey,
+      rows: entry.result.rows ?? [],
+      database: props.tab.database ?? "",
+    });
+    if (answer.editable)
+      editNode.value = {
+        database: props.tab.database ?? "",
+        schema: parsed.schema ?? "",
+        name: parsed.table,
+        kind: "table",
+      };
+    else whyNotEditable.value = `Read-only: ${answer.reason}`;
+  } catch {
+    // The structure could not be read, so the key is unknown: stay read-only
+    // and say so rather than offering editing that cannot address a row.
+    whyNotEditable.value = `Read-only: ${parsed.table} could not be read.`;
+  }
+}
+
+watch(run, (entry) => checkEditability(entry), { immediate: true });
+
+const editing = useTableEditing({
+  tab: props.tab,
+  node: editNode,
+  profileId: computed(() => props.tab.profileId),
+  columns: resultColumns,
+  reload: () => props.tab.rerunQuery?.(),
+});
+const editor = editing.editor;
+
 const store = useConnectionProfiles();
 // Errors name where the query ran, e.g. Query failed on “Production” (shop).
 const failedTitle = computed(() => {
@@ -118,12 +193,28 @@ function message(entry) {
     >
       <SpinnerIcon :size="14" /> Running…
     </div>
-    <ResultView
-      v-else-if="source"
-      class="min-h-0 flex-1"
-      :source="source"
-      :result="run.result"
-    />
+    <template v-else-if="source">
+      <EditChangesBar
+        v-if="editor.summary.value.total"
+        :summary="editor.summary.value"
+        :applying="editing.applying.value"
+        @preview="editing.showPreview"
+        @discard="editing.discard"
+        @apply="editing.apply"
+      />
+      <ResultView
+        class="min-h-0 flex-1"
+        :source="source"
+        :result="run.result"
+        :editor="editNode ? editor : null"
+        :note="
+          editing.readOnlyReason.value ||
+          (editNode
+            ? `Editing as ${editNode.name}. Double-click a cell to edit.`
+            : whyNotEditable)
+        "
+      />
+    </template>
     <div v-else class="flex flex-col gap-3 overflow-auto p-4">
       <InlineAlert
         v-if="run.status === 'completed'"
@@ -146,5 +237,11 @@ function message(entry) {
         class="selectable max-h-40 overflow-auto rounded-md bg-surface-hover p-3 font-mono text-sm whitespace-pre-wrap text-fg-muted"
         >{{ run.sql }}</pre>
     </div>
+    <ChangesPreviewDialog
+      :statements="editing.preview.value"
+      :applying="editing.applying.value"
+      @close="editing.preview.value = null"
+      @apply="editing.apply"
+    />
   </div>
 </template>
