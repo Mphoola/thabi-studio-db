@@ -31,6 +31,15 @@ applying one is putting them back rather than translating them.
    exactly as stored, including the raw-SQL marker, so a preset round-trips
    through the same code path the bar uses rather than a second one.
 
+7. **A migration that has run cannot be changed by editing its file.** The
+   first version of 0013 created the timestamps as `NOT NULL` with no default,
+   so every INSERT failed — "Local data couldn't be accessed", with the SQLite
+   message discarded by the storage mapping. Correcting the file fixed new
+   databases and the tests, and did nothing for a database that had already
+   applied 0013, which is where the bug was actually reported from. 0014
+   rebuilds the table for those, and a test asserts the default exists rather
+   than inferring it from an insert succeeding.
+
 ## Known limits
 
 - Presets are not shared between connections, and there is no export; a lookup

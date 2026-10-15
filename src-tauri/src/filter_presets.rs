@@ -375,6 +375,49 @@ mod tests {
     }
 
     #[test]
+    fn timestamps_default_so_a_preset_can_be_saved_without_naming_them() {
+        // 0013 created these without a default, which made every INSERT fail on
+        // a database that had already applied it; 0014 rebuilds the table. The
+        // default is what lets the save below work at all, so it is asserted on
+        // the schema rather than inferred from the insert succeeding.
+        let connection = db();
+        for column in ["created_at", "updated_at"] {
+            let default: Option<String> = connection
+                .query_row(
+                    "SELECT dflt_value FROM pragma_table_info('filter_presets')
+                     WHERE name = ?1",
+                    [column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                default.as_deref(),
+                Some("CURRENT_TIMESTAMP"),
+                "{column} has no default"
+            );
+        }
+        save(&connection, input("Recent")).unwrap();
+    }
+
+    #[test]
+    fn a_migration_over_an_existing_table_keeps_what_it_had() {
+        // A database that ran the broken first version and then 0014: the rows
+        // it managed to keep are still there.
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO connection_profiles (id, name, environment, driver, host, port, username)
+                 VALUES ('shop', 'Shop', 'production', 'postgres', 'localhost', 5432, 'user')",
+                [],
+            )
+            .unwrap();
+        save(&connection, input("Kept")).unwrap();
+        let presets = list(&connection, "shop", "public", "public", "orders").unwrap();
+        assert_eq!(presets[0].name, "Kept");
+    }
+
+    #[test]
     fn a_preset_goes_when_its_connection_does() {
         let connection = db();
         save(&connection, input("Recent")).unwrap();
