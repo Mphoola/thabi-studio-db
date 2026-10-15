@@ -1,5 +1,6 @@
 use crate::{
     errors::AppError,
+    filter_presets::{self, FilterPreset, FilterPresetInput},
     library::{self, HistoryEntry, SavedQuery, SavedQueryInput, WorkspaceTab},
     state::AppState,
 };
@@ -53,6 +54,47 @@ pub async fn save_query(
 ) -> Result<SavedQuery, AppError> {
     state
         .blocking(move |connection, _| library::save_query(connection, input))
+        .await
+}
+
+/// The filter presets saved for one table.
+#[tauri::command]
+pub async fn list_filter_presets(
+    profile_id: String,
+    database_name: String,
+    schema_name: String,
+    object_name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FilterPreset>, AppError> {
+    state
+        .blocking(move |connection, _| {
+            filter_presets::list(
+                connection,
+                &profile_id,
+                &database_name,
+                &schema_name,
+                &object_name,
+            )
+        })
+        .await
+}
+
+/// Saves a filter preset, or updates the one it names.
+#[tauri::command]
+pub async fn save_filter_preset(
+    input: FilterPresetInput,
+    state: State<'_, AppState>,
+) -> Result<FilterPreset, AppError> {
+    state
+        .blocking(move |connection, _| filter_presets::save(connection, input))
+        .await
+}
+
+/// Deletes a filter preset.
+#[tauri::command]
+pub async fn delete_filter_preset(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    state
+        .blocking(move |connection, _| filter_presets::delete(connection, &id))
         .await
 }
 

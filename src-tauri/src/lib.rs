@@ -3,6 +3,7 @@ mod connections;
 mod credentials;
 pub mod database;
 mod errors;
+pub mod filter_presets;
 mod library;
 mod menu;
 mod profiles;
@@ -100,6 +101,9 @@ pub fn run() {
             commands::library::list_saved_queries,
             commands::library::save_query,
             commands::library::delete_saved_query,
+            commands::library::list_filter_presets,
+            commands::library::save_filter_preset,
+            commands::library::delete_filter_preset,
             commands::library::rename_saved_folder,
             commands::library::save_workspace_tabs,
             commands::library::load_workspace_tabs,

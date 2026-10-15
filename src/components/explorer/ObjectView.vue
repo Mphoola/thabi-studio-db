@@ -2,6 +2,8 @@
 import { computed, ref, watch } from "vue";
 import { Eye, ListFilter, Plus, RefreshCw, Table2 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
+import { useFilterPresets } from "../../composables/useFilterPresets.js";
+import { useToasts } from "../../composables/useToasts.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import BaseButton from "../common/BaseButton.vue";
@@ -26,6 +28,7 @@ import StructureView from "./StructureView.vue";
 const props = defineProps({ tab: { type: Object, required: true } });
 const explorer = useExplorer();
 const connections = useConnectionProfiles();
+const toasts = useToasts();
 const profile = computed(() => {
   const id = props.tab.profileId ?? explorer.profile.value?.id;
   return connections.profiles.value.find((p) => p.id === id) ?? null;
@@ -33,7 +36,24 @@ const profile = computed(() => {
 /** Rows this connection shows at once; see lib/tablePaging.js. */
 const pageSize = computed(() => tablePageSize(profile.value));
 const node = computed(() => props.tab.node);
+// Saved filter sets belong to the table, so they are read whenever it changes.
+const presetState = useFilterPresets({
+  profileId: computed(() => props.tab.profileId ?? explorer.profile.value?.id),
+  target: node,
+  filters,
+  toasts,
+});
 const gridView = ref(null);
+/** The filter presets menu's view of the table's presets. */
+const presetMenu = computed(() => ({
+  list: presetState.presets.value,
+  loading: presetState.loading.value,
+  currentName: presetState.existingName(),
+  apply: presetState.apply,
+  save: presetState.save,
+  remove: presetState.remove,
+}));
+
 /** What the pager shows; see lib/tablePaging.js. */
 const pager = computed(() =>
   pagerProps(
@@ -204,6 +224,7 @@ const location = computed(() =>
       :columns="columns.map((c) => c.name)"
       :applied-count="appliedCount"
       :loading="current.status === 'loading'"
+      :presets="presetMenu"
       @apply="load('data')"
     />
     <EditChangesBar

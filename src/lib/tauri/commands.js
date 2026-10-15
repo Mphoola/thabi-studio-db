@@ -346,6 +346,34 @@ export function deleteSavedQuery(id) {
   return call("delete_saved_query", { id });
 }
 
+/** The filter presets saved for one table. */
+export function listFilterPresets(
+  profileId,
+  databaseName,
+  schemaName,
+  objectName,
+) {
+  return call("list_filter_presets", {
+    profileId,
+    databaseName,
+    schemaName,
+    objectName,
+  });
+}
+
+/**
+ * Saves a filter preset, or updates the one `id` names. Saving over a name
+ * already used on the same table updates that preset.
+ * input: { id?, profileId, databaseName, schemaName, objectName, name, filters }
+ */
+export function saveFilterPreset(input) {
+  return call("save_filter_preset", { input });
+}
+
+export function deleteFilterPreset(id) {
+  return call("delete_filter_preset", { id });
+}
+
 /** Renames (or, with to = "", removes) a saved-query folder. @returns {Promise<number>} */
 export function renameSavedFolder(from, to) {
   return call("rename_saved_folder", { from, to });

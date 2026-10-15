@@ -11,6 +11,7 @@ import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 import SelectInput from "../common/SelectInput.vue";
 import TextInput from "../common/TextInput.vue";
+import FilterPresets from "./FilterPresets.vue";
 
 /** Filter rows above table data: column, operator, value; or raw SQL. */
 const filters = defineModel("filters", { type: Array, required: true });
@@ -19,6 +20,8 @@ const props = defineProps({
   /** How many filters the shown rows were read with. */
   appliedCount: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
+  /** Saved filter sets for this table. */
+  presets: { type: Object, default: null },
 });
 const emit = defineEmits(["apply"]);
 
@@ -109,6 +112,16 @@ function clear() {
         }}
       </span>
       <BaseButton size="sm" class="ml-auto" @click="clear">Clear</BaseButton>
+      <FilterPresets
+        v-if="presets"
+        :presets="presets.list"
+        :loading="presets.loading"
+        :current-name="presets.currentName"
+        :can-save="filters.some((f) => f.enabled)"
+        @apply="presets.apply($event)"
+        @save="presets.save($event)"
+        @remove="presets.remove($event)"
+      />
       <BaseButton size="sm" variant="primary" type="submit" :loading="loading">
         Apply
       </BaseButton>
