@@ -124,7 +124,8 @@ const previewSource = computed(() =>
         filters: toRequest(filters.value),
         primaryKey: editing.primaryKey.value,
         estimate: page.value.estimatedTotal ?? null,
-        columns: page.value.columns,
+        // The live list, not a snapshot: the grid and the editor must agree.
+        columns,
         firstRows: page.value.rows,
       })
     : null,

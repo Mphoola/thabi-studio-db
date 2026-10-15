@@ -20,11 +20,19 @@ export function useGridActions(props, data, selection) {
     if (!selection.active.value) return { includeHeader };
     return {
       rows: [r.r0, r.r1 + 1],
+      // The selection is in display positions; copy and export address
+      // source columns, so the choice is mapped here.
       columns: wholeRows
         ? null
-        : Array.from({ length: r.c1 - r.c0 + 1 }, (_, i) => r.c0 + i),
+        : Array.from({ length: r.c1 - r.c0 + 1 }, (_, i) => r.c0 + i).map(
+            toSourceColumn,
+          ),
       includeHeader,
     };
+  }
+
+  function toSourceColumn(position) {
+    return props.columnIndexes?.[position] ?? position;
   }
 
   async function copy(format, includeHeader = false, wholeRows = false) {

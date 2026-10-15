@@ -134,3 +134,48 @@ describe("resetLayout", () => {
     ]);
   });
 });
+
+/**
+ * The grid addresses display positions and maps them to source columns for
+ * everything that reads a real cell: editing, the value inspector, the row
+ * panel, and the copy scope. Hiding or reordering a column is what makes the
+ * difference visible, so the mapping is tested where the other bug was not.
+ */
+describe("display positions map to source columns", () => {
+  const hidden = toggleHidden(columns, defaultLayout(), "name");
+  const visible = visibleColumns(columns, hidden);
+
+  it("shows the remaining columns, in order", () => {
+    expect(names(visible)).toEqual(["id", "total", "note"]);
+  });
+
+  it("reads a cell through the source column, not the position", () => {
+    const cells = [["7", "hidden", "70", "note"]];
+    // Display position 2 is the third shown column, "note" at source 3.
+    expect(visible[2]).toBe(3);
+    expect(cells[0][visible[2]]).toBe("note");
+    // Reading by display position would have returned the wrong column.
+    expect(cells[0][2]).toBe("70");
+  });
+
+  it("maps a copy selection to source columns", () => {
+    const toSource = (position) => visible[position] ?? position;
+    const selection = [0, 1, 2].map(toSource);
+    expect(selection).toEqual([0, 2, 3]);
+    // The middle selection is "total", not the hidden "name".
+    expect(columns[selection[1]].name).toBe("total");
+  });
+
+  it("survives a reorder as well as a hide", () => {
+    // "total" is at position 2, so -2 takes it to the front.
+    const moved = moveColumn(columns, defaultLayout(), "total", -2);
+    const order = visibleColumns(columns, moved);
+    expect(order.map((index) => columns[index].name)).toEqual([
+      "total",
+      "id",
+      "name",
+      "note",
+    ]);
+    expect(columns[order[0]].name).toBe("total");
+  });
+});

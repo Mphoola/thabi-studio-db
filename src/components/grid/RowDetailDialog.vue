@@ -18,6 +18,8 @@ import BaseDialog from "../common/BaseDialog.vue";
 const open = defineModel("open", { type: Boolean, default: false });
 const props = defineProps({
   columns: { type: Array, required: true },
+  /** Display position to source column index, as the grid uses. */
+  columnIndexes: { type: Array, default: null },
   /** Cells of the focused row, in source column order. */
   cells: { type: Array, default: null },
   /** Position of the row in the grid, for the title. */
@@ -36,19 +38,31 @@ const title = computed(() =>
   props.row > 0 ? `Row ${props.row.toLocaleString()}` : "Row",
 );
 
-/** What a column shows: a staged edit when there is one. */
-function shown(index) {
+/**
+ * What a column shows: a staged edit when there is one.
+ *
+ * `position` is where the field sits in the panel; the editor and the row are
+ * addressed by source column, or a hidden or reordered column would be read
+ * from the wrong place.
+ */
+function shown(position) {
   if (!props.cells) return null;
+  const column = source(position);
   return props.editor
-    ? props.editor.display(props.cells, index)
-    : props.cells[index];
+    ? props.editor.display(props.cells, column)
+    : props.cells[column];
+}
+
+/** The source column a display position stands for. */
+function source(position) {
+  return props.columnIndexes ? props.columnIndexes[position] : position;
 }
 
 /** The full text of a value, for wrapping out instead of clipping. */
-function fullText(index) {
-  const cell = shown(index);
+function fullText(position) {
+  const cell = shown(position);
   if (!cell) return "";
-  return inspectText(cell, props.columns[index]?.typeName) ?? "";
+  return inspectText(cell, props.columns[position]?.typeName) ?? "";
 }
 
 const editable = computed(
@@ -60,20 +74,21 @@ watch(open, async (isOpen) => {
   if (isOpen) await nextTick();
 });
 
-async function startEdit(index) {
-  if (!editable.value || !props.editor?.canEdit(props.cells, index)) return;
-  draft.value = props.editor.valueOf(props.cells, index) ?? "";
-  editing.value = index;
+async function startEdit(position) {
+  const column = source(position);
+  if (!editable.value || !props.editor?.canEdit(props.cells, column)) return;
+  draft.value = props.editor.valueOf(props.cells, column) ?? "";
+  editing.value = position;
   await nextTick();
   box.value?.focus();
 }
 
-function commit(move = null) {
-  const index = editing.value;
-  if (index < 0) return;
-  props.editor.setValue(props.cells, index, draft.value);
+function commit(moveTo = null) {
+  const position = editing.value;
+  if (position < 0) return;
+  props.editor.setValue(props.cells, source(position), draft.value);
   editing.value = -1;
-  if (move !== null && editable.value) startEdit(move);
+  if (moveTo !== null && editable.value) startEdit(moveTo);
 }
 
 function cancel() {
@@ -81,8 +96,8 @@ function cancel() {
 }
 
 async function copyRow() {
-  const lines = props.columns.map((column, index) => {
-    const cell = shown(index);
+  const lines = props.columns.map((column, position) => {
+    const cell = shown(position);
     const text = cell?.kind === "null" ? "NULL" : (cell?.value ?? "");
     return `${column.name}\t${text}`;
   });
@@ -102,8 +117,8 @@ async function copyRow() {
       class="flex max-h-[60vh] flex-col divide-y divide-line overflow-auto"
     >
       <div
-        v-for="(column, index) in columns"
-        :key="index"
+        v-for="(column, position) in columns"
+        :key="column.name"
         class="grid grid-cols-[minmax(90px,180px)_1fr] gap-3 py-1.5"
       >
         <dt class="flex min-w-0 flex-col">
@@ -116,14 +131,14 @@ async function copyRow() {
         </dt>
         <dd class="min-w-0">
           <textarea
-            v-if="editing === index"
+            v-if="editing === position"
             ref="box"
             v-model="draft"
             rows="2"
             class="w-full resize-y rounded-md border border-line bg-surface px-2 py-1 font-mono text-sm text-fg outline-2 -outline-offset-2 outline-accent"
             spellcheck="false"
             @keydown.enter.exact.prevent="commit()"
-            @keydown.tab.prevent="commit(index + 1)"
+            @keydown.tab.prevent="commit(position + 1)"
             @keydown.esc.prevent="cancel"
             @blur="commit()"
           />
@@ -131,35 +146,35 @@ async function copyRow() {
             v-else-if="editable"
             type="button"
             class="block w-full cursor-text rounded-md px-2 py-1 text-left font-mono text-sm break-words whitespace-pre-wrap hover:bg-surface-hover focus-visible:bg-surface-hover"
-            @click="startEdit(index)"
+            @click="startEdit(position)"
           >
             <span
-              v-if="shown(index).kind === 'null'"
+              v-if="shown(position).kind === 'null'"
               class="text-grid-null italic"
               >NULL</span
             >
             <span
-              v-else-if="shown(index).kind === 'binary'"
+              v-else-if="shown(position).kind === 'binary'"
               class="text-fg-muted"
-              >{{ fullText(index) }}</span
+              >{{ fullText(position) }}</span
             >
-            <template v-else>{{ fullText(index) }}</template>
+            <template v-else>{{ fullText(position) }}</template>
           </button>
           <div
             v-else
             class="block w-full rounded-md px-2 py-1 font-mono text-sm break-words whitespace-pre-wrap"
           >
             <span
-              v-if="shown(index).kind === 'null'"
+              v-if="shown(position).kind === 'null'"
               class="text-grid-null italic"
               >NULL</span
             >
             <span
-              v-else-if="shown(index).kind === 'binary'"
+              v-else-if="shown(position).kind === 'binary'"
               class="text-fg-muted"
-              >{{ fullText(index) }}</span
+              >{{ fullText(position) }}</span
             >
-            <template v-else>{{ fullText(index) }}</template>
+            <template v-else>{{ fullText(position) }}</template>
           </div>
         </dd>
       </div>

@@ -63,8 +63,10 @@ export function moveColumn(columns, layout, name, delta) {
   const at = current.indexOf(index);
   const to = at + delta;
   if (at < 0 || to < 0 || to >= current.length) return layout;
+  // A move, not a swap: for one step the two are identical, and dragging a
+  // column across others should shift them rather than exchange them.
   const nextVisible = [...current];
-  [nextVisible[at], nextVisible[to]] = [nextVisible[to], nextVisible[at]];
+  nextVisible.splice(to, 0, ...nextVisible.splice(at, 1));
 
   // Write the new sequence back into the slots the visible columns occupy,
   // so a hidden column keeps its own place instead of being shuffled along.

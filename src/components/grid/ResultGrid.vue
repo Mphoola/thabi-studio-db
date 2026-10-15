@@ -173,8 +173,7 @@ function openInspector() {
   const { row, col } = selection.focus.value;
   const cells = data.rowAt(row);
   if (!cells) return;
-  const column = columns.value[col];
-  inspector.value?.open(column, shownCell(cells, column));
+  inspector.value?.open(columns.value[col], shownCell(cells, col));
 }
 
 /** The row as a whole form, for reading or editing a record properly. */
@@ -198,8 +197,12 @@ const {
   actions,
 });
 
-/** A cell as the value inspector and the detail panel want it. */
-function shownCell(cells, column) {
+/**
+ * A cell as the value inspector and the detail panel want it. `position` is a
+ * display position; the editor and the row are addressed by source column.
+ */
+function shownCell(cells, position) {
+  const column = columnIndexes.value[position];
   return props.editor ? props.editor.display(cells, column) : cells[column];
 }
 
@@ -287,6 +290,7 @@ defineExpose({ fitToContents });
     <RowDetailDialog
       v-model:open="detailOpen"
       :columns="columns"
+      :column-indexes="columnIndexes"
       :cells="data.rowAt(selection.focus.value.row)"
       :row="selection.focus.value.row + 1"
       :editor="editor"

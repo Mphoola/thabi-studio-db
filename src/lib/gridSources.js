@@ -1,3 +1,5 @@
+import { isRef, shallowRef } from "vue";
+
 import {
   copyRows,
   copyTable,
@@ -56,8 +58,14 @@ export function tableSource({
   firstRows = [],
   maxRows,
 }) {
+  // One owner for the result's columns. The explorer owns the live list so it
+  // can clear it while loading; a snapshot here would let the grid render
+  // indexes the editing side no longer has, and every cell read would fail.
+  const columnsRef = isRef(columns) ? columns : shallowRef(columns);
   return {
-    columns,
+    get columns() {
+      return columnsRef.value;
+    },
     /** The grid shows "of about N" while this is all that is known. */
     total: estimate ?? Number.MAX_SAFE_INTEGER,
     estimated: true,
