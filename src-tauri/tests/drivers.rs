@@ -129,6 +129,70 @@ async fn reports_server_errors_with_detail(engine: Engine) {
     session.close().await.unwrap();
 }
 
+/**
+ * A bound value is stored as itself. This is the property parameters exist for:
+ * a value containing quotes and a semicolon must come back out of the database
+ * as those characters, not as the end of the statement and the start of another.
+ */
+async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
+    use thabi_studio_lib::database::values::Param;
+    let mut session = open(engine).await;
+    let setup = "DROP TABLE IF EXISTS thabi_param_test;                  CREATE TABLE thabi_param_test (id int PRIMARY KEY, note varchar(200),                  amount decimal(10,2), maybe int)";
+    session.execute(setup, 10).await.unwrap();
+
+    let hostile = "O'Brien'; DROP TABLE thabi_param_test; --";
+    // Each kind once: a number, text holding quotes and a semicolon, a
+    // decimal, and NULL.
+    let insert = "INSERT INTO thabi_param_test (id, note, amount, maybe) VALUES (?, ?, ?, ?)";
+    let result = session
+        .execute_bound(
+            insert,
+            &[
+                Param::Number(1.0),
+                Param::Text(hostile.into()),
+                Param::Number(1234.56),
+                Param::Null,
+            ],
+            10,
+        )
+        .await;
+    if !supports_binding {
+        let error = result.expect_err("this engine cannot bind yet");
+        assert_eq!(error.kind, "not_supported");
+        return;
+    }
+    result.expect("bound insert");
+
+    // Read it back with the text protocol, so what is asserted is what a
+    // person would see in the grid.
+    let read = session
+        .execute(
+            "SELECT note, amount, maybe FROM thabi_param_test WHERE id = 1",
+            10,
+        )
+        .await
+        .unwrap();
+    let row = &read.rows[0];
+    assert_eq!(
+        row[0],
+        Cell::Value(hostile.into()),
+        "value was not stored as typed"
+    );
+    assert_eq!(
+        row[1],
+        Cell::Value("1234.56".into()),
+        "number lost precision"
+    );
+    assert_eq!(row[2], Cell::Null, "NULL did not stay NULL");
+
+    // And the row is still there, so the semicolon did not end the statement.
+    let count = session
+        .execute("SELECT COUNT(*) FROM thabi_param_test", 10)
+        .await
+        .unwrap();
+    assert_eq!(count.rows[0][0], Cell::Value("1".into()));
+}
+
 async fn wrong_password_is_an_authentication_error(engine: Engine) {
     let mut p = params(engine, working_tls(engine));
     p.password = Some("definitely-wrong".into());
@@ -265,6 +329,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn bound_values_are_stored_verbatim() {
+        binds_values_verbatim(E, false).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn enums_and_references() {
         describes_enums_and_references(
             E,
@@ -374,6 +444,12 @@ mod mysql {
 
     #[tokio::test]
     #[ignore]
+    async fn bound_values_are_stored_verbatim() {
+        binds_values_verbatim(E, true).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn enums_and_references() {
         describes_enums_and_references(
             E,
@@ -464,6 +540,12 @@ mod mysql {
 mod sqlserver {
     use super::*;
     const E: Engine = Engine::SqlServer;
+
+    #[tokio::test]
+    #[ignore]
+    async fn bound_values_are_stored_verbatim() {
+        binds_values_verbatim(E, false).await;
+    }
 
     #[tokio::test]
     #[ignore]

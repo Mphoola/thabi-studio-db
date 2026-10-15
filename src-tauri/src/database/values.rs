@@ -105,3 +105,43 @@ mod tests {
         );
     }
 }
+
+/// A value bound to a placeholder in user SQL.
+///
+/// The point of a parameter is that the value never becomes part of the
+/// statement, so this travels beside the SQL and is bound by the driver. A
+/// number is a number rather than text because PostgreSQL refuses to compare a
+/// numeric column with a text one, and an implicit cast would hide that.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum Param {
+    Text(String),
+    Number(f64),
+    Null,
+}
+
+impl Param {
+    /// What this parameter is for binding to a text column.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod param_tests {
+    use super::*;
+
+    #[test]
+    fn a_text_parameter_is_what_was_typed() {
+        assert_eq!(Param::Text("it's here".into()).as_text(), Some("it's here"));
+    }
+
+    #[test]
+    fn a_number_and_null_are_not_text() {
+        assert_eq!(Param::Number(42.0).as_text(), None);
+        assert_eq!(Param::Null.as_text(), None);
+    }
+}

@@ -181,6 +181,18 @@ pub trait DatabaseSession: Sized {
     async fn list_databases(&mut self) -> Result<Vec<String>, AppError>;
     /// Runs user-authored SQL as written and keeps at most `max_rows` rows.
     async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError>;
+    /// Runs user SQL with values bound to its placeholders.
+    ///
+    /// Binding needs the prepared statement protocol, which returns typed
+    /// values where the simple protocol returns text, so this is a separate
+    /// path from `execute` rather than a flag on it. An engine that has not
+    /// been given one says so rather than quietly running without the values.
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError>;
     /// Runs app-generated metadata SQL with bound text parameters.
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError>;
     /// Schemas in a database, or `None` when the engine has no schema level
@@ -325,6 +337,20 @@ impl Session {
     pub async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         let started = Instant::now();
         let mut result = dispatch!(self, s => s.execute(sql, max_rows).await)?;
+        result.elapsed_ms = started.elapsed().as_millis() as u64;
+        Ok(result)
+    }
+
+    /// Runs user SQL with bound values; see the trait method for why this is
+    /// separate from `execute`.
+    pub async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        let started = Instant::now();
+        let mut result = dispatch!(self, s => s.execute_bound(sql, params, max_rows).await)?;
         result.elapsed_ms = started.elapsed().as_millis() as u64;
         Ok(result)
     }

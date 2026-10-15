@@ -1,7 +1,7 @@
 use super::{
     Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
     ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
-    quote,
+    quote, values,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -146,6 +146,22 @@ impl DatabaseSession for PgSession {
             )
             .await?;
         Ok(first_column(result))
+    }
+
+    /// Not yet: binding needs the prepared protocol, which returns typed
+    /// values rather than text, and this engine's grid values come from the
+    /// simple protocol on purpose. Saying so is better than running the
+    /// statement with the values missing.
+    async fn execute_bound(
+        &mut self,
+        _sql: &str,
+        _params: &[values::Param],
+        _max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        Err(AppError::new(
+            "not_supported",
+            "Bound parameters are not available on this engine yet.",
+        ))
     }
 
     async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {

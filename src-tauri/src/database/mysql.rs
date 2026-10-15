@@ -1,7 +1,7 @@
 use super::{
     Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
     ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
-    quote,
+    quote, values,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -128,6 +128,62 @@ impl DatabaseSession for MySqlSession {
 
     async fn list_databases(&mut self) -> Result<Vec<String>, AppError> {
         Ok(first_column(self.execute("SHOW DATABASES", 10_000).await?))
+    }
+
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::MySql, &host, self.port);
+        // Bound, so the prepared protocol: the values never touch the text.
+        let mut query = sqlx::query(AssertSqlSafe(sql.to_owned()));
+        for param in params {
+            query = match param {
+                values::Param::Text(text) => query.bind(text.clone()),
+                values::Param::Number(number) => query.bind(*number),
+                values::Param::Null => query.bind(Option::<String>::None),
+            };
+        }
+        let rows = query
+            .fetch_all(&mut self.connection)
+            .await
+            .map_err(|e| error::from_sqlx(e, ctx))?;
+        let mut result = QueryResult::default();
+        if let Some(first) = rows.first() {
+            result.columns = first
+                .columns()
+                .iter()
+                .map(|c| ColumnMeta {
+                    name: c.name().to_owned(),
+                    type_name: c.type_info().name().to_owned(),
+                })
+                .collect();
+        }
+        for row in rows {
+            if result.rows.len() >= max_rows {
+                result.truncated = true;
+                break;
+            }
+            result.rows.push(
+                (0..row.len())
+                    .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
+                        Ok(Some(text)) => Cell::Value(text),
+                        Ok(None) => Cell::Null,
+                        Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+                            Ok(Some(bytes)) => Cell::binary(&bytes),
+                            _ => Cell::Null,
+                        },
+                    })
+                    .collect(),
+            );
+        }
+        if !result.columns.is_empty() {
+            result.rows_affected = None;
+        }
+        Ok(result)
     }
 
     async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
