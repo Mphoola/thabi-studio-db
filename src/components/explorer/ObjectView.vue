@@ -82,7 +82,11 @@ async function load(which = tab.value) {
             // One page at a time, ordered by the key (Phase 12).
             maxRows: PAGE_SIZE,
             filters: request,
-            primaryKey: editing.primaryKey.value,
+            // The key must be known first: paging without it would order
+            // the first page differently from the rest.
+            primaryKey: await editing
+              .keyReady()
+              .then(() => editing.primaryKey.value),
           })
         : await describeObject(id, target);
     if (node.value !== target) return;

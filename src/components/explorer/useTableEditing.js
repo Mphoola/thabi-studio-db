@@ -47,6 +47,9 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
       : "Read-only: this table has no primary key";
   });
 
+  /** Resolves once the key for the current node has been read (or failed). */
+  let keyLoad = Promise.resolve();
+
   async function loadKey() {
     keyChecked.value = false;
     primaryKey.value = [];
@@ -67,7 +70,13 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
       keyChecked.value = true;
     }
   }
-  watch(node, loadKey, { immediate: true });
+  watch(
+    node,
+    () => {
+      keyLoad = loadKey();
+    },
+    { immediate: true },
+  );
 
   /** How a column is edited: a list of enum values, a foreign key lookup, or free text (null). */
   editor.pickerFor = (col) => {
@@ -175,6 +184,14 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   return {
     editor,
     editable,
+    /** The table's key column names, in key order. Paging needs them. */
+    primaryKey,
+    /**
+     * Waits for the key to be known. Paging a table without it would fetch
+     * the first page unordered and the rest ordered, so the two could show
+     * the same row twice and skip another.
+     */
+    keyReady: () => keyLoad,
     readOnlyReason,
     applying,
     preview,
