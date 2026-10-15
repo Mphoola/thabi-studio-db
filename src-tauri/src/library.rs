@@ -172,6 +172,7 @@ pub struct SavedQuery {
     pub query_text: String,
     pub profile_id: Option<String>,
     pub notes: String,
+    pub folder: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -186,6 +187,8 @@ pub struct SavedQueryInput {
     pub profile_id: Option<String>,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub folder: String,
 }
 
 fn saved_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedQuery> {
@@ -195,17 +198,20 @@ fn saved_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedQuery> {
         query_text: row.get(2)?,
         profile_id: row.get(3)?,
         notes: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        folder: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
-const SAVED_COLUMNS: &str = "id, name, query_text, profile_id, notes, created_at, updated_at";
+const SAVED_COLUMNS: &str =
+    "id, name, query_text, profile_id, notes, folder, created_at, updated_at";
 
 pub fn list_saved(connection: &Connection) -> Result<Vec<SavedQuery>, AppError> {
     let mut statement = connection
         .prepare(&format!(
-            "SELECT {SAVED_COLUMNS} FROM saved_queries ORDER BY name COLLATE NOCASE, id"
+            "SELECT {SAVED_COLUMNS} FROM saved_queries
+             ORDER BY folder COLLATE NOCASE, name COLLATE NOCASE, id"
         ))
         .map_err(storage)?;
     let rows = statement
@@ -216,24 +222,45 @@ pub fn list_saved(connection: &Connection) -> Result<Vec<SavedQuery>, AppError> 
     Ok(rows)
 }
 
+fn field_error(field: &str, message: &str) -> AppError {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert(field.to_owned(), message.to_owned());
+    AppError::validation(fields)
+}
+
+/// Trims a folder name; '' means no folder.
+fn clean_folder(folder: &str) -> Result<&str, AppError> {
+    let folder = folder.trim();
+    if folder.chars().count() > 80 {
+        return Err(field_error(
+            "folder",
+            "Use a folder name of up to 80 characters.",
+        ));
+    }
+    Ok(folder)
+}
+
 pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<SavedQuery, AppError> {
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 120 {
-        let mut fields = std::collections::BTreeMap::new();
-        fields.insert(
-            "name".to_owned(),
-            "Enter a name of up to 120 characters.".to_owned(),
-        );
-        return Err(AppError::validation(fields));
+        return Err(field_error("name", "Enter a name of up to 120 characters."));
     }
+    let folder = clean_folder(&input.folder)?;
     let id = match input.id {
         Some(id) => {
             let changed = connection
                 .execute(
                     "UPDATE saved_queries SET name = ?2, query_text = ?3, profile_id = ?4,
-                        notes = ?5, updated_at = CURRENT_TIMESTAMP
+                        notes = ?5, folder = ?6, updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?1",
-                    params![id, name, input.query_text, input.profile_id, input.notes],
+                    params![
+                        id,
+                        name,
+                        input.query_text,
+                        input.profile_id,
+                        input.notes,
+                        folder
+                    ],
                 )
                 .map_err(storage)?;
             if changed == 0 {
@@ -250,9 +277,16 @@ pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<Sav
                 .map_err(storage)?;
             connection
                 .execute(
-                    "INSERT INTO saved_queries (id, name, query_text, profile_id, notes)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![id, name, input.query_text, input.profile_id, input.notes],
+                    "INSERT INTO saved_queries (id, name, query_text, profile_id, notes, folder)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        id,
+                        name,
+                        input.query_text,
+                        input.profile_id,
+                        input.notes,
+                        folder
+                    ],
                 )
                 .map_err(storage)?;
             id
@@ -263,6 +297,19 @@ pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<Sav
             &format!("SELECT {SAVED_COLUMNS} FROM saved_queries WHERE id = ?1"),
             [id],
             saved_from_row,
+        )
+        .map_err(storage)
+}
+
+/// Renames a folder, merging into `to` if it already exists. An empty `to`
+/// takes the queries out of the folder. Returns how many queries moved.
+pub fn rename_folder(connection: &Connection, from: &str, to: &str) -> Result<usize, AppError> {
+    let to = clean_folder(to)?;
+    connection
+        .execute(
+            "UPDATE saved_queries SET folder = ?2, updated_at = CURRENT_TIMESTAMP
+             WHERE folder = ?1",
+            params![from, to],
         )
         .map_err(storage)
 }
@@ -418,10 +465,12 @@ mod tests {
                 query_text: "SELECT 1".into(),
                 profile_id: None,
                 notes: String::new(),
+                folder: " Reports ".into(),
             },
         )
         .unwrap();
         assert_eq!(saved.name, "Pending orders");
+        assert_eq!(saved.folder, "Reports");
         let updated = save_query(
             &connection,
             SavedQueryInput {
@@ -430,6 +479,7 @@ mod tests {
                 query_text: "SELECT 2".into(),
                 profile_id: Some("p".into()),
                 notes: "daily".into(),
+                folder: "Reports".into(),
             },
         )
         .unwrap();
@@ -446,10 +496,57 @@ mod tests {
                     query_text: String::new(),
                     profile_id: None,
                     notes: String::new(),
+                    folder: String::new(),
                 },
             )
             .unwrap_err()
             .kind,
+            "validation"
+        );
+    }
+
+    #[test]
+    fn folders_rename_merge_and_clear() {
+        let mut connection = db();
+        let add = |connection: &Connection, name: &str, folder: &str| {
+            save_query(
+                connection,
+                SavedQueryInput {
+                    id: None,
+                    name: name.into(),
+                    query_text: "SELECT 1".into(),
+                    profile_id: None,
+                    notes: String::new(),
+                    folder: folder.into(),
+                },
+            )
+            .unwrap()
+        };
+        let connection = &mut connection;
+        add(connection, "b", "Reports");
+        add(connection, "a", "Ops");
+        add(connection, "c", "");
+        let order = |connection: &Connection| {
+            list_saved(connection)
+                .unwrap()
+                .into_iter()
+                .map(|q| format!("{}/{}", q.folder, q.name))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(connection), ["/c", "Ops/a", "Reports/b"]);
+        assert_eq!(rename_folder(connection, "Ops", "Reports").unwrap(), 1);
+        assert_eq!(order(connection), ["/c", "Reports/a", "Reports/b"]);
+        assert_eq!(rename_folder(connection, "Reports", " ").unwrap(), 2);
+        assert!(
+            list_saved(connection)
+                .unwrap()
+                .iter()
+                .all(|q| q.folder.is_empty())
+        );
+        assert_eq!(
+            rename_folder(connection, "", &"x".repeat(81))
+                .unwrap_err()
+                .kind,
             "validation"
         );
     }

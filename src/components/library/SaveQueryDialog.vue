@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref, useId, watch } from "vue";
+import { useLibrary } from "../../composables/useLibrary.js";
 import { useQuerySave } from "../../composables/useQuerySave.js";
 import BaseButton from "../common/BaseButton.vue";
 import BaseDialog from "../common/BaseDialog.vue";
@@ -10,6 +11,9 @@ const open = defineModel("open", { type: Boolean, default: false });
 const saver = useQuerySave();
 const name = ref("");
 const notes = ref("");
+const folder = ref("");
+const library = useLibrary();
+const folderList = useId();
 const fields = ref({});
 const saving = ref(false);
 
@@ -22,13 +26,18 @@ watch(open, (value) => {
     query?.name ??
     (/^Query \d+$/.test(tab?.title ?? "") ? "" : (tab?.title ?? ""));
   notes.value = query?.notes ?? "";
+  folder.value = query?.folder ?? "";
   fields.value = {};
 });
 
 async function submit() {
   saving.value = true;
   fields.value =
-    (await saver.submit({ name: name.value, notes: notes.value })) ?? {};
+    (await saver.submit({
+      name: name.value,
+      notes: notes.value,
+      folder: folder.value,
+    })) ?? {};
   saving.value = false;
 }
 </script>
@@ -51,6 +60,21 @@ async function submit() {
         placeholder="Pending orders"
         :error="fields.name"
       />
+      <TextInput
+        v-model="folder"
+        label="Folder"
+        placeholder="None"
+        hint="Pick a folder or type a new name."
+        :list="folderList"
+        :error="fields.folder"
+      />
+      <datalist :id="folderList">
+        <option
+          v-for="option in library.folders.value"
+          :key="option"
+          :value="option"
+        />
+      </datalist>
       <TextInput v-model="notes" label="Notes" placeholder="Optional" />
     </form>
     <template #footer>

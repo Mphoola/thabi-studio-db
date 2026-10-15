@@ -7,6 +7,7 @@
 //! session that owns it.
 
 mod host_keys;
+mod legacy_pem;
 
 use crate::errors::AppError;
 use russh::{
@@ -301,6 +302,53 @@ fn forward_error(host: &str, port: u16, error: russh::Error) -> AppError {
     .with_detail(Some(error.to_string()))
 }
 
+const NEEDS_PASSPHRASE: &str =
+    "This SSH key is protected by a passphrase. Enter it in the connection settings.";
+
+/// Reads a private key file, including old OpenSSL-encrypted PEM keys.
+fn load_key(
+    path: &std::path::Path,
+    passphrase: Option<&str>,
+) -> Result<russh::keys::PrivateKey, AppError> {
+    use legacy_pem::LegacyPemError;
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        AppError::new(
+            "ssh_key",
+            "The SSH key file couldn't be opened. Check that it still exists.",
+        )
+        .with_detail(Some(e.to_string()))
+    })?;
+    let text = match legacy_pem::decrypt(&text, passphrase) {
+        Ok(Some(decrypted)) => decrypted,
+        Ok(None) => text,
+        Err(LegacyPemError::NeedsPassphrase) => {
+            return Err(AppError::new("ssh_key", NEEDS_PASSPHRASE));
+        }
+        Err(LegacyPemError::WrongPassphrase) => {
+            return Err(AppError::new(
+                "ssh_key",
+                "The passphrase didn't unlock this SSH key. Check it and try again.",
+            ));
+        }
+        Err(LegacyPemError::Unsupported(cipher)) => {
+            return Err(AppError::new(
+                "ssh_key",
+                format!(
+                    "This SSH key is encrypted with {cipher}, which Thabi Studio can't read. Convert it with ssh-keygen -p -f <key>."
+                ),
+            ));
+        }
+        Err(LegacyPemError::Malformed) => text,
+    };
+    russh::keys::decode_secret_key(&text, passphrase).map_err(|e| {
+        let message = match e {
+            russh::keys::Error::KeyIsEncrypted => NEEDS_PASSPHRASE,
+            _ => "The SSH key file couldn't be read. Check the file and passphrase.",
+        };
+        AppError::new("ssh_key", message).with_detail(Some(e.to_string()))
+    })
+}
+
 async fn authenticate(
     session: &mut Handle<ClientHandler>,
     params: &SshParams,
@@ -319,21 +367,30 @@ async fn authenticate(
         .with_detail(Some(e.to_string()))
     };
     let ok = match &params.auth {
-        SshAuth::Password(password) => session
-            .authenticate_password(&params.username, password)
-            .await
-            .map_err(failed)?
-            .success(),
+        SshAuth::Password(password) => {
+            let result = session
+                .authenticate_password(&params.username, password)
+                .await
+                .map_err(failed)?;
+            // Many servers (PAM, e.g. default Ubuntu and macOS sshd) turn off
+            // plain "password" and ask for it through keyboard-interactive.
+            let offers_interactive = matches!(
+                &result,
+                russh::client::AuthResult::Failure { remaining_methods, .. }
+                    if remaining_methods.contains(&russh::MethodKind::KeyboardInteractive)
+            );
+            if result.success() {
+                true
+            } else if offers_interactive {
+                authenticate_interactive(session, &params.username, password)
+                    .await
+                    .map_err(failed)?
+            } else {
+                false
+            }
+        }
         SshAuth::KeyFile { path, passphrase } => {
-            let key = russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|e| {
-                let message = match e {
-                    russh::keys::Error::KeyIsEncrypted => {
-                        "This SSH key is protected by a passphrase. Enter it in the connection settings."
-                    }
-                    _ => "The SSH key file couldn't be read. Check the file and passphrase.",
-                };
-                AppError::new("ssh_key", message)
-            })?;
+            let key = load_key(path, passphrase.as_deref())?;
             let hash = session
                 .best_supported_rsa_hash()
                 .await
@@ -351,6 +408,48 @@ async fn authenticate(
         SshAuth::Agent => authenticate_with_agent(session, params).await?,
     };
     if ok { Ok(()) } else { Err(rejected()) }
+}
+
+/// Answers keyboard-interactive prompts with the saved password. Only
+/// password-style prompts are answered; a second factor (an OTP prompt after
+/// the password) isn't supported and fails as a rejected login.
+async fn authenticate_interactive(
+    session: &mut Handle<ClientHandler>,
+    username: &str,
+    password: &str,
+) -> Result<bool, russh::Error> {
+    use russh::client::KeyboardInteractiveAuthResponse as Response;
+    let mut response = session
+        .authenticate_keyboard_interactive_start(username, None::<String>)
+        .await?;
+    let mut answered_password = false;
+    loop {
+        match response {
+            Response::Success => return Ok(true),
+            Response::Failure { .. } => return Ok(false),
+            Response::InfoRequest { prompts, .. } => {
+                if prompts.iter().any(|p| !p.echo) {
+                    if answered_password {
+                        return Ok(false);
+                    }
+                    answered_password = true;
+                }
+                let answers = prompts
+                    .iter()
+                    .map(|p| {
+                        if p.echo {
+                            String::new()
+                        } else {
+                            password.to_owned()
+                        }
+                    })
+                    .collect();
+                response = session
+                    .authenticate_keyboard_interactive_respond(answers)
+                    .await?;
+            }
+        }
+    }
 }
 
 async fn authenticate_with_agent(

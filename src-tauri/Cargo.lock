@@ -5737,11 +5737,16 @@ dependencies = [
 name = "thabi-studio"
 version = "0.1.0"
 dependencies = [
+ "aes 0.9.3",
  "apple-native-keyring-store",
+ "base64 0.22.1",
+ "cbc 0.2.1",
  "chrono",
  "dbus-secret-service-keyring-store",
+ "des",
  "futures-util",
  "keyring-core",
+ "md-5",
  "rusqlite",
  "russh",
  "serde",

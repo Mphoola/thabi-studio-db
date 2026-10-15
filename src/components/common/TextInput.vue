@@ -18,6 +18,8 @@ const props = defineProps({
   id: { type: String, default: "" },
   autocomplete: { type: String, default: "off" },
   inputMode: { type: String, default: "" },
+  /** Id of a <datalist> with suggestions. */
+  list: { type: String, default: "" },
 });
 
 const model = defineModel({ type: [String, Number], default: "" });
@@ -44,6 +46,7 @@ const inputId = props.id || autoId;
         :disabled="disabled"
         :autocomplete="autocomplete"
         :inputmode="inputMode || undefined"
+        :list="list || undefined"
         :aria-label="ariaLabel || undefined"
         :aria-invalid="!!error || undefined"
         :aria-describedby="describedBy(inputId, { error, hint })"

@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_tls_ca_path.sql"),
     include_str!("../migrations/0004_ssh_auth.sql"),
     include_str!("../migrations/0005_history_saved_tabs.sql"),
+    include_str!("../migrations/0006_saved_query_folders.sql"),
 ];
 
 pub fn migrate(connection: &mut Connection) -> Result<(), AppError> {

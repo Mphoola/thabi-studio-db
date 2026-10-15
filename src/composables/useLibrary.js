@@ -1,10 +1,11 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   clearHistory,
   deleteHistoryEntry,
   deleteSavedQuery,
   listHistory,
   listSavedQueries,
+  renameSavedFolder,
   saveQuery,
 } from "../lib/tauri/commands.js";
 import { isTauri } from "../lib/tauri/ipc.js";
@@ -14,6 +15,12 @@ const history = ref([]);
 const historySearch = ref("");
 const saved = ref([]);
 const loaded = ref(false);
+/** Folder names in use, sorted. */
+const folders = computed(() =>
+  [...new Set(saved.value.map((q) => q.folder).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  ),
+);
 
 async function refreshHistory() {
   if (!isTauri()) return;
@@ -46,6 +53,11 @@ export function useLibrary() {
     await refreshSaved();
   }
 
+  async function renameFolder(from, to) {
+    await renameSavedFolder(from, to);
+    await refreshSaved();
+  }
+
   async function removeHistory(id) {
     await deleteHistoryEntry(id);
     history.value = history.value.filter((entry) => entry.id !== id);
@@ -61,11 +73,13 @@ export function useLibrary() {
     history,
     historySearch,
     saved,
+    folders,
     load,
     refreshHistory,
     refreshSaved,
     save,
     removeSaved,
+    renameFolder,
     removeHistory,
     clearAll,
   };

@@ -51,6 +51,18 @@
    CHECK constraint) to allow `key` and `agent`, and adds `ssh_key_path`,
    `has_ssh_key_passphrase` and the `ssh_known_hosts` table.
 
+10. Password sign-in falls back to keyboard-interactive when the server
+    offers it (PAM setups on Ubuntu and macOS often disable plain
+    "password"). Only password prompts are answered; a second factor isn't
+    supported.
+11. Old OpenSSL-encrypted PEM keys (`Proc-Type: 4,ENCRYPTED`, e.g.
+    `openssl genrsa -des3` or some cloud consoles) are decrypted in memory by
+    `ssh/legacy_pem.rs`, because russh only reads the AES-128-CBC variant.
+    Supported: DES-EDE3-CBC and AES-128/192/256-CBC. New dependencies, all
+    RustCrypto and already in the dependency tree through sqlx and russh:
+    `des`, `aes`, `cbc` (ciphers), `md-5` (OpenSSL's key derivation) and
+    `base64` (PEM body). Nothing decrypted is written to disk.
+
 ## VPNs and private networks
 
 No special support is needed: if your Mac can reach the database through a

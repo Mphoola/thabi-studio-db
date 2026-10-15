@@ -63,6 +63,17 @@ pub async fn delete_saved_query(id: String, state: State<'_, AppState>) -> Resul
         .await
 }
 
+#[tauri::command]
+pub async fn rename_saved_folder(
+    from: String,
+    to: String,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    state
+        .blocking(move |connection, _| library::rename_folder(connection, &from, &to))
+        .await
+}
+
 /// Stores the open query tabs so unsaved SQL survives quitting.
 #[tauri::command]
 pub async fn save_workspace_tabs(

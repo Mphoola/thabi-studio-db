@@ -307,7 +307,7 @@ handlers.delete_history_entry = ({ id }) => {
   );
 };
 handlers.clear_history = () => historyStore.splice(0).length;
-handlers.list_saved_queries = () => savedStore;
+handlers.list_saved_queries = () => savedStore.map((q) => ({ ...q }));
 handlers.save_query = ({ input }) => {
   if (!input.name.trim())
     throw {
@@ -325,8 +325,14 @@ handlers.save_query = ({ input }) => {
     queryText: input.queryText,
     profileId: input.profileId ?? null,
     notes: input.notes ?? "",
+    folder: (input.folder ?? "").trim(),
   });
   return saved;
+};
+handlers.rename_saved_folder = ({ from, to }) => {
+  const moved = savedStore.filter((q) => q.folder === from);
+  for (const q of moved) q.folder = to.trim();
+  return moved.length;
 };
 handlers.delete_saved_query = ({ id }) => {
   savedStore.splice(

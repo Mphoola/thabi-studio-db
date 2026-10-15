@@ -23,12 +23,16 @@ export function useQuerySave() {
       dialogs.show("saveQuery");
       return;
     }
+    // Keep the notes and folder the query already has.
+    const existing = library.saved.value.find((q) => q.id === tab.savedQueryId);
     try {
       await library.save({
         id: tab.savedQueryId,
         name: tab.title,
         queryText: tab.sql,
         profileId: tab.profileId,
+        notes: existing?.notes ?? "",
+        folder: existing?.folder ?? "",
       });
       tab.savedSql = tab.sql;
     } catch (error) {
@@ -36,20 +40,21 @@ export function useQuerySave() {
     }
   }
 
-  /** Opens the dialog to rename a saved query or edit its notes. */
+  /** Opens the dialog to rename a saved query, move it or edit its notes. */
   function editSaved(query) {
     pending.value = { query };
     dialogs.show("saveQuery");
   }
 
   /** Called by the dialog. Returns field errors, or null when saved. */
-  async function submit({ name, notes }) {
+  async function submit({ name, notes, folder }) {
     const { tab, query } = pending.value ?? {};
     try {
       const saved = await library.save({
         id: query?.id ?? null,
         name,
         notes,
+        folder,
         queryText: query ? query.queryText : tab.sql,
         profileId: query ? query.profileId : tab.profileId,
       });

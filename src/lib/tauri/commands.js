@@ -166,13 +166,18 @@ export function listSavedQueries() {
   return call("list_saved_queries");
 }
 
-/** input: { id?, name, queryText, profileId?, notes? } */
+/** input: { id?, name, queryText, profileId?, notes?, folder? } */
 export function saveQuery(input) {
   return call("save_query", { input });
 }
 
 export function deleteSavedQuery(id) {
   return call("delete_saved_query", { id });
+}
+
+/** Renames (or, with to = "", removes) a saved-query folder. @returns {Promise<number>} */
+export function renameSavedFolder(from, to) {
+  return call("rename_saved_folder", { from, to });
 }
 
 export function saveWorkspaceTabs(tabs) {

@@ -115,7 +115,11 @@ watch(
 );
 watch(
   () => form.sshEnabled,
-  (enabled) => !enabled && (form.sshPassword = ""),
+  (enabled) => {
+    if (!enabled) form.sshPassword = "";
+    // Through a tunnel the database is usually on the SSH server itself.
+    else if (!form.host.trim()) form.host = "localhost";
+  },
 );
 // A test result describes the values it ran with; clear it when they change.
 watch(
@@ -205,6 +209,7 @@ async function save() {
         v-model:form="form"
         :fields="fields"
         :has-saved-password="!!editingProfile?.hasDatabasePassword"
+        :via-ssh="form.sshEnabled"
         @tls-touched="tlsTouched = true"
       />
       <SshProfileFields

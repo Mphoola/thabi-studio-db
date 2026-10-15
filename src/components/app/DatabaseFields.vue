@@ -10,6 +10,7 @@ const form = defineModel("form", { type: Object, required: true });
 defineProps({
   fields: { type: Object, required: true },
   hasSavedPassword: { type: Boolean, default: false },
+  viaSsh: { type: Boolean, default: false },
 });
 defineEmits(["tls-touched"]);
 
@@ -22,7 +23,13 @@ const drivers = [
 
 <template>
   <section class="flex flex-col gap-3">
-    <h3 class="text-sm font-semibold text-fg">Database</h3>
+    <div>
+      <h3 class="text-sm font-semibold text-fg">Database</h3>
+      <p v-if="viaSsh" class="text-sm text-fg-muted">
+        Still needed with SSH: the tunnel only carries the connection, then the
+        database checks its own user name and password.
+      </p>
+    </div>
     <div class="grid grid-cols-2 gap-3">
       <SelectInput
         v-model="form.driver"
@@ -35,6 +42,9 @@ const drivers = [
           v-model="form.host"
           label="Host"
           placeholder="localhost"
+          :hint="
+            viaSsh ? 'As seen from the SSH server, usually localhost.' : ''
+          "
           :error="fields.host"
         />
         <TextInput

@@ -91,6 +91,7 @@ pub fn run() {
             commands::library::list_saved_queries,
             commands::library::save_query,
             commands::library::delete_saved_query,
+            commands::library::rename_saved_folder,
             commands::library::save_workspace_tabs,
             commands::library::load_workspace_tabs,
             commands::settings::get_app_settings,
