@@ -203,7 +203,11 @@ const {
  */
 function shownCell(cells, position) {
   const column = columnIndexes.value[position];
-  return props.editor ? props.editor.display(cells, column) : cells[column];
+  const cell = props.editor
+    ? props.editor.display(cells, column)
+    : cells?.[column];
+  // Same rule as a grid row: never hand back nothing.
+  return cell ?? { kind: "null" };
 }
 
 function onCellDown(event, row, col) {

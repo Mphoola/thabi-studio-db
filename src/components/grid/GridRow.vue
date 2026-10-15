@@ -18,10 +18,12 @@ const props = defineProps({
 });
 const emit = defineEmits(["celldown", "celldblclick", "commit", "cancel"]);
 
-/** Display positions, which is what the template's columns decide. */
+/** Display positions to source column index; all columns when not given. */
 const columns = computed(
   () => props.visible ?? (props.cells ?? []).map((_, index) => index),
 );
+/** One cell per visible column, as positions. */
+const positions = computed(() => columns.value.map((_, position) => position));
 
 const input = ref(null);
 const draft = ref("");
@@ -41,12 +43,22 @@ const deleted = () => props.editor?.isDeleted(props.cells);
 /** The source column a display position stands for. */
 const source = (position) =>
   props.visible ? props.visible[position] : position;
-/** What a display position shows: a staged edit when there is one. */
+/** Shown for a column this row has no cell for. */
+const EMPTY = Object.freeze({ kind: "null" });
+
+/**
+ * What a display position shows: a staged edit when there is one.
+ *
+ * Always a cell. A row can be asked about a column it does not carry — the
+ * result's shape can change while the grid still holds a row from the old one —
+ * and this runs during render, so returning nothing took the panel down.
+ */
 const shown = (position) => {
   const column = source(position);
-  return props.editor
+  const cell = props.editor
     ? props.editor.display(props.cells, column)
-    : props.cells[column];
+    : props.cells?.[column];
+  return cell ?? EMPTY;
 };
 
 function onKeydown(event) {
@@ -90,16 +102,16 @@ function onBlur() {
       {{ (index + 1).toLocaleString() }}
     </span>
     <template v-if="cells">
-      <template v-for="col in columns" :key="col">
+      <template v-for="position in positions" :key="position">
         <span
-          v-if="col === editingCol"
+          v-if="position === editingCol"
           role="gridcell"
           class="border-r border-line"
         >
           <CellPicker
-            v-if="editor.pickerFor?.(source(col))"
-            :picker="editor.pickerFor(source(col))"
-            :initial="editor.valueOf(cells, source(col))"
+            v-if="editor.pickerFor?.(source(position))"
+            :picker="editor.pickerFor(source(position))"
+            :initial="editor.valueOf(cells, source(position))"
             @commit="(value, move) => emit('commit', value, move)"
             @cancel="emit('cancel')"
           />
@@ -120,28 +132,28 @@ function onBlur() {
           role="gridcell"
           class="truncate border-r border-line px-2.5 leading-[26px]"
           :class="[
-            numeric[col] &&
-              shown(col).kind === 'value' &&
+            numeric[position] &&
+              shown(position).kind === 'value' &&
               'text-right tabular-nums',
-            shown(col).kind === 'null' && 'text-grid-null italic',
-            shown(col).kind === 'binary' && 'text-fg-muted',
-            shown(col).kind === 'value' &&
-              shown(col).value === '' &&
+            shown(position).kind === 'null' && 'text-grid-null italic',
+            shown(position).kind === 'binary' && 'text-fg-muted',
+            shown(position).kind === 'value' &&
+              shown(position).value === '' &&
               'text-fg-subtle',
-            editor?.isChanged(cells, source(col)) && 'bg-warning-subtle',
-            selection.isSelected(index, col) && 'bg-selection',
+            editor?.isChanged(cells, source(position)) && 'bg-warning-subtle',
+            selection.isSelected(index, position) && 'bg-selection',
             selection.focus.value.row === index &&
-              selection.focus.value.col === col &&
+              selection.focus.value.position === position &&
               selection.active.value &&
               'outline-2 -outline-offset-2 outline-accent',
           ]"
-          @mousedown="emit('celldown', $event, index, col)"
-          @dblclick="emit('celldblclick', index, col)"
+          @mousedown="emit('celldown', $event, index, position)"
+          @dblclick="emit('celldblclick', index, position)"
         >
           {{
-            shown(col).kind === "value" && shown(col).value === ""
+            shown(position).kind === "value" && shown(position).value === ""
               ? "''"
-              : displayText(shown(col))
+              : displayText(shown(position))
           }}
         </span>
       </template>

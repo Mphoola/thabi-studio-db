@@ -48,9 +48,10 @@ const title = computed(() =>
 function shown(position) {
   if (!props.cells) return null;
   const column = source(position);
-  return props.editor
+  const cell = props.editor
     ? props.editor.display(props.cells, column)
     : props.cells[column];
+  return cell ?? { kind: "null" };
 }
 
 /** The source column a display position stands for. */
