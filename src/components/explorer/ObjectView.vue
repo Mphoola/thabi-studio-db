@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-import { Eye, RefreshCw, Table2 } from "lucide-vue-next";
+import { Eye, ListFilter, RefreshCw, Table2 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
 import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import { useAppSettings } from "../../composables/useAppSettings.js";
@@ -11,6 +11,8 @@ import SegmentedControl from "../common/SegmentedControl.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
 import { remoteSource } from "../../lib/gridSources.js";
+import { newFilter, toRequest } from "../../lib/rowFilters.js";
+import FilterBar from "./FilterBar.vue";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
@@ -28,25 +30,46 @@ const tabs = [
 ];
 
 const results = ref({}); // tab -> { status, value?, error? }
+// Filters live on the tab so they survive switching tabs.
+if (!props.tab.filters) props.tab.filters = [];
+const filters = computed({
+  get: () => props.tab.filters,
+  set: (value) => (props.tab.filters = value),
+});
+const showFilters = computed(
+  () => tab.value === "data" && props.tab.showFilters,
+);
+const appliedCount = ref(0);
+// Columns of the last rows read, so the bar keeps working after an error.
+const columns = ref([]);
+
+function toggleFilters() {
+  props.tab.showFilters = !props.tab.showFilters;
+  if (props.tab.showFilters && !filters.value.length)
+    filters.value = [newFilter(columns.value[0] ?? "")];
+}
 
 async function load(which = tab.value) {
   const target = node.value;
   const id = props.tab.profileId ?? explorer.profile.value?.id;
   if (!target || !id) return;
   results.value = { ...results.value, [which]: { status: "loading" } };
+  const request = which === "data" ? toRequest(filters.value) : [];
   try {
     const value =
       which === "data"
         ? await openObjectData(id, props.tab.id, {
             ...target,
             maxRows: settings.value.maxResultRows || null,
+            filters: request,
           })
         : await describeObject(id, target);
-    if (node.value === target)
-      results.value = {
-        ...results.value,
-        [which]: { status: "loaded", value },
-      };
+    if (node.value !== target) return;
+    results.value = { ...results.value, [which]: { status: "loaded", value } };
+    if (which === "data") {
+      columns.value = value.columns.map((column) => column.name);
+      appliedCount.value = request.length;
+    }
   } catch (error) {
     if (node.value === target)
       results.value = { ...results.value, [which]: { status: "error", error } };
@@ -55,6 +78,7 @@ async function load(which = tab.value) {
 
 watch(node, () => {
   results.value = {};
+  columns.value = [];
   load();
 });
 watch(tab, (value) => !results.value[value] && load(value));
@@ -99,12 +123,27 @@ const location = computed(() =>
         label="Object view"
       />
       <IconButton
+        v-if="tab === 'data'"
+        :icon="ListFilter"
+        :label="appliedCount ? `Filters (${appliedCount})` : 'Filter Rows'"
+        :pressed="!!props.tab.showFilters"
+        @click="toggleFilters"
+      />
+      <IconButton
         :icon="RefreshCw"
         label="Reload"
         :disabled="current.status === 'loading'"
         @click="load()"
       />
     </header>
+    <FilterBar
+      v-if="showFilters && columns.length"
+      v-model:filters="filters"
+      :columns="columns"
+      :applied-count="appliedCount"
+      :loading="current.status === 'loading'"
+      @apply="load('data')"
+    />
     <div
       v-if="current.status === 'loading' || current.status === 'idle'"
       class="flex flex-1 items-center justify-center gap-2 text-fg-subtle"

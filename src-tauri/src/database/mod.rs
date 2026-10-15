@@ -7,6 +7,7 @@
 //! to know which backend is running it.
 
 pub mod error;
+pub mod filter;
 pub mod metadata;
 mod mysql;
 mod postgres;
@@ -365,24 +366,26 @@ pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Res
 }
 
 /// SQL that reads up to `limit` rows of a table or view, fully quoted.
+/// `filter` is a WHERE clause from `filter::where_clause` ("" for none).
 pub fn object_data_sql(
     engine: Engine,
     database: &str,
     schema: &str,
     name: &str,
+    filter: &str,
     limit: usize,
 ) -> String {
     match engine {
         Engine::Postgres => format!(
-            "SELECT * FROM {} LIMIT {limit}",
+            "SELECT * FROM {}{filter} LIMIT {limit}",
             quote::qualified(engine, &[schema, name])
         ),
         Engine::MySql => format!(
-            "SELECT * FROM {} LIMIT {limit}",
+            "SELECT * FROM {}{filter} LIMIT {limit}",
             quote::qualified(engine, &[database, name])
         ),
         Engine::SqlServer => format!(
-            "SELECT TOP ({limit}) * FROM {}",
+            "SELECT TOP ({limit}) * FROM {}{filter}",
             quote::qualified(engine, &[database, schema, name])
         ),
     }
@@ -445,16 +448,16 @@ mod tests {
     #[test]
     fn object_data_sql_quotes_names_for_each_engine() {
         assert_eq!(
-            object_data_sql(Engine::Postgres, "shop", "Sales Ü", "Order Details", 10),
+            object_data_sql(Engine::Postgres, "shop", "Sales Ü", "Order Details", "", 10),
             "SELECT * FROM \"Sales Ü\".\"Order Details\" LIMIT 10"
         );
         assert_eq!(
-            object_data_sql(Engine::MySql, "shop", "", "a`b", 5),
+            object_data_sql(Engine::MySql, "shop", "", "a`b", "", 5),
             "SELECT * FROM `shop`.`a``b` LIMIT 5"
         );
         assert_eq!(
-            object_data_sql(Engine::SqlServer, "shop", "dbo", "x]y", 5),
-            "SELECT TOP (5) * FROM [shop].[dbo].[x]]y]"
+            object_data_sql(Engine::SqlServer, "shop", "dbo", "x]y", " WHERE 1 = 1", 5),
+            "SELECT TOP (5) * FROM [shop].[dbo].[x]]y] WHERE 1 = 1"
         );
     }
 

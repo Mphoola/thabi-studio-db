@@ -163,9 +163,50 @@ async fn lists_databases(engine: Engine, expected: &str) {
     session.close().await.unwrap();
 }
 
+/// Table-data filters run on every engine, including LIKE on a number column
+/// and a text value compared with an integer column.
+async fn filters_rows(engine: Engine) {
+    use thabi_studio_lib::database::filter::{RowFilter, where_clause};
+    let f = |column: &str, op: &str, value: &str| RowFilter {
+        column: column.into(),
+        op: op.into(),
+        value: value.into(),
+    };
+    let source =
+        "SELECT 71 AS id, 'O''Brien' AS name UNION ALL SELECT 5, 'Zoë' UNION ALL SELECT 9, NULL";
+    let mut session = open(engine).await;
+    for (filters, expected) in [
+        (vec![f("id", "eq", "71")], vec!["71"]),
+        (vec![f("name", "contains", "'Bri")], vec!["71"]),
+        (vec![f("id", "contains", "7")], vec!["71"]),
+        (vec![f("id", "in", "5, 9")], vec!["5", "9"]),
+        (vec![f("name", "is_null", "")], vec!["9"]),
+        (
+            vec![f("id", "ge", "9"), f("", "raw", "id < 100")],
+            vec!["71", "9"],
+        ),
+    ] {
+        let clause = where_clause(engine, &filters).unwrap();
+        let sql = format!("SELECT id FROM ({source}) t{clause} ORDER BY id DESC");
+        let result = session.execute(&sql, 10).await.unwrap();
+        let ids: Vec<_> = values(&result)
+            .into_iter()
+            .map(|row| row[0].clone().unwrap())
+            .collect();
+        assert_eq!(ids, expected, "{sql}");
+    }
+    session.close().await.unwrap();
+}
+
 mod postgres {
     use super::*;
     const E: Engine = Engine::Postgres;
+
+    #[tokio::test]
+    #[ignore]
+    async fn filters() {
+        filters_rows(E).await;
+    }
 
     #[tokio::test]
     #[ignore]
@@ -251,6 +292,12 @@ mod mysql {
 
     #[tokio::test]
     #[ignore]
+    async fn filters() {
+        filters_rows(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn connects() {
         connects_and_reports_version(E, "MySQL 8.4").await;
     }
@@ -316,6 +363,12 @@ mod mysql {
 mod sqlserver {
     use super::*;
     const E: Engine = Engine::SqlServer;
+
+    #[tokio::test]
+    #[ignore]
+    async fn filters() {
+        filters_rows(E).await;
+    }
 
     #[tokio::test]
     #[ignore]

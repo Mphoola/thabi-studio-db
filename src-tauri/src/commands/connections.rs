@@ -159,6 +159,7 @@ pub async fn describe_object(
 /// Reads a table or view into an object tab's own session, so its rows
 /// scroll, sort and export like a query result. Bounded by `max_rows`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
 pub async fn open_object_data(
     id: String,
     tab_id: String,
@@ -166,9 +167,12 @@ pub async fn open_object_data(
     schema: Option<String>,
     name: String,
     max_rows: Option<usize>,
+    filters: Option<Vec<database::filter::RowFilter>>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let filter =
+        database::filter::where_clause(params.engine, filters.as_deref().unwrap_or_default())?;
     let max_rows = max_rows
         .unwrap_or(DEFAULT_MAX_ROWS)
         .clamp(1, MAX_ROWS_LIMIT);
@@ -178,6 +182,7 @@ pub async fn open_object_data(
         &database,
         schema.as_deref().unwrap_or_default(),
         &name,
+        &filter,
         max_rows + 1,
     );
     let result = tab.run(&params, Some(database), &sql, max_rows, None).await;

@@ -18,6 +18,7 @@ const WorkspaceView = defineAsyncComponent(
 );
 import { runCommand } from "../../composables/useCommands.js";
 import ConnectionProfileDialog from "./ConnectionProfileDialog.vue";
+import ConnectionRail from "../connections/ConnectionRail.vue";
 import ConnectionSwitcher from "../connections/ConnectionSwitcher.vue";
 import SaveQueryDialog from "../library/SaveQueryDialog.vue";
 import { startTabPersistence } from "../../composables/useTabPersistence.js";
@@ -90,6 +91,7 @@ function dialogModel(name) {
     <TitleBar />
     <EnvironmentStrip />
     <div class="flex min-h-0 flex-1">
+      <ConnectionRail />
       <AppSidebar v-if="sidebarOpen" />
       <main class="min-w-0 flex-1 overflow-auto" aria-label="Workspace">
         <component

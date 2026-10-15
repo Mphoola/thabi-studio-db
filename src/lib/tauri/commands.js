@@ -138,7 +138,12 @@ export function describeObject(id, { database, schema, name, kind }) {
  * Reads a table or view into the object tab's own session. The result pages,
  * sorts and exports like a query result. Bounded by `maxRows`.
  */
-export function openObjectData(id, tabId, { database, schema, name, maxRows }) {
+/** filters: [{ column, op, value }], AND-ed; op "raw" takes a SQL condition. */
+export function openObjectData(
+  id,
+  tabId,
+  { database, schema, name, maxRows, filters = [] },
+) {
   return call("open_object_data", {
     id,
     tabId,
@@ -146,6 +151,7 @@ export function openObjectData(id, tabId, { database, schema, name, maxRows }) {
     schema,
     name,
     maxRows,
+    filters,
   });
 }
 

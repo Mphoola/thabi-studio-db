@@ -35,6 +35,8 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
 - Cross-platform support and Phase 9 (history, saved queries, recovery):
   on `phase-9-history-saved-queries`, not committed (the user tests first).
   Read `docs/decisions/0012-cross-platform.md` and `0013-history-saved-queries.md`.
+  Also on this branch: saved-query folders, SSH fixes (keyboard-interactive,
+  legacy PEM keys), the connection rail and table row filters (`0014`).
 - Next: Phase 10 (testing, packaging for all three platforms, release).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
