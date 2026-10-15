@@ -8,9 +8,10 @@ phase until the current one's exit criteria are verified.
 
 Local-first desktop client for MySQL, PostgreSQL and SQL Server on macOS,
 Windows and Linux (developed on macOS; CI builds all three).
-No Thabi backend, accounts, telemetry or cloud dependency. The MVP favours
-reliable connections, safe query execution, schema browsing and a good
-results grid over breadth of features. See `plan.md` §2 for what is out of scope.
+No Thabi backend, accounts, telemetry or cloud dependency. The goal is a
+full-featured client (TablePlus-class); the MVP (Phases 1–10) came first,
+and Phases 11–15 extend it. Reliability and safety still come before
+breadth. See `plan.md` §2 and §7b for scope.
 
 ## Current status
 
@@ -39,7 +40,9 @@ results grid over breadth of features. See `plan.md` §2 for what is out of scop
   legacy PEM keys), the connection rail and table row filters (`0014`).
 - Phase 9b (inline data editing): on `phase-9b-inline-editing`, not
   committed. Read `docs/decisions/0015-inline-editing.md`.
-- Next: Phase 10 (testing, packaging for all three platforms, release).
+- Next: Phase 10 (testing, packaging for all three platforms, release),
+  then the extended Phases 11–15 in `plan.md` §7b (read its "Read this
+  first" section before starting any of them).
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 
