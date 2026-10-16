@@ -289,6 +289,7 @@ async fn applies_generated_ddl(engine: Engine) {
 
     // A plan touching a column, a key and an index, generated and applied.
     let plan = TablePlan {
+        create: None,
         columns: vec![
             Change::AddColumn(ColumnSpec {
                 name: "note".into(),
@@ -351,6 +352,61 @@ async fn applies_generated_ddl(engine: Engine) {
 
     // A table with no key and no columns is refused before it reaches a server.
     assert!(create_table(engine, db, schema, "empty", &TableSpec::default()).is_err());
+
+    // The path the Create Table wizard uses: a create plan previewed and then
+    // applied, which is one statement rather than a list of alters.
+    let wizard = TablePlan {
+        create: Some(TableSpec {
+            columns: vec![
+                ColumnSpec {
+                    name: "id".into(),
+                    data_type: "INTEGER".into(),
+                    nullable: false,
+                    primary_key: true,
+                    ..Default::default()
+                },
+                ColumnSpec {
+                    name: "label".into(),
+                    data_type: match engine {
+                        Engine::SqlServer => "NVARCHAR(MAX)".into(),
+                        _ => "TEXT".into(),
+                    },
+                    nullable: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let shown =
+        thabi_studio_lib::database::ddl::preview(engine, db, schema, "thabi wizard", &wizard);
+    assert!(shown.note.contains("transaction") || shown.note.contains("commits"));
+    for statement in &shown.statements {
+        assert!(
+            statement.starts_with("CREATE TABLE"),
+            "{engine:?}: {statement}"
+        );
+        session
+            .execute(statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused the wizard's SQL {statement}\n{e:?}"));
+    }
+    let made = session
+        .describe(
+            db,
+            schema,
+            "thabi wizard",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe the wizard's table");
+    let names: Vec<&str> = made.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "label"], "{engine:?} made a different table");
+    session
+        .execute(&drop_table(engine, db, schema, "thabi wizard", true), 1)
+        .await
+        .expect("drop the wizard's table");
 }
 
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {

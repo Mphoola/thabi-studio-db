@@ -246,6 +246,7 @@ fn the_preview_is_the_script_that_will_run() {
     };
 
     let plan = TablePlan {
+        create: None,
         columns: vec![
             Change::AddColumn(ColumnSpec {
                 name: "summary".into(),

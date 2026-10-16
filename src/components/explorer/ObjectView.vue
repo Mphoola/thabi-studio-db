@@ -10,6 +10,7 @@ import { columnLayoutRef } from "../../composables/useColumns.js";
 import { tableSource } from "../../lib/gridSources.js";
 import { pagerProps, tablePageSize } from "../../lib/tablePaging.js";
 import AddRowDialog from "./AddRowDialog.vue";
+import CreateTableDialog from "./CreateTableDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
 import EditChangesBar from "./EditChangesBar.vue";
 import FilterBar from "./FilterBar.vue";
@@ -71,6 +72,7 @@ const links = useTableLinks({
   columnInfo: editing.columnInfo,
 });
 const addingRow = ref(false);
+const creatingTable = ref(false);
 // Save (Mod+S) in this tab applies the staged edits.
 props.tab.applyEdits = editing.apply;
 
@@ -224,6 +226,18 @@ const goToPage = (index) => gridView.value?.goToPage(index);
       class="min-h-0 flex-1"
       :structure="current.value"
       :kind="node.kind"
+    />
+    <CreateTableDialog
+      v-model:open="creatingTable"
+      :profile-id="props.tab.profileId ?? ''"
+      :tab-id="props.tab.id"
+      :database="node.database ?? ''"
+      :schema="node.schema ?? ''"
+      :engine="
+        connections.profiles.value.find((p) => p.id === props.tab.profileId)
+          ?.driver ?? 'postgres'
+      "
+      @created="load('structure')"
     />
     <AddRowDialog
       v-model:open="addingRow"

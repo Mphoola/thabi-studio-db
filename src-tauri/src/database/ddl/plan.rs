@@ -4,7 +4,7 @@
 //! here, and the apply path produces it from the same call, so what is read
 //! cannot drift from what is sent.
 
-use super::super::{Engine, quote};
+use super::super::Engine;
 use super::alter::{Change, alter_column};
 use super::keys::{IndexSpec, KeyChange, alter_key, create_index, drop_index};
 use super::table::TableSpec;
@@ -17,10 +17,22 @@ pub enum IndexAction {
 }
 
 /// Everything staged against one table.
+///
+/// A plan either creates the table or changes one. Both go through the same
+/// preview and apply so the review dialog is the same screen either way, but
+/// they are not mixed: `ALTER TABLE … ADD COLUMN` against a table that is not
+/// there yet would fail on the first statement, and a `CREATE TABLE` in the
+/// middle of a plan of changes would be worse.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 pub struct TablePlan {
+    /// Set when the table is being created rather than changed.
+    #[serde(default)]
+    pub create: Option<TableSpec>,
+    #[serde(default)]
     pub columns: Vec<Change>,
+    #[serde(default)]
     pub keys: Vec<KeyChange>,
+    #[serde(default)]
     pub indexes: Vec<IndexAction>,
 }
 
@@ -69,6 +81,14 @@ pub fn table_script(
     table: &str,
     plan: &TablePlan,
 ) -> Vec<String> {
+    // A plan that creates the table is one statement, or an error: the
+    // changes in a create plan are the columns it is created with.
+    if let Some(spec) = &plan.create {
+        return match super::table::create_table(engine, database, schema, table, spec) {
+            Ok(statement) => vec![statement],
+            Err(message) => vec![format!("-- Not run: {message}")],
+        };
+    }
     let target = (database, schema, table);
     let mut out = Vec::new();
 
@@ -126,11 +146,6 @@ pub fn create_script(
     )?])
 }
 
-/// A statement that reads as one, for the dialog's heading.
-pub fn headline(engine: Engine, database: &str, schema: &str, table: &str) -> String {
-    quote::table(engine, database, schema, table)
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::table::{ColumnSpec, ForeignKey};
@@ -139,6 +154,7 @@ mod tests {
     #[test]
     fn constraints_come_off_before_the_columns_and_go_back_on_after() {
         let plan = TablePlan {
+            create: None,
             columns: vec![Change::DropColumn {
                 name: "note".into(),
             }],
@@ -185,6 +201,7 @@ mod tests {
     #[test]
     fn a_sql_server_rename_keeps_its_two_statements_together() {
         let plan = TablePlan {
+            create: None,
             columns: vec![Change::RenameColumn {
                 from: "note".into(),
                 to: "summary".into(),
@@ -204,6 +221,41 @@ mod tests {
     }
 
     #[test]
+    fn a_create_plan_is_one_statement_not_a_list_of_alters() {
+        // ALTER TABLE ADD COLUMN against a table that is not there would fail
+        // on the first statement, which is the whole difference.
+        let plan = TablePlan {
+            create: Some(TableSpec {
+                columns: vec![ColumnSpec {
+                    name: "id".into(),
+                    data_type: "INTEGER".into(),
+                    nullable: false,
+                    primary_key: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..TablePlan::default()
+        };
+        for engine in [Engine::Postgres, Engine::MySql, Engine::SqlServer] {
+            let script = table_script(engine, "shop", "public", "orders", &plan);
+            assert_eq!(script.len(), 1, "{engine:?}: {script:?}");
+            assert!(script[0].starts_with("CREATE TABLE"), "{engine:?}");
+        }
+    }
+
+    #[test]
+    fn a_create_plan_with_no_columns_says_so_rather_than_running_nothing() {
+        let plan = TablePlan {
+            create: Some(TableSpec::default()),
+            ..TablePlan::default()
+        };
+        let script = table_script(Engine::Postgres, "shop", "public", "orders", &plan);
+        assert_eq!(script.len(), 1);
+        assert!(script[0].starts_with("-- Not run:"), "{}", script[0]);
+    }
+
+    #[test]
     fn an_empty_plan_is_an_empty_script() {
         let plan = TablePlan::default();
         assert!(table_script(Engine::Postgres, "shop", "public", "orders", &plan).is_empty());
@@ -212,6 +264,7 @@ mod tests {
     #[test]
     fn every_statement_of_a_plan_stands_alone() {
         let plan = TablePlan {
+            create: None,
             columns: vec![Change::AddColumn(ColumnSpec {
                 name: "note".into(),
                 data_type: "TEXT".into(),

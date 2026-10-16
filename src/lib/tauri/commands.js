@@ -309,6 +309,19 @@ export function openObjectData(
   });
 }
 
+/**
+ * The DDL for a table's staged changes, and what happens if one of them fails.
+ * Runs nothing: the review dialog shows this before anything is sent.
+ */
+export function previewTableDdl(id, tabId, target, plan) {
+  return call("preview_table_ddl", { id, tabId, target, plan });
+}
+
+/** Applies a table's staged changes. The script is the one previewed. */
+export function applyTableDdl(id, tabId, target, plan) {
+  return call("apply_table_ddl", { id, tabId, target, plan });
+}
+
 /** One page of a table at `offset`, sorted on the server. */
 export function fetchTablePage(
   id,
