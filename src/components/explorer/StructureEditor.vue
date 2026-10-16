@@ -8,6 +8,8 @@ import InlineAlert from "../common/InlineAlert.vue";
 import SelectInput from "../common/SelectInput.vue";
 import TextInput from "../common/TextInput.vue";
 import DdlReviewDialog from "./DdlReviewDialog.vue";
+import StagedChanges from "./StagedChanges.vue";
+import StructureColumnsTable from "./StructureColumnsTable.vue";
 
 /**
  * Edits a table's columns and indexes, staged until they are reviewed.
@@ -61,6 +63,29 @@ const types = computed(() => {
   ];
 });
 
+/** Types this table already uses, offered as the input's suggestions. */
+const typeNames = computed(() =>
+  [...new Set(props.structure.columns.map((column) => column.dataType))].join(
+    " ",
+  ),
+);
+
+/**
+ * Staged as it is typed. `stageChange` replaces a change on the same column,
+ * so typing VARCHAR(255) is one staged change rather than eleven.
+ */
+function rename(column, name) {
+  const to = String(name).trim();
+  if (!to || to === column.name) return;
+  changes.stage({ kind: "renameColumn", from: column.name, to });
+}
+
+function retype(column, dataType) {
+  const to = String(dataType).trim();
+  if (!to || to === column.dataType) return;
+  changes.stage({ kind: "setType", name: column.name, dataType: to });
+}
+
 function addColumn() {
   const name = newColumn.value.name.trim();
   if (!name) {
@@ -90,10 +115,6 @@ function addColumn() {
   };
   adding.value = false;
 }
-
-const th =
-  "h-7 border-b border-line bg-grid-header px-3 text-left text-xs font-semibold text-fg-muted";
-const td = "h-7 border-b border-line px-3";
 </script>
 
 <template>
@@ -179,84 +200,34 @@ const td = "h-7 border-b border-line px-3";
       <IconButton :icon="X" size="sm" label="Cancel" @click="adding = false" />
     </div>
 
-    <ul
+    <StagedChanges
       v-if="changes.dirty.value"
-      class="flex flex-col gap-1 border-b border-line px-3 py-2"
-    >
-      <li
-        v-for="one in changes.edits.value"
-        :key="changes.describeEdit(one)"
-        class="flex items-center gap-2 text-xs text-fg-muted"
-      >
-        <span>{{ changes.describeEdit(one) }}</span>
-        <IconButton
-          :icon="X"
-          size="sm"
-          label="Undo this change"
-          @click="changes.undo(one)"
-        />
-      </li>
-    </ul>
+      :edits="changes.edits.value"
+      :describe="changes.describeEdit"
+      @undo="changes.undo"
+      @discard="changes.discard"
+    />
 
     <div class="selectable overflow-auto p-4">
-      <table
-        class="w-full border-collapse rounded-md border border-line text-sm"
-      >
-        <thead>
-          <tr>
-            <th :class="th" class="w-10">#</th>
-            <th :class="th">Name</th>
-            <th :class="th">Type</th>
-            <th :class="th">Nullable</th>
-            <th :class="th">Default</th>
-            <th v-if="editing" :class="th" class="w-24">Change</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(column, index) in structure.columns" :key="column.name">
-            <td :class="td" class="text-fg-subtle tabular-nums">
-              {{ index + 1 }}
-            </td>
-            <td :class="td" class="font-medium">{{ column.name }}</td>
-            <td :class="td" class="font-mono text-fg-muted">
-              {{ column.dataType }}
-            </td>
-            <td :class="td" class="text-fg-muted">
-              {{ column.nullable ? "Yes" : "No" }}
-            </td>
-            <td :class="td" class="max-w-64 truncate font-mono text-fg-muted">
-              {{ column.default === null ? "—" : column.default }}
-            </td>
-            <td v-if="editing" :class="td">
-              <div class="flex items-center gap-1">
-                <BaseButton
-                  size="sm"
-                  variant="ghost"
-                  @click="
-                    changes.stage({
-                      kind: 'setNullable',
-                      name: column.name,
-                      nullable: !column.nullable,
-                      dataType: column.dataType,
-                    })
-                  "
-                >
-                  {{ column.nullable ? "Not null" : "Nullable" }}
-                </BaseButton>
-                <BaseButton
-                  size="sm"
-                  variant="ghost"
-                  @click="
-                    changes.stage({ kind: 'dropColumn', name: column.name })
-                  "
-                >
-                  Drop
-                </BaseButton>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <StructureColumnsTable
+        :columns="structure.columns"
+        :editing="editing"
+        :type-names="typeNames"
+        @rename="(column, name) => rename(column, name)"
+        @retype="(column, dataType) => retype(column, dataType)"
+        @toggle-nullable="
+          (column) =>
+            changes.stage({
+              kind: 'setNullable',
+              name: column.name,
+              nullable: !column.nullable,
+              dataType: column.dataType,
+            })
+        "
+        @drop="
+          (column) => changes.stage({ kind: 'dropColumn', name: column.name })
+        "
+      />
     </div>
 
     <DdlReviewDialog
