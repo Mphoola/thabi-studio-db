@@ -31,10 +31,10 @@ const props = defineProps({
 const emit = defineEmits(["close", "apply"]);
 
 const statements = computed(() => props.preview?.statements ?? []);
-const empty = computed(
-  () =>
-    props.preview && !statements.value.length && !props.loading && !props.error,
-);
+/** Whether a preview has arrived. The body renders even while the dialog is
+ * closed, so every branch has to cope with there not being one yet. */
+const ready = computed(() => Boolean(props.preview));
+const empty = computed(() => ready.value && !statements.value.length);
 </script>
 
 <template>

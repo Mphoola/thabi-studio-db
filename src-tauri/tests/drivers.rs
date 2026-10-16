@@ -407,6 +407,58 @@ async fn applies_generated_ddl(engine: Engine) {
         .execute(&drop_table(engine, db, schema, "thabi wizard", true), 1)
         .await
         .expect("drop the wizard's table");
+
+    // The designer's own shape: change an existing column and add one, which
+    // is what the Structure tab stages.
+    let staged = TablePlan {
+        create: None,
+        columns: vec![
+            Change::SetNullable {
+                name: "status".into(),
+                nullable: true,
+                data_type: "VARCHAR(20)".into(),
+            },
+            Change::AddColumn(ColumnSpec {
+                // A name the earlier plan did not already add.
+                name: "designer_note".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                ..Default::default()
+            }),
+        ],
+        keys: vec![],
+        indexes: vec![],
+    };
+    for statement in table_script(engine, db, schema, "thabi ddl", &staged) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let changed = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after the staged changes");
+    let names: Vec<&str> = changed.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["id", "status", "note", "designer_note"],
+        "{engine:?}: {names:?}"
+    );
+    assert!(
+        changed
+            .columns
+            .iter()
+            .find(|c| c.name == "status")
+            .unwrap()
+            .nullable,
+        "{engine:?} did not make the column nullable"
+    );
 }
 
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
