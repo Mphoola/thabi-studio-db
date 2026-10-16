@@ -3,6 +3,7 @@
 use super::super::{Engine, quote};
 /// A column as the designer describes it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ColumnSpec {
     pub name: String,
     /// The engine's own type name, as the structure view reported it.
@@ -46,6 +47,7 @@ impl ColumnSpec {
 
 /// A foreign key to add with the table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ForeignKey {
     pub name: String,
     pub columns: Vec<String>,
@@ -58,6 +60,7 @@ pub struct ForeignKey {
 
 /// A table as the Create Table wizard describes it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TableSpec {
     pub columns: Vec<ColumnSpec>,
     /// Constraint names, when the engine wants one and the user gave it.

@@ -11,6 +11,8 @@ use super::table::TableSpec;
 
 /// An index to add or drop.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum IndexAction {
     Create(IndexSpec),
     Drop { name: String },

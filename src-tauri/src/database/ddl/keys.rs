@@ -4,6 +4,7 @@ use super::super::{Engine, quote};
 use super::table::{ForeignKey, foreign_key_clause, join_idents};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexSpec {
     pub name: String,
     pub columns: Vec<String>,
@@ -11,6 +12,8 @@ pub struct IndexSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum KeyChange {
     SetPrimaryKey {
         name: String,

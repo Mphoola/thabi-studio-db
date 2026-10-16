@@ -9,6 +9,8 @@ use super::table::{ColumnSpec, ForeignKey};
 /// statement: SQL Server changes a column's type in a statement of its own,
 /// and cannot do it in the same one that changes nullability.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Change {
     AddColumn(ColumnSpec),
     DropColumn {

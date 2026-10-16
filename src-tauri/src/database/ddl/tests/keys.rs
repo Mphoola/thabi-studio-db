@@ -1,6 +1,6 @@
 use crate::database::ddl::keys::*;
 use crate::database::ddl::outside_identifiers;
-use crate::database::ddl::{Change, alter_column};
+use crate::database::ddl::{Change, alter_column, table_script};
 
 /// The database and schema each engine addresses a table from.
 const PG: (&str, &str) = ("shop", "public");
@@ -160,4 +160,47 @@ fn every_generated_statement_quotes_an_awkward_name() {
             "a name ended the statement: {statement}"
         );
     }
+}
+
+/// The plan arrives from the webview as camelCase, which is what every other
+/// type crossing that boundary uses. A mismatch here is invisible until
+/// someone clicks Review SQL, so it is checked rather than remembered.
+#[test]
+fn a_plan_from_the_webview_is_read() {
+    let json = r#"{
+        "create": null,
+        "columns": [
+            { "addColumn": {
+                "name": "note", "dataType": "TEXT", "nullable": true,
+                "default": "", "comment": "", "primaryKey": false, "unique": false } },
+            { "dropColumn": { "name": "old_note" } },
+            { "renameColumn": { "from": "a", "to": "b", "spec": {
+                "name": "b", "dataType": "TEXT", "nullable": true,
+                "default": "", "comment": "", "primaryKey": false, "unique": false } } },
+            { "setType": { "name": "total", "dataType": "NUMERIC(10,2)" } },
+            { "setNullable": { "name": "note", "nullable": false, "dataType": "TEXT" } },
+            { "setDefault": { "name": "status", "default": "'new'" } }
+        ],
+        "keys": [],
+        "indexes": [
+            { "create": { "name": "i", "columns": ["note"], "unique": true } },
+            { "drop": { "name": "j" } }
+        ]
+    }"#;
+    let plan: crate::database::ddl::TablePlan =
+        serde_json::from_str(json).expect("the webview's plan should be readable");
+
+    assert_eq!(plan.columns.len(), 6);
+    assert_eq!(plan.indexes.len(), 2);
+    // And it produces statements, rather than parsing into nothing.
+    let script = table_script(Engine::Postgres, "shop", "public", "orders", &plan);
+    assert_eq!(script.len(), 8, "{}", script.join("\n"));
+}
+
+/// PascalCase is not accepted: the other half of the contract is that a name
+/// the webview never sends does not silently work either.
+#[test]
+fn a_pascal_case_plan_is_refused() {
+    let json = r#"{ "columns": [ { "DropColumn": { "name": "x" } } ] }"#;
+    assert!(serde_json::from_str::<crate::database::ddl::TablePlan>(json).is_err());
 }
