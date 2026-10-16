@@ -214,6 +214,145 @@ async fn decodes_bound_values_by_type(engine: Engine) {
     }
 }
 
+/**
+ * The designer generates DDL as text, and the unit tests can only check the
+ * text. This runs it: every generated statement is applied to a real server and
+ * read back through describe, which is the only way to know the statements are
+ * the ones each engine accepts.
+ */
+async fn applies_generated_ddl(engine: Engine) {
+    use thabi_studio_lib::database::ddl::{
+        Change, ColumnSpec, IndexAction, IndexSpec, KeyChange, TablePlan, TableSpec, create_table,
+        drop_table, table_script,
+    };
+    let mut session = open(engine).await;
+    // Each session is already connected to its database: the SQL Server
+    // container only has master, and PostgreSQL has no USE at all.
+    let (db, schema) = match engine {
+        Engine::MySql => ("thabi_it", ""),
+        Engine::Postgres => ("thabi_it", "public"),
+        Engine::SqlServer => ("master", "dbo"),
+    };
+    session
+        .execute(&drop_table(engine, db, schema, "thabi ddl", true), 1)
+        .await
+        .unwrap_or_else(|e| panic!("drop leftovers from a previous run: {e:?}"));
+
+    // A table with an awkward name, so quoting is exercised for real.
+    let spec = TableSpec {
+        columns: vec![
+            ColumnSpec {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                primary_key: true,
+                ..Default::default()
+            },
+            ColumnSpec {
+                name: "status".into(),
+                data_type: "VARCHAR(20)".into(),
+                nullable: false,
+                default: "'new'".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let created = create_table(engine, db, schema, "thabi ddl", &spec).expect("create table");
+    session
+        .execute(&created, 1)
+        .await
+        .expect("generated CREATE TABLE");
+
+    let structure = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after create");
+    let names: Vec<&str> = structure.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "status"], "{engine:?} made a different table");
+    let id = structure.columns.iter().find(|c| c.name == "id").unwrap();
+    assert!(id.primary_key.is_some(), "{engine:?} lost the primary key");
+    let status = structure
+        .columns
+        .iter()
+        .find(|c| c.name == "status")
+        .unwrap();
+    assert!(
+        !status.nullable,
+        "{engine:?} made a nullable column not null"
+    );
+
+    // A plan touching a column, a key and an index, generated and applied.
+    let plan = TablePlan {
+        columns: vec![
+            Change::AddColumn(ColumnSpec {
+                name: "note".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                ..Default::default()
+            }),
+            Change::SetNullable {
+                name: "status".into(),
+                nullable: true,
+                data_type: "VARCHAR(20)".into(),
+            },
+        ],
+        keys: vec![KeyChange::AddCheck {
+            name: "status_not_blank".into(),
+            expression: "status <> ''".into(),
+        }],
+        indexes: vec![IndexAction::Create(IndexSpec {
+            name: "thabi_ddl_status_idx".into(),
+            columns: vec!["status".into()],
+            unique: true,
+        })],
+    };
+    let script = table_script(engine, db, schema, "thabi ddl", &plan);
+    assert!(!script.is_empty());
+    for statement in &script {
+        session
+            .execute(statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after alter");
+    let names: Vec<&str> = after.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["id", "status", "note"],
+        "{engine:?} alter did not take"
+    );
+    let status = after.columns.iter().find(|c| c.name == "status").unwrap();
+    assert!(
+        status.nullable,
+        "{engine:?} did not make the column nullable"
+    );
+    let indexes = after.indexes.expect("indexes for a table");
+    assert!(
+        indexes
+            .iter()
+            .any(|i| i.name == "thabi_ddl_status_idx" && i.unique),
+        "{engine:?} did not create the unique index: {indexes:?}"
+    );
+
+    // A table with no key and no columns is refused before it reaches a server.
+    assert!(create_table(engine, db, schema, "empty", &TableSpec::default()).is_err());
+}
+
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     use thabi_studio_lib::database::values::Param;
     let mut session = open(engine).await;
@@ -481,6 +620,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn explain_analyze_changes_nothing() {
         let mut session = open(E).await;
         session
@@ -631,6 +776,12 @@ mod mysql {
 
     #[tokio::test]
     #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn bound_values_are_stored_verbatim() {
         binds_values_verbatim(E, true).await;
     }
@@ -727,6 +878,12 @@ mod mysql {
 mod sqlserver {
     use super::*;
     const E: Engine = Engine::SqlServer;
+
+    #[tokio::test]
+    #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
 
     #[tokio::test]
     #[ignore]

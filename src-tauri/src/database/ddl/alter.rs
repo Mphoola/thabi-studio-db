@@ -94,10 +94,18 @@ pub fn alter_column(
 ) -> Vec<String> {
     let target = quote::table(engine, database, schema, table);
     match change {
-        Change::AddColumn(column) => vec![format!(
-            "ALTER TABLE {target} ADD COLUMN {};",
-            column.column_line(engine)
-        )],
+        Change::AddColumn(column) => {
+            // SQL Server has no COLUMN keyword here: `ALTER TABLE t ADD c INT`.
+            let keyword = if engine == Engine::SqlServer {
+                "ADD"
+            } else {
+                "ADD COLUMN"
+            };
+            vec![format!(
+                "ALTER TABLE {target} {keyword} {};",
+                column.column_line(engine)
+            )]
+        }
         Change::DropColumn { name } => {
             vec![format!(
                 "ALTER TABLE {target} DROP COLUMN {};",
