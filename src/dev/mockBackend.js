@@ -253,6 +253,7 @@ handlers.copy_rows = ({ scope }) => {
     .join("\n");
 };
 handlers.export_csv = ({ path }) => ({ rows: bigRows.length, path });
+handlers.export_result = ({ path }) => ({ rows: bigRows.length, path });
 
 handlers.open_object_data = ({ name }) =>
   name === "customers"
@@ -282,6 +283,19 @@ handlers.lookup_reference = ({ search }) =>
     value: `customer${i}@example.com`,
     label: `Customer ${i}`,
   })).filter((r) => r.value.includes(search.trim().toLowerCase()));
+handlers.completion_schema = () => [
+  {
+    schema: "public",
+    table: "orders",
+    columns: ["id", "customer_email", "total", "status"],
+  },
+  { schema: "public", table: "customers", columns: ["id", "email", "name"] },
+];
+handlers.preview_filter = ({ filters }) =>
+  filters.length
+    ? `WHERE ${filters.map((f) => `"${f.column}" ${f.op} '${f.value}'`).join(" AND ")}`
+    : "";
+handlers.list_referencing = () => [];
 handlers.apply_row_changes = ({ changes }) => changes.length;
 
 handlers.cancel_statement = () => {
@@ -352,6 +366,7 @@ handlers.save_query = ({ input }) => {
     profileId: input.profileId ?? null,
     notes: input.notes ?? "",
     folder: (input.folder ?? "").trim(),
+    keyword: (input.keyword ?? "").trim(),
   });
   return saved;
 };

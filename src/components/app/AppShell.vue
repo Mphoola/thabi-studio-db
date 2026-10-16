@@ -54,6 +54,11 @@ function onClosed({ profileId, reason }) {
     );
 }
 
+// Another window may have connected or disconnected meanwhile.
+const syncOnFocus = () => connections.syncStatuses().catch(() => {});
+window.addEventListener("focus", syncOnFocus);
+onBeforeUnmount(() => window.removeEventListener("focus", syncOnFocus));
+
 onMounted(async () => {
   connections
     .load()

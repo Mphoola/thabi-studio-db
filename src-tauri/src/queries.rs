@@ -12,7 +12,10 @@
 //! Queries are never retried automatically.
 
 use crate::{
-    database::{CancelTarget, Cell, ConnectParams, Engine, QueryResult, Session, cancel_backend},
+    database::{
+        CancelTarget, Cell, ConnectParams, Engine, QueryResult, Session, cancel_backend,
+        values::{RowSink, SharedSink},
+    },
     errors::AppError,
     results::{StoredResult, into_first_page},
 };
@@ -27,6 +30,37 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+/// Rows sent with progress updates, enough for a first screen.
+const PREVIEW_ROWS: usize = 200;
+
+/// What running a SQL file did.
+#[derive(Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptSummary {
+    pub total: usize,
+    pub ran: usize,
+    pub rows_affected: u64,
+    pub cancelled: bool,
+    pub errors: Vec<ScriptError>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptError {
+    /// Line in the file where the failing statement starts (1-based).
+    pub line: usize,
+    pub message: String,
+    pub detail: Option<String>,
+}
+
+/// A running statement's progress, polled by the UI.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub received: usize,
+    pub preview: Option<QueryResult>,
+}
 
 /// How long a server-side cancel may take before the session is dropped.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
@@ -45,6 +79,10 @@ pub struct QueryTab {
     cancel_requested: AtomicBool,
     running: AtomicBool,
     results: StdMutex<VecDeque<(String, Arc<StoredResult>)>>,
+    /// Rows of the statement running now, for progress and partial results.
+    progress: StdMutex<Option<SharedSink>>,
+    /// While a SQL file runs: statements done, and how many there are.
+    script: StdMutex<Option<(usize, usize)>>,
     next_result: std::sync::atomic::AtomicU64,
 }
 
@@ -72,6 +110,16 @@ fn timed_out(seconds: u64, session_reset: bool) -> AppError {
     AppError::new("query_timed_out", message).with_data(json!({ "sessionReset": session_reset }))
 }
 
+/// Attaches the rows that arrived before a stop to the error, as `partial`.
+fn with_partial(mut error: AppError, partial: Option<QueryResult>) -> AppError {
+    if let Some(partial) = partial {
+        let mut data = error.data.take().map(|d| *d).unwrap_or_else(|| json!({}));
+        data["partial"] = serde_json::to_value(partial).unwrap_or_default();
+        error = error.with_data(data);
+    }
+    error
+}
+
 enum Stop {
     None,
     Timeout,
@@ -79,7 +127,22 @@ enum Stop {
 
 impl QueryTab {
     /// Keeps the full rows of a result and returns its first page.
-    fn keep(&self, result: QueryResult) -> QueryResult {
+    fn keep(&self, mut result: QueryResult) -> QueryResult {
+        // Each further row set of a batch is kept as a result of its own.
+        let more = std::mem::take(&mut result.more);
+        let elapsed = result.elapsed_ms;
+        let mut first = self.keep_one(result);
+        first.more = more
+            .into_iter()
+            .map(|mut set| {
+                set.elapsed_ms = elapsed;
+                self.keep_one(set)
+            })
+            .collect();
+        first
+    }
+
+    fn keep_one(&self, result: QueryResult) -> QueryResult {
         if result.columns.is_empty() {
             return result;
         }
@@ -91,6 +154,99 @@ impl QueryTab {
             results.pop_front();
         }
         first
+    }
+
+    /// While a statement runs: rows received so far and the first rows of
+    /// the first row set, so the UI can show them before it finishes.
+    pub fn progress(&self) -> Option<Progress> {
+        let sink = self.progress.lock().expect("tab lock").clone()?;
+        let sink = sink.lock().expect("row sink");
+        Some(Progress {
+            received: sink.received,
+            preview: sink.preview(PREVIEW_ROWS),
+        })
+    }
+
+    /// While a SQL file runs: (statements done, total).
+    pub fn script_progress(&self) -> Option<(usize, usize)> {
+        *self.script.lock().expect("tab lock")
+    }
+
+    /// Runs a SQL file's statements in order on this tab's session. Stops at
+    /// the first error unless `keep_going`; a lost connection always stops.
+    /// Cancel stops the statement that is running and runs no more. Never
+    /// retried.
+    pub async fn run_script(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        statements: &[crate::database::script::ScriptStatement],
+        keep_going: bool,
+    ) -> Result<ScriptSummary, AppError> {
+        let mut guard = self.session.try_lock().map_err(|_| query_running())?;
+        self.open_session(&mut guard, params, database).await?;
+        let token = CancellationToken::new();
+        *self.abort.lock().expect("tab lock") = token.clone();
+        self.cancel_requested.store(false, Ordering::SeqCst);
+        self.running.store(true, Ordering::SeqCst);
+        let total = statements.len();
+        *self.script.lock().expect("tab lock") = Some((0, total));
+        let mut summary = ScriptSummary {
+            total,
+            ..ScriptSummary::default()
+        };
+        for (index, statement) in statements.iter().enumerate() {
+            if self.cancel_requested.load(Ordering::SeqCst) {
+                summary.cancelled = true;
+                break;
+            }
+            let Some(session) = guard.as_mut() else {
+                break;
+            };
+            let outcome = tokio::select! {
+                result = session.execute(&statement.sql, 1) => Some(result),
+                _ = token.cancelled() => None,
+            };
+            match outcome {
+                None => {
+                    // Abandoned mid-statement: the session is reset.
+                    *guard = None;
+                    summary.cancelled = true;
+                    break;
+                }
+                Some(Ok(result)) => {
+                    summary.ran += 1;
+                    summary.rows_affected += result.rows_affected.unwrap_or(0);
+                }
+                Some(Err(error)) => {
+                    if self.cancel_requested.load(Ordering::SeqCst) {
+                        summary.cancelled = true;
+                        break;
+                    }
+                    // The same kinds the commands treat as a dead session.
+                    let lost = matches!(
+                        error.kind,
+                        "connection_closed"
+                            | "connection_refused"
+                            | "unreachable"
+                            | "connection"
+                            | "timeout"
+                    );
+                    summary.errors.push(ScriptError {
+                        line: statement.line,
+                        message: error.message,
+                        detail: error.detail,
+                    });
+                    if lost || !keep_going {
+                        break;
+                    }
+                }
+            }
+            *self.script.lock().expect("tab lock") = Some((index + 1, total));
+        }
+        self.running.store(false, Ordering::SeqCst);
+        *self.script.lock().expect("tab lock") = None;
+        Ok(summary)
     }
 
     /// A result kept by this tab, for paging, copying or export.
@@ -123,6 +279,21 @@ impl QueryTab {
         max_rows: usize,
         timeout: Option<Duration>,
     ) -> Result<QueryResult, AppError> {
+        self.run_with(params, database, sql, None, max_rows, timeout)
+            .await
+    }
+
+    /// Runs one statement, binding `bound` values to its placeholders when
+    /// given (the driver binds them; they never become part of the SQL).
+    pub async fn run_with(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        sql: &str,
+        bound: Option<&[crate::database::values::Param]>,
+        max_rows: usize,
+        timeout: Option<Duration>,
+    ) -> Result<QueryResult, AppError> {
         let mut guard = self.session.try_lock().map_err(|_| query_running())?;
         self.open_session(&mut guard, params, database).await?;
 
@@ -132,8 +303,21 @@ impl QueryTab {
         self.running.store(true, Ordering::SeqCst);
 
         let session = guard.as_mut().expect("opened above");
+        let sink = RowSink::shared(max_rows);
+        *self.progress.lock().expect("tab lock") = Some(sink.clone());
+        let started = std::time::Instant::now();
         let outcome = {
-            let exec = session.execute(sql, max_rows);
+            let exec = async {
+                match bound {
+                    Some(values) => session.execute_bound(sql, values, max_rows).await,
+                    None => {
+                        session.execute_into(sql, &sink).await?;
+                        let mut result = sink.lock().expect("row sink").take();
+                        result.elapsed_ms = started.elapsed().as_millis() as u64;
+                        Ok(result)
+                    }
+                }
+            };
             tokio::pin!(exec);
             let sleep = async {
                 match timeout {
@@ -156,6 +340,13 @@ impl QueryTab {
             }
         };
         self.running.store(false, Ordering::SeqCst);
+        *self.progress.lock().expect("tab lock") = None;
+        // Rows that arrived before a cancel or timeout are kept and shown.
+        let partial = || {
+            let mut result = sink.lock().expect("row sink").take();
+            result.elapsed_ms = started.elapsed().as_millis() as u64;
+            (!result.columns.is_empty()).then(|| self.keep(result))
+        };
 
         let seconds = timeout.map(|t| t.as_secs()).unwrap_or_default();
         match outcome {
@@ -165,18 +356,20 @@ impl QueryTab {
                 *guard = None;
                 *self.cancel_target.lock().expect("tab lock") = None;
                 if self.cancel_requested.load(Ordering::SeqCst) {
-                    Err(cancelled(true))
+                    Err(with_partial(cancelled(true), partial()))
                 } else {
-                    Err(timed_out(seconds, true))
+                    Err(with_partial(timed_out(seconds, true), partial()))
                 }
             }
             Ok((result, Stop::Timeout)) => match result {
-                Err(_) => Err(timed_out(seconds, false)),
+                Err(_) => Err(with_partial(timed_out(seconds, false), partial())),
                 // It finished just as the limit was reached.
                 Ok(result) => Ok(self.keep(result)),
             },
             Ok((result, Stop::None)) => match result {
-                Err(_) if self.cancel_requested.load(Ordering::SeqCst) => Err(cancelled(false)),
+                Err(_) if self.cancel_requested.load(Ordering::SeqCst) => {
+                    Err(with_partial(cancelled(false), partial()))
+                }
                 Ok(result) => {
                     // `USE db` moved this session to another database; remember
                     // it so the next run doesn't open a new session.

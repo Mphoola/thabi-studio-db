@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { CircleAlert, CircleCheck, CircleSlash, Clock } from "lucide-vue-next";
 import InlineAlert from "../common/InlineAlert.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
@@ -7,85 +7,37 @@ import ResultView from "../grid/ResultView.vue";
 import ChangesPreviewDialog from "../explorer/ChangesPreviewDialog.vue";
 import EditChangesBar from "../explorer/EditChangesBar.vue";
 import { useTableEditing } from "../explorer/useTableEditing.js";
-import { remoteSource } from "../../lib/gridSources.js";
-import {
-  resultEditability,
-  singleTableSelect,
-} from "../../lib/queryEditability.js";
-import { describeObject } from "../../lib/tauri/commands.js";
+import { previewSource, remoteSource } from "../../lib/gridSources.js";
+import { useResultEditability } from "./useResultEditability.js";
+import ReconnectButton from "../connections/ReconnectButton.vue";
+import PlanView from "./PlanView.vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 
 /** Results of the last run: one tab per statement, plus messages. */
 const props = defineProps({ tab: { type: Object, required: true } });
 
 const run = computed(() => props.tab.runs[props.tab.activeRun] ?? null);
+// The table a single-table SELECT reads, for SQL copy/export formats.
+const resultTarget = ref(null);
+// A cancelled or timed-out run still shows the rows that had arrived.
 const source = computed(() =>
-  run.value?.status === "completed" && run.value.result.columns.length
+  ["completed", "cancelled", "timed_out"].includes(run.value?.status) &&
+  run.value.result?.columns?.length
     ? remoteSource({
         profileId: props.tab.profileId,
         tabId: props.tab.id,
         result: run.value.result,
         exportName: props.tab.title,
+        target: () => resultTarget.value,
       })
     : null,
 );
-/**
- * Editing a query's result, when it is safe.
- *
- * The same staged editing a table tab uses, pointed at the table the statement
- * reads. Safe means one plainly-read table whose whole key is in the result and
- * whose rows are not repeated — otherwise a cell would be edited by row number
- * rather than by key, and the write would land somewhere else. See
- * lib/queryEditability.js, which is where that is decided and tested.
- */
 const resultColumns = computed(() => run.value?.result?.columns ?? []);
-const editNode = ref(null);
-const whyNotEditable = ref("");
-
-async function checkEditability(entry) {
-  editNode.value = null;
-  whyNotEditable.value = "";
-  if (!entry?.result?.columns.length || !props.tab.profileId) return;
-  const parsed = singleTableSelect(entry.sql);
-  if (!parsed) {
-    whyNotEditable.value =
-      "Read-only: only a plain SELECT from one table can be edited from here.";
-    return;
-  }
-  try {
-    const structure = await describeObject(props.tab.profileId, {
-      database: props.tab.database ?? "",
-      schema: parsed.schema || null,
-      name: parsed.table,
-      kind: "table",
-    });
-    const primaryKey = structure.columns
-      .filter((column) => column.primaryKey)
-      .sort((a, b) => a.primaryKey - b.primaryKey)
-      .map((column) => column.name);
-    const answer = resultEditability({
-      statement: entry.sql,
-      columns: entry.result.columns,
-      primaryKey,
-      rows: entry.result.rows ?? [],
-      database: props.tab.database ?? "",
-    });
-    if (answer.editable)
-      editNode.value = {
-        database: props.tab.database ?? "",
-        schema: parsed.schema ?? "",
-        name: parsed.table,
-        kind: "table",
-      };
-    else whyNotEditable.value = `Read-only: ${answer.reason}`;
-  } catch {
-    // The structure could not be read, so the key is unknown: stay read-only
-    // and say so rather than offering editing that cannot address a row.
-    whyNotEditable.value = `Read-only: ${parsed.table} could not be read.`;
-  }
-}
-
-watch(run, (entry) => checkEditability(entry), { immediate: true });
+const { editNode, whyNotEditable } = useResultEditability({
+  tab: props.tab,
+  run,
+  resultTarget,
+});
 
 const editing = useTableEditing({
   tab: props.tab,
@@ -126,6 +78,8 @@ const tones = {
 };
 
 function label(entry, index) {
+  if (entry.kind === "plan") return entry.analyzed ? "Plan (analyzed)" : "Plan";
+  if (entry.kind === "script") return entry.file;
   if (entry.status === "running") return `Statement ${index + 1}`;
   if (entry.status !== "completed") return `Statement ${index + 1}`;
   const r = entry.result;
@@ -137,6 +91,10 @@ function label(entry, index) {
 }
 
 function message(entry) {
+  if (entry.kind === "script") {
+    const { ran, total, rowsAffected } = entry.script;
+    return `Ran ${ran.toLocaleString()} of ${total.toLocaleString()} statements · ${rowsAffected.toLocaleString()} rows affected`;
+  }
   const r = entry.result;
   if (!r) return "";
   const time = `${r.elapsedMs.toLocaleString()} ms`;
@@ -187,12 +145,31 @@ function message(entry) {
     >
       Run a statement to see results here.
     </div>
-    <div
-      v-else-if="run.status === 'running'"
-      class="flex flex-1 items-center justify-center gap-2 text-fg-subtle"
-    >
-      <SpinnerIcon :size="14" /> Running…
-    </div>
+    <template v-else-if="run.status === 'running'">
+      <ResultView
+        v-if="run.progress?.preview?.columns?.length"
+        class="min-h-0 flex-1"
+        :source="previewSource(run.progress.preview)"
+        :result="run.progress.preview"
+        :note="`Still running · ${run.progress.received.toLocaleString()} rows so far`"
+      />
+      <div
+        v-else
+        class="flex flex-1 items-center justify-center gap-2 text-fg-subtle"
+      >
+        <SpinnerIcon :size="14" />
+        {{
+          run.kind === "script" && run.scriptProgress
+            ? `Running file… ${run.scriptProgress[0].toLocaleString()} of ${run.scriptProgress[1].toLocaleString()} statements`
+            : "Running…"
+        }}
+      </div>
+    </template>
+    <PlanView
+      v-else-if="run.kind === 'plan' && run.plan"
+      class="min-h-0 flex-1"
+      :plan="run.plan"
+    />
     <template v-else-if="source">
       <EditChangesBar
         v-if="editor.summary.value.total"
@@ -206,12 +183,14 @@ function message(entry) {
         class="min-h-0 flex-1"
         :source="source"
         :result="run.result"
-        :editor="editNode ? editor : null"
+        :editor="editNode && run.status === 'completed' ? editor : null"
         :note="
-          editing.readOnlyReason.value ||
-          (editNode
-            ? `Editing as ${editNode.name}. Double-click a cell to edit.`
-            : whyNotEditable)
+          run.status !== 'completed'
+            ? `${run.error?.message ?? 'Stopped.'} These are the rows that arrived first.`
+            : editNode
+              ? editing.readOnlyReason.value ||
+                `Editing as ${editNode.name}. Double-click a cell to edit.`
+              : whyNotEditable
         "
       />
     </template>
@@ -232,7 +211,12 @@ function message(entry) {
         :title="failedTitle"
         :message="failureDetail(run.error)"
         mono
-      />
+      >
+        <ReconnectButton
+          v-if="['connection_lost', 'not_connected'].includes(run.error?.kind)"
+          :profile-id="tab.profileId"
+        />
+      </InlineAlert>
       <pre
         class="selectable max-h-40 overflow-auto rounded-md bg-surface-hover p-3 font-mono text-sm whitespace-pre-wrap text-fg-muted"
         >{{ run.sql }}</pre>

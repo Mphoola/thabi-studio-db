@@ -12,6 +12,7 @@ import BaseDialog from "../common/BaseDialog.vue";
 import SegmentedControl from "../common/SegmentedControl.vue";
 import SelectInput from "../common/SelectInput.vue";
 import SwitchInput from "../common/SwitchInput.vue";
+import EditorSettings from "./EditorSettings.vue";
 import SettingRow from "./SettingRow.vue";
 
 const open = defineModel("open", { type: Boolean, default: false });
@@ -104,6 +105,7 @@ async function clearHistory() {
           aria-label="Editor font size"
         />
       </SettingRow>
+      <EditorSettings />
       <SettingRow
         title="Query timeout"
         description="Longer queries are stopped. SQL Server stops them by resetting the tab’s session."

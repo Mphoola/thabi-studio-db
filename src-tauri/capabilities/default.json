@@ -2,13 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window. Keep to least privilege.",
-  "windows": ["main"],
+  "windows": ["main", "workspace-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:allow-open",
     "dialog:allow-save",
     "opener:allow-reveal-item-in-dir",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text"
   ]
 }

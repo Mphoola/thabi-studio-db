@@ -119,6 +119,147 @@ pub struct ObjectStructure {
     pub indexes: Option<Vec<IndexInfo>>,
 }
 
+/// A single-column foreign key in another table that points at this one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Referencing {
+    /// Schema (PostgreSQL, SQL Server) or database (MySQL) of the child table.
+    pub schema: String,
+    pub table: String,
+    /// The child's foreign key column.
+    pub column: String,
+    /// The column in this table it points at.
+    pub referenced_column: String,
+}
+
+/// SQL listing single-column foreign keys that point at a table. Binds the
+/// schema (or MySQL database) and table name as $1/?/@P1 and $2/?/@P2.
+pub(crate) fn referencing_sql(engine: super::Engine, database: &str) -> String {
+    use super::{Engine, quote};
+    match engine {
+        Engine::Postgres => "SELECT cn.nspname::text, cc.relname::text, ca.attname::text, pa.attname::text
+             FROM pg_constraint con
+             JOIN pg_class pc ON pc.oid = con.confrelid
+             JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+             JOIN pg_class cc ON cc.oid = con.conrelid
+             JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+             JOIN pg_attribute ca ON ca.attrelid = con.conrelid AND ca.attnum = con.conkey[1]
+             JOIN pg_attribute pa ON pa.attrelid = con.confrelid AND pa.attnum = con.confkey[1]
+             WHERE con.contype = 'f' AND cardinality(con.conkey) = 1
+               AND pn.nspname = $1 AND pc.relname = $2
+             ORDER BY 1, 2, 3"
+            .to_owned(),
+        Engine::MySql => "SELECT CONVERT(k.TABLE_SCHEMA USING utf8mb4), CONVERT(k.TABLE_NAME USING utf8mb4),
+                    CONVERT(k.COLUMN_NAME USING utf8mb4), CONVERT(k.REFERENCED_COLUMN_NAME USING utf8mb4)
+             FROM information_schema.KEY_COLUMN_USAGE k
+             WHERE k.REFERENCED_TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME = ?
+               AND (SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE k2
+                    WHERE k2.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+                      AND k2.TABLE_NAME = k.TABLE_NAME
+                      AND k2.CONSTRAINT_NAME = k.CONSTRAINT_NAME) = 1
+             ORDER BY 1, 2, 3"
+            .to_owned(),
+        Engine::SqlServer => {
+            let db = quote::ident(engine, database);
+            format!(
+                "SELECT cs.name, co.name, cc.name, pc.name
+                 FROM {db}.sys.foreign_key_columns f
+                 JOIN {db}.sys.objects po ON po.object_id = f.referenced_object_id
+                 JOIN {db}.sys.schemas ps ON ps.schema_id = po.schema_id
+                 JOIN {db}.sys.objects co ON co.object_id = f.parent_object_id
+                 JOIN {db}.sys.schemas cs ON cs.schema_id = co.schema_id
+                 JOIN {db}.sys.columns cc ON cc.object_id = f.parent_object_id AND cc.column_id = f.parent_column_id
+                 JOIN {db}.sys.columns pc ON pc.object_id = f.referenced_object_id AND pc.column_id = f.referenced_column_id
+                 WHERE ps.name = @P1 AND po.name = @P2
+                   AND (SELECT COUNT(*) FROM {db}.sys.foreign_key_columns x
+                        WHERE x.constraint_object_id = f.constraint_object_id) = 1
+                 ORDER BY 1, 2, 3"
+            )
+        }
+    }
+}
+
+pub(crate) fn referencing_rows(rows: TextRows) -> Vec<Referencing> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let mut cells = row.into_iter();
+            Some(Referencing {
+                schema: cells.next()??,
+                table: cells.next()??,
+                column: cells.next()??,
+                referenced_column: cells.next()??,
+            })
+        })
+        .collect()
+}
+
+/// A table and its columns, for editor autocomplete.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionTable {
+    /// Schema (PostgreSQL, SQL Server) or "" (MySQL, where the database is it).
+    pub schema: String,
+    pub table: String,
+    pub columns: Vec<String>,
+}
+
+/// Upper bound on columns read for autocomplete, so a huge catalog can't
+/// stall the editor; the rest simply isn't suggested.
+pub(crate) const COMPLETION_COLUMNS: usize = 50_000;
+
+/// SQL listing every column of every table and view in a database. MySQL
+/// binds the database as ?.
+pub(crate) fn completion_sql(engine: super::Engine, database: &str) -> String {
+    use super::{Engine, quote};
+    match engine {
+        Engine::Postgres => format!(
+            "SELECT table_schema::text, table_name::text, column_name::text
+             FROM information_schema.columns
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+               AND table_schema NOT LIKE 'pg_toast%'
+             ORDER BY table_schema, table_name, ordinal_position
+             LIMIT {COMPLETION_COLUMNS}"
+        ),
+        Engine::MySql => format!(
+            "SELECT '', CONVERT(TABLE_NAME USING utf8mb4), CONVERT(COLUMN_NAME USING utf8mb4)
+             FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ?
+             ORDER BY TABLE_NAME, ORDINAL_POSITION
+             LIMIT {COMPLETION_COLUMNS}"
+        ),
+        Engine::SqlServer => {
+            let db = quote::ident(engine, database);
+            format!(
+                "SELECT TOP ({COMPLETION_COLUMNS}) TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+                 FROM {db}.INFORMATION_SCHEMA.COLUMNS
+                 ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
+            )
+        }
+    }
+}
+
+/// Rows of (schema, table, column), grouped into tables in order.
+pub(crate) fn completion_rows(rows: TextRows) -> Vec<CompletionTable> {
+    let mut tables: Vec<CompletionTable> = Vec::new();
+    for row in rows {
+        let mut cells = row.into_iter();
+        let (Some(schema), Some(Some(table)), Some(Some(column))) =
+            (cells.next(), cells.next(), cells.next())
+        else {
+            continue;
+        };
+        let schema = schema.unwrap_or_default();
+        match tables.last_mut() {
+            Some(last) if last.schema == schema && last.table == table => last.columns.push(column),
+            _ => tables.push(CompletionTable {
+                schema,
+                table,
+                columns: vec![column],
+            }),
+        }
+    }
+    tables
+}
+
 /// Rows of text from a metadata query.
 pub type TextRows = Vec<Vec<Option<String>>>;
 

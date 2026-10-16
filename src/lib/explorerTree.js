@@ -33,6 +33,23 @@ export function schemaNode(database, schema) {
 }
 
 /**
+ * A table or view node, keyed exactly as the explorer keys it, so opening it
+ * from elsewhere (a foreign key jump) reuses the same tab.
+ */
+export function objectNode(database, schema, name, kind = "table") {
+  const parent = schema ? schemaNode(database, schema) : databaseNode(database);
+  return {
+    key: `object:${parent.key}\u0000${name}`,
+    type: "object",
+    label: name,
+    name,
+    kind,
+    database,
+    schema: schema || null,
+  };
+}
+
+/**
  * Groups objects by kind under "Tables", "Views", … in that order. Empty
  * groups are left out. Each group carries its children already.
  */

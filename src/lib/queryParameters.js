@@ -13,62 +13,76 @@
  * inside a string is text; `x::int` is a cast, not a parameter.
  */
 
-/** Where a placeholder stands, so the form can name it and remember its value. */
 const IDENTIFIER = /[\w$]/;
+const NAME_START = /[A-Za-z_]/;
 
 /**
- * The placeholders in a statement, in the order the driver will bind them.
+ * The placeholders in a statement, and the statement rewritten to bind them.
+ *
+ * Recognised: `:name` everywhere, `$1` on PostgreSQL, and `?` on MySQL and
+ * SQL Server. `@name` is deliberately not a placeholder: it is how MySQL user
+ * variables and T-SQL variables are written (`@@ROWCOUNT` too), and treating
+ * them as parameters would break working SQL. `?` is not one on PostgreSQL,
+ * where it is a JSON operator.
+ *
+ * A name used twice is asked for once. On PostgreSQL every use shares one
+ * `$n`; on MySQL and SQL Server each use is its own marker and `order` says
+ * which value goes where.
  *
  * @param {string} sql
  * @param {"postgres"|"mysql"|"sqlserver"} engine
- * @returns {{ count: number, names: (string|number)[], sql: string } | null} null
- *   when there is nothing to ask for
+ * @returns {{ count: number, names: (string|number)[], order: number[], sql: string } | null}
+ *   `names` are the distinct parameters to ask for; `order` lists, per value
+ *   the driver binds, the index into `names`. null when there is nothing.
  */
 export function findParameters(sql, engine = "postgres") {
   const source = sql ?? "";
   const names = [];
+  const order = [];
   let out = "";
   let index = 0;
-  // `postgres` writes $1, `mysql` writes ?, `sqlserver` writes @p1.
-  const placeholder = (position) => {
-    if (engine === "postgres") return `$${position + 1}`;
-    if (engine === "mysql") return "?";
-    return `@p${position + 1}`;
+
+  const use = (name) => {
+    let position = names.indexOf(name);
+    if (position === -1) {
+      names.push(name);
+      position = names.length - 1;
+    }
+    if (engine === "postgres") {
+      // One marker per distinct name, reused.
+      if (!order.includes(position)) order.push(position);
+      return `$${order.indexOf(position) + 1}`;
+    }
+    order.push(position);
+    return engine === "mysql" ? "?" : `@P${order.length}`;
   };
 
   while (index < source.length) {
     const character = source[index];
 
-    // A quoted identifier: not code, and may hold anything.
-    if (character === '"' || character === "`" || character === "[") {
+    // A quoted identifier or string: not code, and may hold anything.
+    if (
+      character === '"' ||
+      character === "`" ||
+      character === "[" ||
+      character === "'"
+    ) {
       const close = character === "[" ? "]" : character;
-      const end = source.indexOf(close, index + 1);
-      const stop = end === -1 ? source.length : end + 1;
-      out += source.slice(index, stop);
-      index = stop;
-      continue;
-    }
-
-    // A string literal: not code.
-    if (character === "'" || character === '"' || character === "`") {
-      const quote = character;
-      out += quote;
-      index += 1;
-      while (index < source.length) {
-        if (source[index] === quote) {
+      let end = index + 1;
+      while (end < source.length) {
+        if (source[end] === close) {
           // Two quotes in a row is an escaped quote, not the end.
-          if (source[index + 1] === quote) {
-            out += quote + quote;
-            index += 2;
+          if (close !== "]" && source[end + 1] === close) {
+            end += 2;
             continue;
           }
-          out += quote;
-          index += 1;
           break;
         }
-        out += source[index];
-        index += 1;
+        end += 1;
       }
+      const stop = Math.min(source.length, end + 1);
+      out += source.slice(index, stop);
+      index = stop;
       continue;
     }
 
@@ -90,62 +104,42 @@ export function findParameters(sql, engine = "postgres") {
       continue;
     }
 
-    // `value::int` is a cast. `::` is not a placeholder.
+    // `value::int` is a cast and `:=` an assignment; neither is a placeholder.
     if (character === ":" && source[index + 1] === ":") {
       out += "::";
       index += 2;
       continue;
     }
 
-    if (character === "?") {
-      names.push(names.length + 1);
-      out += placeholder(names.length - 1);
+    if (character === ":" && NAME_START.test(source[index + 1] ?? "")) {
+      // `a[1:n]` slices and `12:30` are not placeholders: a name can't follow
+      // a word character or `]`.
+      const before = source[index - 1] ?? "";
+      if (!/[\w\]]/.test(before)) {
+        let end = index + 1;
+        while (end < source.length && IDENTIFIER.test(source[end])) end += 1;
+        out += use(source.slice(index + 1, end));
+        index = end;
+        continue;
+      }
+    }
+
+    if (character === "?" && engine !== "postgres") {
+      out += use(order.length + 1);
       index += 1;
       continue;
     }
 
-    if (character === ":") {
-      let next = index + 1;
-      if (source[next] === ":") {
-        out += "::";
-        index = next + 1;
-        continue;
-      }
-      if (!IDENTIFIER.test(source[next] ?? "")) {
-        out += character;
-        index += 1;
-        continue;
-      }
-      let end = next;
-      while (end < source.length && IDENTIFIER.test(source[end])) end += 1;
-      names.push(source.slice(next, end));
-      out += placeholder(names.length - 1);
-      index = end;
-      continue;
-    }
-
-    if (character === "@") {
-      let next = index + 1;
-      if (!IDENTIFIER.test(source[next] ?? "")) {
-        out += character;
-        index += 1;
-        continue;
-      }
-      let end = next;
-      while (end < source.length && IDENTIFIER.test(source[end])) end += 1;
-      names.push(source.slice(next, end));
-      out += placeholder(names.length - 1);
-      index = end;
-      continue;
-    }
-
-    // `$1`, `$2` — already PostgreSQL's own positional form.
-    if (character === "$" && /[1-9]/.test(source[index + 1] ?? "")) {
+    // `$1`, `$2` — PostgreSQL's own positional form.
+    if (
+      engine === "postgres" &&
+      character === "$" &&
+      /[1-9]/.test(source[index + 1] ?? "") &&
+      !/[\w$]/.test(source[index - 1] ?? "")
+    ) {
       let end = index + 1;
       while (end < source.length && /[0-9]/.test(source[end])) end += 1;
-      const position = Number(source.slice(index + 1, end));
-      names.push(position);
-      out += placeholder(position - 1);
+      out += use(Number(source.slice(index + 1, end)));
       index = end;
       continue;
     }
@@ -155,7 +149,21 @@ export function findParameters(sql, engine = "postgres") {
   }
 
   if (!names.length) return null;
-  return { count: names.length, names, sql: out };
+  return { count: names.length, names, order, sql: out };
+}
+
+/**
+ * The values to send, in binding order, from the form's answers per name.
+ * Each answer is { type: "text" | "number" | "null", value }.
+ */
+export function boundValues(found, answers) {
+  return found.order.map((position) => {
+    const answer = answers[position] ?? { type: "text", value: "" };
+    if (answer.type === "null") return { kind: "null" };
+    if (answer.type === "number")
+      return { kind: "number", value: String(answer.value).trim() };
+    return { kind: "text", value: String(answer.value ?? "") };
+  });
 }
 
 /**

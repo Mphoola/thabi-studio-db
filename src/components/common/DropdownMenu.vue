@@ -46,13 +46,14 @@ async function show(focus = "first", anchor = null) {
 let returnFocus = null;
 
 function toggle() {
-  if (open.value) menu.value.hidePopover();
+  if (open.value) menu.value?.hidePopover();
   else show();
 }
 
 function onToggle(event) {
   open.value = event.newState === "open";
-  if (!open.value && menu.value.contains(document.activeElement)) {
+  // The menu may already be gone: an item can close the view it was in.
+  if (!open.value && menu.value?.contains(document.activeElement)) {
     (returnFocus ?? trigger())?.focus();
     returnFocus = null;
   }
@@ -90,7 +91,7 @@ function choose(item) {
 /** Opens the menu at a point, for context menus. */
 function openAt(x, y) {
   returnFocus = document.activeElement;
-  if (open.value) menu.value.hidePopover();
+  if (open.value) menu.value?.hidePopover();
   show("first", new DOMRect(x, y, 0, 0));
 }
 defineExpose({ openAt });

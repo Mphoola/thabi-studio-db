@@ -1,13 +1,26 @@
-import { cancelStatement, runStatement } from "../lib/tauri/commands.js";
+import {
+  cancelStatement,
+  queryProgress,
+  runStatement,
+} from "../lib/tauri/commands.js";
 import { limitsFor } from "../lib/limits.js";
 import { confirmationFor, writeBlockFor } from "../lib/sqlSafety.js";
 import { useTarget } from "../lib/sqlStatements.js";
+import {
+  boundValues,
+  findParameters,
+  parameterLabels,
+} from "../lib/queryParameters.js";
+import { askParameters } from "./useParameterPrompt.js";
 import { confirm } from "./useConfirm.js";
 import { useAppSettings } from "./useAppSettings.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useLibrary } from "./useLibrary.js";
 import { useToasts } from "./useToasts.js";
+
+/** How often a running statement's progress is read. */
+const PROGRESS_MS = 500;
 
 /**
  * Runs statements for a query tab, one after another, on the tab's own
@@ -58,6 +71,10 @@ export function useQueryRunner() {
     });
     if (question && !(await confirm(question))) return;
 
+    // Placeholders are asked for once, across every statement, and bound.
+    const prepared = await prepareParameters(tab, statements, profile.driver);
+    if (!prepared) return;
+
     await ensureConnected(profile.id);
 
     tab.running = true;
@@ -65,7 +82,7 @@ export function useQueryRunner() {
     tab.runs = [];
     tab.activeRun = 0;
     try {
-      for (const sql of statements) {
+      for (const [index, sql] of statements.entries()) {
         tab.runs.push({
           sql,
           status: "running",
@@ -77,20 +94,43 @@ export function useQueryRunner() {
         const entry = tab.runs[tab.runs.length - 1];
         tab.activeRun = tab.runs.length - 1;
         const started = performance.now();
+        // While it runs, show how many rows have arrived and the first ones.
+        const poll = window.setInterval(async () => {
+          try {
+            const progress = await queryProgress(profile.id, tab.id);
+            if (progress && entry.status === "running")
+              entry.progress = progress;
+          } catch {
+            // Progress is a nicety; the run itself reports any failure.
+          }
+        }, PROGRESS_MS);
         try {
           entry.result = await runStatement(profile.id, tab.id, {
             database: tab.database,
-            sql,
+            sql: prepared[index].sql,
+            bound: prepared[index].bound,
             timeoutSeconds: limits.timeoutSeconds,
             maxRows: limits.maxRows,
           });
           entry.status = "completed";
+          // A batch's further row sets each get a result tab of their own.
+          for (const [part, more] of (entry.result.more ?? []).entries())
+            tab.runs.push({
+              sql,
+              status: "completed",
+              result: more,
+              error: null,
+              elapsedMs: more.elapsedMs,
+              part: part + 2,
+            });
           // `USE db` moved the tab's session; keep the picker in step.
           const used = profile.driver === "postgres" ? null : useTarget(sql);
           if (used) tab.database = used;
           entry.elapsedMs = entry.result.elapsedMs;
         } catch (error) {
           entry.error = error;
+          // A cancel or timeout keeps the rows that had already arrived.
+          if (error?.data?.partial) entry.result = error.data.partial;
           entry.elapsedMs = Math.round(performance.now() - started);
           entry.status =
             error?.kind === "query_cancelled"
@@ -100,6 +140,9 @@ export function useQueryRunner() {
                 : "failed";
           if (error?.kind === "connection_lost") store.forgetStatus(profile.id);
           break;
+        } finally {
+          window.clearInterval(poll);
+          entry.progress = null;
         }
       }
     } finally {
@@ -109,6 +152,37 @@ export function useQueryRunner() {
         .refreshHistory()
         .catch(() => {});
     }
+  }
+
+  /**
+   * Each statement as it will be sent: rewritten to the engine's placeholders
+   * with its values, or as typed. null when the user cancels the form.
+   */
+  async function prepareParameters(tab, statements, engine) {
+    const found = statements.map((sql) => findParameters(sql, engine));
+    const labels = [];
+    for (const f of found)
+      for (const label of parameterLabels(f?.names ?? []))
+        if (!labels.includes(label)) labels.push(label);
+    if (!labels.length) return statements.map((sql) => ({ sql, bound: null }));
+    const remembered = tab.parameterValues ?? {};
+    const answers = await askParameters({
+      labels,
+      defaults: labels.map((l) => remembered[l]),
+    });
+    if (!answers) return null;
+    tab.parameterValues = {
+      ...remembered,
+      ...Object.fromEntries(labels.map((l, i) => [l, answers[i]])),
+    };
+    return statements.map((sql, i) => {
+      const f = found[i];
+      if (!f) return { sql, bound: null };
+      const mine = parameterLabels(f.names).map(
+        (label) => answers[labels.indexOf(label)],
+      );
+      return { sql: f.sql, bound: boundValues(f, mine) };
+    });
   }
 
   async function cancel(tab) {

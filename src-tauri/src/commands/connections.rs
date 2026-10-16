@@ -455,6 +455,84 @@ pub async fn lookup_reference(
     .await
 }
 
+/// Tables and columns of a database for the editor's autocomplete, read on
+/// the query tab's session so it is the database the tab runs in.
+#[tauri::command]
+pub async fn completion_schema(
+    id: String,
+    tab_id: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<database::metadata::CompletionTable>, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let database = database
+        .filter(|d| !d.is_empty())
+        .or_else(|| params.database.clone())
+        .unwrap_or_default();
+    tab.with_session(&params, Some(database.clone()), async |s| {
+        s.completion_schema(&database).await
+    })
+    .await
+}
+
+/// The plan for one statement. A plain EXPLAIN uses the tab's session (it
+/// sees the tab's temp tables). ANALYZE (PostgreSQL) really runs the
+/// statement, so it uses a short separate session inside a transaction that
+/// is rolled back, leaving the tab's own transaction alone.
+#[tauri::command]
+pub async fn explain_statement(
+    id: String,
+    tab_id: String,
+    database: Option<String>,
+    sql: String,
+    analyze: bool,
+    state: State<'_, AppState>,
+) -> Result<database::plan::Plan, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let engine = params.engine;
+    let analyze = analyze && engine == database::Engine::Postgres;
+    if analyze {
+        let mut own = params.clone();
+        own.database = database.filter(|d| !d.is_empty()).or(own.database);
+        let mut session = Session::connect(&own).await?;
+        let plan = database::plan::explain(&mut session, engine, &sql, true).await;
+        let _ = session.close().await;
+        return plan;
+    }
+    tab.with_session(&params, database, async |s| {
+        database::plan::explain(s, engine, &sql, false).await
+    })
+    .await
+}
+
+/// The WHERE clause a set of row filters becomes, for "Show SQL".
+#[tauri::command]
+pub async fn preview_filter(
+    id: String,
+    tab_id: String,
+    filters: Vec<database::filter::RowFilter>,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    database::filter::where_clause(params.engine, &filters).map(|clause| clause.trim().to_owned())
+}
+
+/// Tables whose single-column foreign keys point at this one.
+#[tauri::command]
+pub async fn list_referencing(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<database::metadata::Referencing>, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| {
+        s.referencing(&database, &schema, &name).await
+    })
+    .await
+}
+
 /// Applies staged row edits in one transaction on the table tab's session.
 /// All or nothing; returns how many statements ran.
 #[tauri::command]
@@ -483,10 +561,100 @@ pub async fn apply_row_changes(
     result
 }
 
+/// Largest SQL file opened into the editor; bigger files are run instead.
+const OPEN_FILE_LIMIT: u64 = 5 * 1024 * 1024;
+/// Largest SQL file Run SQL File reads into memory.
+const RUN_FILE_LIMIT: u64 = 256 * 1024 * 1024;
+
+fn read_text_file(path: &str, limit: u64, too_big: &str) -> Result<String, AppError> {
+    let unreadable = || AppError::new("file", "That file couldn't be read.");
+    let size = std::fs::metadata(path).map_err(|_| unreadable())?.len();
+    if size > limit {
+        return Err(AppError::new("file_too_large", too_big.to_owned()));
+    }
+    let bytes = std::fs::read(path).map_err(|_| unreadable())?;
+    String::from_utf8(bytes).map_err(|_| {
+        AppError::new(
+            "file",
+            "That file isn't UTF-8 text. Save it as UTF-8 and try again.",
+        )
+    })
+}
+
+/// A SQL file's text, to open in a query tab.
+#[tauri::command]
+pub async fn read_sql_file(path: String) -> Result<String, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_text_file(
+            &path,
+            OPEN_FILE_LIMIT,
+            "That file is too large to edit here. Use Run SQL File… to run it instead.",
+        )
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
+}
+
+/// Runs a SQL file statement by statement on the tab's session.
+#[tauri::command]
+pub async fn run_sql_file(
+    id: String,
+    tab_id: String,
+    database: Option<String>,
+    path: String,
+    keep_going: bool,
+    state: State<'_, AppState>,
+) -> Result<crate::queries::ScriptSummary, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let engine = params.engine;
+    let statements = tauri::async_runtime::spawn_blocking(move || {
+        read_text_file(
+            &path,
+            RUN_FILE_LIMIT,
+            "That file is larger than 256 MB. Split it, or use the database's own tools.",
+        )
+        .map(|text| database::script::split_script(&text, engine))
+    })
+    .await
+    .map_err(|_| AppError::background_task())??;
+    tab.run_script(&params, database, &statements, keep_going)
+        .await
+}
+
+/// Statements done and total while a SQL file runs.
+#[tauri::command]
+pub async fn sql_file_progress(
+    id: String,
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<(usize, usize)>, AppError> {
+    Ok(state
+        .connections
+        .existing_query_tab(&id, &tab_id)
+        .await
+        .and_then(|(tab, _)| tab.script_progress()))
+}
+
+/// How far the tab's running statement has got: rows so far and the first
+/// rows to show. `None` when nothing is running.
+#[tauri::command]
+pub async fn query_progress(
+    id: String,
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::queries::Progress>, AppError> {
+    Ok(state
+        .connections
+        .existing_query_tab(&id, &tab_id)
+        .await
+        .and_then(|(tab, _)| tab.progress()))
+}
+
 /// Runs one user-authored statement, as written, on the query tab's own
 /// session. Never retried: if the connection drops, the outcome is unknown
 /// and the user decides what to do.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
 pub async fn run_statement(
     id: String,
     tab_id: String,
@@ -494,6 +662,9 @@ pub async fn run_statement(
     sql: String,
     timeout_seconds: Option<u64>,
     max_rows: Option<usize>,
+    // Values for the statement's placeholders, bound by the driver. History
+    // keeps the statement with its placeholders, never the values.
+    bound: Option<Vec<database::values::Param>>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
@@ -505,7 +676,9 @@ pub async fn run_statement(
         .map(std::time::Duration::from_secs);
     let ran_in = database.clone().or_else(|| params.database.clone());
     let started = std::time::Instant::now();
-    let result = tab.run(&params, database, &sql, max_rows, timeout).await;
+    let result = tab
+        .run_with(&params, database, &sql, bound.as_deref(), max_rows, timeout)
+        .await;
     record_history(&state, &id, ran_in, &sql, started.elapsed(), &result).await;
     if let Err(error) = &result
         && is_connection_failure(error)
@@ -690,21 +863,130 @@ pub async fn fetch_rows(
         .map_err(|_| AppError::background_task())
 }
 
-/// Selected cells as TSV or CSV text for the clipboard.
+/// Where a kept result's SQL formats point: the table it was read from when
+/// known, otherwise a placeholder name the user replaces.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultTarget {
+    #[serde(default)]
+    pub database: String,
+    #[serde(default)]
+    pub schema: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub primary_key: Vec<String>,
+}
+
+fn result_table(engine: database::Engine, target: &ResultTarget) -> String {
+    let name = if target.name.is_empty() {
+        "query_result"
+    } else {
+        &target.name
+    };
+    database::quote::table(engine, &target.database, &target.schema, name)
+}
+
+/// Selected cells for the clipboard, in any transfer format.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
 pub async fn copy_rows(
     id: String,
     tab_id: String,
     result_id: String,
     scope: crate::results::Scope,
     sort: Option<crate::results::Sort>,
-    format: crate::results::TextFormat,
+    format: database::transfer::TransferFormat,
+    target: Option<ResultTarget>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
+    use database::transfer::TransferFormat;
     let result = stored_result(&state, &id, &tab_id, &result_id).await?;
-    tauri::async_runtime::spawn_blocking(move || result.to_text(&scope, sort, format))
-        .await
-        .map_err(|_| AppError::background_task())
+    let engine = state.connections.query_tab(&id, &tab_id).await?.1.engine;
+    let target = target.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || match format {
+        TransferFormat::Tsv => Ok(result.to_text(&scope, sort, crate::results::TextFormat::Tsv)),
+        TransferFormat::Csv => Ok(result.to_text(&scope, sort, crate::results::TextFormat::Csv)),
+        other => {
+            let mut out = Vec::new();
+            result.write_rows(
+                &mut out,
+                &scope,
+                sort,
+                other,
+                engine,
+                result_table(engine, &target),
+                &target.primary_key,
+            )?;
+            Ok(String::from_utf8(out).unwrap_or_default())
+        }
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
+}
+
+/// Writes a kept result to a file in the chosen format.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri maps each argument from the frontend.
+pub async fn export_result(
+    id: String,
+    tab_id: String,
+    result_id: String,
+    path: String,
+    scope: crate::results::Scope,
+    sort: Option<crate::results::Sort>,
+    format: database::transfer::TransferFormat,
+    target: Option<ResultTarget>,
+    state: State<'_, AppState>,
+) -> Result<crate::results::ExportSummary, AppError> {
+    use database::transfer::TransferFormat;
+    let result = stored_result(&state, &id, &tab_id, &result_id).await?;
+    let engine = state.connections.query_tab(&id, &tab_id).await?.1.engine;
+    let target = target.unwrap_or_default();
+    let path = match format {
+        TransferFormat::Csv => crate::results::export_path(&path)?,
+        other => results_extension(&path, other),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        if format == TransferFormat::Xlsx {
+            let rows = result.export_xlsx(&path, &scope, sort)?;
+            return Ok(crate::results::ExportSummary {
+                rows,
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+        if format == TransferFormat::Csv {
+            let rows = result.export_csv(&path, &scope, sort)?;
+            return Ok(crate::results::ExportSummary {
+                rows,
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+        use std::io::Write;
+        let file = std::fs::File::create(&path).map_err(|_| {
+            AppError::new(
+                "export_failed",
+                "That file couldn't be created. Check the folder and try again.",
+            )
+        })?;
+        let mut out = std::io::BufWriter::new(file);
+        let rows = result.write_rows(
+            &mut out,
+            &scope,
+            sort,
+            format,
+            engine,
+            result_table(engine, &target),
+            &target.primary_key,
+        )?;
+        out.flush().ok();
+        Ok(crate::results::ExportSummary {
+            rows,
+            path: path.to_string_lossy().into_owned(),
+        })
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
 }
 
 /// Writes a kept result to a CSV file the user chose in the save dialog.
@@ -773,6 +1055,13 @@ pub async fn export_table(
         other => results_extension(&path, other),
     };
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    if format == TransferFormat::Xlsx {
+        let written = database::transfer::export_table_xlsx(&tab, &params, &request, &path).await?;
+        return Ok(crate::results::ExportSummary {
+            rows: written.rows,
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
     // Writing a file is blocking work, so it runs off the async workers. This
     // is a blocking pool thread, where blocking on the runtime is allowed.
     let handle = tokio::runtime::Handle::current();
@@ -812,6 +1101,7 @@ fn results_extension(path: &str, format: database::transfer::TransferFormat) -> 
         TransferFormat::Csv | TransferFormat::Tsv => "csv",
         TransferFormat::Json => "json",
         TransferFormat::Markdown => "md",
+        TransferFormat::Xlsx => "xlsx",
         TransferFormat::SqlInsert | TransferFormat::SqlUpdate => "sql",
     };
     let path = PathBuf::from(path);
@@ -819,7 +1109,7 @@ fn results_extension(path: &str, format: database::transfer::TransferFormat) -> 
     let already = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
-        .is_some_and(|e| matches!(e.as_str(), "csv" | "tsv" | "json" | "md" | "sql"));
+        .is_some_and(|e| matches!(e.as_str(), "csv" | "tsv" | "json" | "md" | "sql" | "xlsx"));
     if already {
         path
     } else {

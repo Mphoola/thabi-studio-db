@@ -1,10 +1,13 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { loadCompletionSchema } from "../../composables/useCompletionSchema.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useQueryRunner } from "../../composables/useQueryRunner.js";
 import { useTabs } from "../../composables/useTabs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
+import { explainStatement } from "../../lib/tauri/commands.js";
+import { confirm } from "../../composables/useConfirm.js";
 import QueryToolbar from "./QueryToolbar.vue";
 import ResultsPanel from "./ResultsPanel.vue";
 import SqlEditor from "./SqlEditor.vue";
@@ -25,6 +28,26 @@ const engine = computed(
     "postgres",
 );
 
+// Tables and columns for autocomplete, once the tab's connection is open.
+const tables = ref([]);
+watch(
+  () => [
+    props.tab.profileId,
+    props.tab.database,
+    store.isConnected(props.tab.profileId),
+  ],
+  async ([profileId, database, connected]) => {
+    if (!connected) return;
+    const loaded = await loadCompletionSchema(
+      profileId,
+      props.tab.id,
+      database,
+    );
+    if (props.tab.profileId === profileId) tables.value = loaded;
+  },
+  { immediate: true },
+);
+
 async function run(all = false) {
   const statements = editor.value?.runTarget(all) ?? [];
   if (!statements.length) return;
@@ -32,6 +55,42 @@ async function run(all = false) {
     await runner.run(props.tab, statements);
   } catch (error) {
     toasts.error("Couldn’t run the query", toUserDetail(error));
+  }
+}
+
+/**
+ * Shows the plan for the statement under the cursor as a result tab.
+ * ANALYZE (PostgreSQL) really runs it, rolled back afterwards, so it asks.
+ */
+async function explain(analyze = false) {
+  const sql = editor.value?.currentStatement() ?? "";
+  if (!sql || props.tab.running || !props.tab.profileId) return;
+  if (
+    analyze &&
+    !(await confirm({
+      title: "Run with ANALYZE?",
+      message:
+        "The statement really runs to measure it, then everything it changed is rolled back. Side effects outside the database (like sequences or calls to other systems) aren't undone.",
+      confirmLabel: "Run and Roll Back",
+    }))
+  )
+    return;
+  const entry = { kind: "plan", sql, status: "running", analyzed: analyze };
+  props.tab.runs = [entry];
+  props.tab.activeRun = 0;
+  const shown = props.tab.runs[0];
+  try {
+    if (!store.isConnected(props.tab.profileId))
+      await store.connect(props.tab.profileId);
+    shown.plan = await explainStatement(props.tab.profileId, props.tab.id, {
+      database: props.tab.database,
+      sql,
+      analyze,
+    });
+    shown.status = "completed";
+  } catch (error) {
+    shown.status = "failed";
+    shown.error = error;
   }
 }
 
@@ -77,6 +136,10 @@ onMounted(() => {
     run,
     cancel,
     focus: () => editor.value?.focus(),
+    format: () => editor.value?.format(),
+    explain: () => explain(false),
+    explainAnalyze: () => explain(true),
+    minify: () => editor.value?.minify(),
   });
   editor.value?.focus();
 });
@@ -98,6 +161,7 @@ onBeforeUnmount(() => workspace.unregisterHandle(props.tab.id));
           v-model="tab.sql"
           :engine="engine"
           :label="`${tab.title} SQL`"
+          :tables="tables"
           @run="run()"
           @run-all="run(true)"
           @cancel="cancel"

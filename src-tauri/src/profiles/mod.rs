@@ -1,6 +1,7 @@
 //! Saved connection profiles: metadata in SQLite, secrets in the OS credential store.
 
 mod repository;
+pub mod transfer;
 mod validation;
 
 use serde::{Deserialize, Serialize};

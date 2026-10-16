@@ -345,6 +345,7 @@ async fn applies_row_edits(engine: Engine, database: &str, schema: &str) {
     let cv = |column: &str, value: Option<&str>| ColumnValue {
         column: column.into(),
         value: value.map(Into::into),
+        use_default: false,
     };
     let target = TableTarget {
         database: database.into(),
@@ -836,6 +837,143 @@ async fn streams_a_table_out(engine: Engine, database: &str, schema: &str) {
         6
     );
 
+    // Active filters apply to copy and export, not just to the grid.
+    let mut filtered: Vec<u8> = Vec::new();
+    let mut with_filter = request(None, false);
+    with_filter.filters = vec![thabi_studio_lib::database::filter::RowFilter {
+        column: "id".into(),
+        op: "le".into(),
+        value: "2".into(),
+    }];
+    let written = stream_table(
+        &tab,
+        &p,
+        &with_filter,
+        TransferFormat::Csv,
+        None,
+        &mut filtered,
+    )
+    .await
+    .unwrap();
+    assert_eq!(written.rows, 2, "{engine:?}: the filter is honoured");
+
+    // JSON is a real document, keyed by column.
+    let mut json: Vec<u8> = Vec::new();
+    stream_table(
+        &tab,
+        &p,
+        &request(None, false),
+        TransferFormat::Json,
+        None,
+        &mut json,
+    )
+    .await
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 6);
+    assert_eq!(json[1]["label"], "Zoë ünïcode");
+    assert!(json[3]["label"].is_null());
+
+    // The INSERT script really runs: empty the table and replay it.
+    tab.run(&p, None, &format!("DELETE FROM {name}"), 1, None)
+        .await
+        .unwrap();
+    for statement in insert.lines().filter(|l| l.starts_with("INSERT")) {
+        tab.run(&p, None, statement.trim_end_matches(';'), 1, None)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?}: {statement}: {}", e.message));
+    }
+    let mut again: Vec<u8> = Vec::new();
+    stream_table(
+        &tab,
+        &p,
+        &request(None, true),
+        TransferFormat::Csv,
+        None,
+        &mut again,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(again).unwrap(),
+        csv,
+        "{engine:?}: INSERT round-trip"
+    );
+
+    // Binary longer than the grid's preview is exported in full and replays.
+    let blob = "thabi_blob_it";
+    let drop_blob = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{blob}') IS NOT NULL DROP TABLE {blob}"),
+        _ => format!("DROP TABLE IF EXISTS {blob}"),
+    };
+    let (blob_type, value) = {
+        let hex: String = (0u8..40).map(|b| format!("{b:02X}")).collect();
+        match engine {
+            Engine::Postgres => ("BYTEA", format!("'\\x{hex}'::bytea")),
+            Engine::MySql => ("VARBINARY(64)", format!("X'{hex}'")),
+            Engine::SqlServer => ("VARBINARY(64)", format!("0x{hex}")),
+        }
+    };
+    tab.run(&p, None, &drop_blob, 1, None).await.unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!("CREATE TABLE {blob} (id INT PRIMARY KEY, data {blob_type})"),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    tab.run(
+        &p,
+        None,
+        &format!("INSERT INTO {blob} VALUES (1, {value})"),
+        1,
+        None,
+    )
+    .await
+    .unwrap();
+    let blob_request = TransferRequest {
+        database: database.into(),
+        schema: schema.into(),
+        name: blob.into(),
+        primary_key: vec!["id".into()],
+        columns: vec!["id".into(), "data".into()],
+        ..TransferRequest::default()
+    };
+    let read = async || {
+        let mut out: Vec<u8> = Vec::new();
+        stream_table(&tab, &p, &blob_request, TransferFormat::Csv, None, &mut out)
+            .await
+            .unwrap();
+        String::from_utf8(out).unwrap()
+    };
+    let before = read().await;
+    let mut script: Vec<u8> = Vec::new();
+    stream_table(
+        &tab,
+        &p,
+        &blob_request,
+        TransferFormat::SqlInsert,
+        None,
+        &mut script,
+    )
+    .await
+    .unwrap();
+    let script = String::from_utf8(script).unwrap();
+    tab.run(&p, None, &format!("DELETE FROM {blob}"), 1, None)
+        .await
+        .unwrap();
+    tab.run(&p, None, script.trim().trim_end_matches(';'), 1, None)
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?}: {script}: {}", e.message));
+    assert_eq!(read().await, before, "{engine:?}: binary round-trip");
+    assert!(
+        before.contains("2627"),
+        "all 40 bytes, not a preview: {before}"
+    );
+    tab.run(&p, None, &drop_blob, 1, None).await.unwrap();
+
     // Copy is capped, so a huge table cannot become a gigabyte of clipboard.
     let mut capped: Vec<u8> = Vec::new();
     let written = stream_table(
@@ -870,4 +1008,236 @@ async fn mysql_streams_a_table_out() {
 #[ignore]
 async fn sqlserver_streams_a_table_out() {
     streams_a_table_out(Engine::SqlServer, "master", "dbo").await;
+}
+
+/// A batch keeps every row set; each is its own result.
+async fn keeps_every_row_set(engine: Engine, batch: &str) {
+    let tab = QueryTab::default();
+    let p = params(engine);
+    let result = tab.run(&p, None, batch, 100, None).await.unwrap();
+    assert_eq!(result.columns[0].name, "a", "{engine:?}");
+    assert_eq!(result.more.len(), 1, "{engine:?}: {result:?}");
+    assert_eq!(result.more[0].columns.len(), 2);
+    assert!(
+        result.more[0].result_id.is_some(),
+        "kept for paging and export"
+    );
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_keeps_every_row_set() {
+    keeps_every_row_set(Engine::Postgres, "SELECT 1 AS a; SELECT 2 AS b, 3 AS c").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_keeps_every_row_set() {
+    keeps_every_row_set(Engine::MySql, "SELECT 1 AS a; SELECT 2 AS b, 3 AS c").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_keeps_every_row_set() {
+    keeps_every_row_set(Engine::SqlServer, "SELECT 1 AS a; SELECT 2 AS b, 3 AS c").await;
+}
+
+/// Rows that arrived before a cancel are kept and handed back, and progress
+/// is visible while the statement runs.
+#[tokio::test]
+#[ignore]
+async fn postgres_cancel_keeps_rows_that_arrived() {
+    let tab = std::sync::Arc::new(QueryTab::default());
+    let p = params(Engine::Postgres);
+    let runner = {
+        let tab = tab.clone();
+        let p = p.clone();
+        tokio::spawn(async move {
+            tab.run(
+                &p,
+                None,
+                // Enough rows to fill the server's send buffer, so they are
+                // flushed before it reaches the slow last row.
+                "SELECT g, CASE WHEN g = 200000 THEN pg_sleep(30)::text END AS s FROM generate_series(1, 200000) g",
+                100,
+                None,
+            )
+            .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let progress = tab.progress().expect("running");
+    assert!(
+        progress.received > 1000,
+        "rows arrive while it runs: {}",
+        progress.received
+    );
+    assert_eq!(
+        progress.preview.unwrap().rows.len(),
+        100,
+        "capped at the row limit"
+    );
+    assert!(tab.cancel(&p));
+    let error = runner.await.unwrap().unwrap_err();
+    assert_eq!(error.kind, "query_cancelled");
+    let partial = &error.data.as_ref().unwrap()["partial"];
+    assert_eq!(
+        partial["totalRows"], 100,
+        "the rows that arrived, up to the limit"
+    );
+    assert_eq!(partial["truncated"], true);
+    tab.close().await;
+}
+
+/// A SQL file runs statement by statement, engine syntax included, and
+/// stops at the first error naming its line.
+async fn runs_a_sql_file(engine: Engine, script: &str, failing_line: usize) {
+    use thabi_studio_lib::database::script::split_script;
+    let tab = QueryTab::default();
+    let p = params(engine);
+    let statements = split_script(script, engine);
+    let summary = tab.run_script(&p, None, &statements, false).await.unwrap();
+    assert_eq!(summary.errors.len(), 1, "{engine:?}: {summary:?}");
+    assert_eq!(summary.errors[0].line, failing_line, "{engine:?}");
+    assert_eq!(summary.ran, statements.len() - 2, "stops at the error");
+    let count = tab
+        .run(&p, None, "SELECT COUNT(*) FROM thabi_script", 1, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        count.rows[0][0],
+        thabi_studio_lib::database::Cell::Value("2".into())
+    );
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_runs_a_sql_file() {
+    runs_a_sql_file(
+        Engine::Postgres,
+        "DROP TABLE IF EXISTS thabi_script;\nCREATE TABLE thabi_script (id int);\nCREATE OR REPLACE FUNCTION thabi_add(n int) RETURNS void AS $$\nBEGIN INSERT INTO thabi_script VALUES (n); END;\n$$ LANGUAGE plpgsql;\nSELECT thabi_add(1);\nSELECT thabi_add(2);\nSELECT * FROM no_such_table_xyz;\nSELECT thabi_add(3);",
+        8,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_runs_a_sql_file() {
+    runs_a_sql_file(
+        Engine::MySql,
+        "DROP TABLE IF EXISTS thabi_script;\nCREATE TABLE thabi_script (id int);\nDROP PROCEDURE IF EXISTS thabi_add;\nDELIMITER //\nCREATE PROCEDURE thabi_add(n int) BEGIN INSERT INTO thabi_script VALUES (n); SELECT 1; END//\nDELIMITER ;\nCALL thabi_add(1);\nCALL thabi_add(2);\nSELECT * FROM no_such_table_xyz;\nCALL thabi_add(3);",
+        9,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_runs_a_sql_file() {
+    runs_a_sql_file(
+        Engine::SqlServer,
+        "IF OBJECT_ID('thabi_script') IS NOT NULL DROP TABLE thabi_script\nGO\nCREATE TABLE thabi_script (id int)\nGO\nINSERT INTO thabi_script VALUES (1);\nINSERT INTO thabi_script VALUES (2)\nGO\nSELECT * FROM no_such_table_xyz\nGO\nINSERT INTO thabi_script VALUES (3)",
+        8,
+    )
+    .await;
+}
+
+/// Editing a query result: the key comes from the rows the query returned,
+/// exactly as the grid hands it to the editor, and the change lands on the
+/// row that was shown.
+async fn edits_a_query_result(engine: Engine, database: &str, schema: &str) {
+    use thabi_studio_lib::database::{
+        Cell,
+        edit::{ColumnValue, RowChange, TableTarget, statements},
+    };
+    let tab = QueryTab::default();
+    let p = params(engine);
+    let name = "thabi_result_edit";
+    let drop = match engine {
+        Engine::SqlServer => format!("IF OBJECT_ID('{name}') IS NOT NULL DROP TABLE {name}"),
+        _ => format!("DROP TABLE IF EXISTS {name}"),
+    };
+    for sql in [
+        drop.clone(),
+        format!("CREATE TABLE {name} (id INT PRIMARY KEY, note VARCHAR(20))"),
+        format!("INSERT INTO {name} VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+    ] {
+        tab.run(&p, None, &sql, 1, None).await.unwrap();
+    }
+    // The user's query, filtered and reordered: row 0 of the result is id 3.
+    let result = tab
+        .run(
+            &p,
+            None,
+            &format!("SELECT note, id FROM {name} WHERE id > 1 ORDER BY id DESC"),
+            10,
+            None,
+        )
+        .await
+        .unwrap();
+    let Cell::Value(key) = &result.rows[0][1] else {
+        panic!("id is a value");
+    };
+    let change = RowChange::Update {
+        key: vec![ColumnValue {
+            column: "id".into(),
+            value: Some(key.clone()),
+            use_default: false,
+        }],
+        set: vec![ColumnValue {
+            column: "note".into(),
+            value: Some("edited".into()),
+            use_default: false,
+        }],
+    };
+    let target = TableTarget {
+        database: database.into(),
+        schema: schema.into(),
+        name: name.into(),
+    };
+    let sql = statements(engine, &target, &[change]).unwrap();
+    assert_eq!(tab.apply(&p, None, &sql).await.unwrap(), 1);
+    let after = tab
+        .run(
+            &p,
+            None,
+            &format!("SELECT note FROM {name} ORDER BY id"),
+            10,
+            None,
+        )
+        .await
+        .unwrap();
+    let notes: Vec<_> = after.rows.iter().map(|r| r[0].clone()).collect();
+    assert_eq!(
+        notes,
+        [
+            Cell::Value("a".into()),
+            Cell::Value("b".into()),
+            Cell::Value("edited".into())
+        ],
+        "{engine:?}"
+    );
+    tab.run(&p, None, &drop, 1, None).await.unwrap();
+    tab.close().await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn postgres_edits_a_query_result() {
+    edits_a_query_result(Engine::Postgres, "thabi_it", "public").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn mysql_edits_a_query_result() {
+    edits_a_query_result(Engine::MySql, "thabi_it", "").await;
+}
+
+#[tokio::test]
+#[ignore]
+async fn sqlserver_edits_a_query_result() {
+    edits_a_query_result(Engine::SqlServer, "master", "dbo").await;
 }

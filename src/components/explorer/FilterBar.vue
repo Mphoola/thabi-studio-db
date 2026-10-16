@@ -1,5 +1,8 @@
 <script setup>
-import { computed } from "vue";
+import { isModKey } from "../../lib/platform.js";
+import { computed, ref, watch } from "vue";
+import { formatShortcut } from "../../lib/shortcuts.js";
+import { toUserMessage } from "../../lib/errors.js";
 import { Minus, Plus } from "lucide-vue-next";
 import {
   FILTER_OPERATORS,
@@ -22,6 +25,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   /** Saved filter sets for this table. */
   presets: { type: Object, default: null },
+  /** () => Promise<string>: the WHERE clause, for Show SQL. */
+  previewSql: { type: Function, default: null },
 });
 const emit = defineEmits(["apply"]);
 
@@ -41,6 +46,30 @@ function remove(index) {
   if (!filters.value.length) emit("apply");
 }
 
+// "Show SQL": the clause Rust will run, refreshed while it is open.
+const sql = ref(null);
+async function refreshSql() {
+  if (sql.value === null || !props.previewSql) return;
+  try {
+    sql.value = (await props.previewSql()) || "No filters ticked.";
+  } catch (error) {
+    sql.value = toUserMessage(error);
+  }
+}
+function toggleSql() {
+  sql.value = sql.value === null ? "" : null;
+  refreshSql();
+}
+watch(filters, refreshSql, { deep: true });
+
+/** Mod+Return applies from anywhere in the bar, as Return does in a field. */
+function onKeydown(event) {
+  if (event.key === "Enter" && isModKey(event)) {
+    event.preventDefault();
+    emit("apply");
+  }
+}
+
 function clear() {
   filters.value = [];
   emit("apply");
@@ -52,12 +81,25 @@ function clear() {
     class="flex shrink-0 flex-col gap-1.5 border-b border-line bg-toolbar px-4 py-2"
     aria-label="Row filters"
     @submit.prevent="emit('apply')"
+    @keydown="onKeydown"
   >
     <div
       v-for="(filter, index) in filters"
       :key="index"
       class="flex items-center gap-1.5"
+      :class="!filter.enabled && 'opacity-60'"
     >
+      <input
+        v-model="filter.enabled"
+        type="checkbox"
+        class="size-4 shrink-0 appearance-none rounded-sm border border-line-strong bg-surface checked:border-accent checked:bg-accent focus-visible:ring-2 focus-visible:ring-focus"
+        :aria-label="filter.enabled ? 'Turn Filter Off' : 'Turn Filter On'"
+        :title="
+          filter.enabled
+            ? 'On: unticked filters are kept but not applied'
+            : 'Off'
+        "
+      />
       <SelectInput
         v-model="filter.column"
         class="w-48 shrink-0"
@@ -107,11 +149,23 @@ function clear() {
       <span class="text-xs text-fg-subtle">
         {{
           appliedCount
-            ? `${appliedCount} ${appliedCount === 1 ? "filter" : "filters"} applied. Press Return to apply changes.`
-            : "Press Return to apply."
+            ? `${appliedCount} ${appliedCount === 1 ? "filter" : "filters"} applied. ${formatShortcut("Mod+Enter")} applies changes.`
+            : `Return or ${formatShortcut("Mod+Enter")} applies the ticked filters.`
         }}
       </span>
-      <BaseButton size="sm" class="ml-auto" @click="clear">Clear</BaseButton>
+      <BaseButton
+        v-if="previewSql"
+        size="sm"
+        variant="ghost"
+        class="ml-auto"
+        :aria-pressed="sql !== null"
+        @click="toggleSql"
+      >
+        {{ sql === null ? "Show SQL" : "Hide SQL" }}
+      </BaseButton>
+      <BaseButton size="sm" :class="!previewSql && 'ml-auto'" @click="clear">
+        Clear
+      </BaseButton>
       <FilterPresets
         v-if="presets"
         :presets="presets.list"
@@ -122,9 +176,22 @@ function clear() {
         @save="presets.save($event)"
         @remove="presets.remove($event)"
       />
-      <BaseButton size="sm" variant="primary" type="submit" :loading="loading">
-        Apply
+      <BaseButton
+        v-tooltip="{ text: 'Apply All', shortcut: 'Mod+Enter' }"
+        size="sm"
+        variant="primary"
+        type="submit"
+        :loading="loading"
+      >
+        Apply All
       </BaseButton>
     </div>
+    <p
+      v-if="sql !== null"
+      class="selectable truncate font-mono text-xs text-fg-muted"
+      :title="sql"
+    >
+      {{ sql }}
+    </p>
   </form>
 </template>

@@ -143,7 +143,16 @@ impl DatabaseSession for MySqlSession {
         for param in params {
             query = match param {
                 values::Param::Text(text) => query.bind(text.clone()),
-                values::Param::Number(number) => query.bind(*number),
+                // MySQL converts a decimal string exactly; a float would not.
+                values::Param::Number(text) => {
+                    if text.trim().parse::<f64>().is_err() {
+                        return Err(AppError::new(
+                            "invalid_parameter",
+                            format!("“{text}” isn't a number."),
+                        ));
+                    }
+                    query.bind(text.trim().to_owned())
+                }
                 values::Param::Null => query.bind(Option::<String>::None),
             };
         }
@@ -167,18 +176,9 @@ impl DatabaseSession for MySqlSession {
                 result.truncated = true;
                 break;
             }
-            result.rows.push(
-                (0..row.len())
-                    .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
-                        Ok(Some(text)) => Cell::Value(text),
-                        Ok(None) => Cell::Null,
-                        Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
-                            Ok(Some(bytes)) => Cell::binary(&bytes),
-                            _ => Cell::Null,
-                        },
-                    })
-                    .collect(),
-            );
+            result
+                .rows
+                .push((0..row.len()).map(|i| cell(&row, i)).collect());
         }
         if !result.columns.is_empty() {
             result.rows_affected = None;
@@ -186,68 +186,46 @@ impl DatabaseSession for MySqlSession {
         Ok(result)
     }
 
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError> {
         let host = self.host.clone();
         let ctx = error::session_context(Engine::MySql, &host, self.port);
         // Without arguments SQLx uses MySQL's text protocol, so values
-        // arrive as text (binary columns stay bytes).
+        // arrive as text (binary columns stay bytes). Every row set is kept.
         let mut stream =
             sqlx::raw_sql(AssertSqlSafe(sql.to_owned())).fetch_many(&mut self.connection);
-        let mut result = QueryResult::default();
-        let mut row_sets = 0usize;
-        let mut in_row_set = false;
         while let Some(item) = stream
             .try_next()
             .await
             .map_err(|e| error::from_sqlx(e, ctx))?
         {
+            let mut sink = sink.lock().expect("row sink");
             match item {
                 Either::Left(done) => {
-                    in_row_set = false;
-                    *result.rows_affected.get_or_insert(0) += done.rows_affected();
+                    if sink.is_open() {
+                        sink.end();
+                    } else {
+                        sink.affected(done.rows_affected());
+                    }
                 }
                 Either::Right(row) => {
-                    if !in_row_set {
-                        in_row_set = true;
-                        row_sets += 1;
+                    if !sink.is_open() {
+                        sink.begin(
+                            row.columns()
+                                .iter()
+                                .map(|c| ColumnMeta {
+                                    name: c.name().to_owned(),
+                                    type_name: c.type_info().name().to_owned(),
+                                })
+                                .collect(),
+                        );
                     }
-                    if row_sets > 1 {
-                        continue;
+                    if sink.wants_row() {
+                        sink.push((0..row.len()).map(|i| cell(&row, i)).collect());
                     }
-                    if result.columns.is_empty() {
-                        result.columns = row
-                            .columns()
-                            .iter()
-                            .map(|c| ColumnMeta {
-                                name: c.name().to_owned(),
-                                type_name: c.type_info().name().to_owned(),
-                            })
-                            .collect();
-                    }
-                    if result.rows.len() >= max_rows {
-                        result.truncated = true;
-                        break;
-                    }
-                    result.rows.push(
-                        (0..row.len())
-                            .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
-                                Ok(Some(text)) => Cell::Value(text),
-                                Ok(None) => Cell::Null,
-                                Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
-                                    Ok(Some(bytes)) => Cell::binary(&bytes),
-                                    _ => Cell::Null,
-                                },
-                            })
-                            .collect(),
-                    );
                 }
             }
         }
-        result.extra_result_sets = row_sets.saturating_sub(1);
-        if !result.columns.is_empty() {
-            result.rows_affected = None;
-        }
-        Ok(result)
+        Ok(())
     }
 
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {
@@ -366,5 +344,50 @@ impl DatabaseSession for MySqlSession {
             .close()
             .await
             .map_err(|_| AppError::connection_close_failed())
+    }
+}
+
+/// Binary column types. sqlx also gives `_bin`-collated text (for example
+/// information_schema names) these names, so the type alone can't decide.
+fn is_binary_type(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "BINARY" | "VARBINARY" | "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "GEOMETRY"
+    )
+}
+
+/// Bytes that decoded as UTF-8 but still aren't text: control characters
+/// other than tab and line breaks only appear in binary data.
+fn looks_binary(text: &str) -> bool {
+    text.chars()
+        .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+}
+
+fn cell(row: &sqlx::mysql::MySqlRow, index: usize) -> Cell {
+    use sqlx::{Column, Row, TypeInfo};
+    let bytes = || match row.try_get_unchecked::<Option<Vec<u8>>, _>(index) {
+        Ok(Some(bytes)) => Cell::binary(&bytes),
+        _ => Cell::Null,
+    };
+    match row.try_get_unchecked::<Option<String>, _>(index) {
+        Ok(Some(text))
+            if looks_binary(&text) && is_binary_type(row.columns()[index].type_info().name()) =>
+        {
+            Cell::binary(text.as_bytes())
+        }
+        Ok(Some(text)) => Cell::Value(text),
+        Ok(None) => Cell::Null,
+        Err(_) => bytes(),
+    }
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::looks_binary;
+
+    #[test]
+    fn control_characters_mark_binary() {
+        assert!(looks_binary("\u{0}\u{1}abc"));
+        assert!(!looks_binary("Zoë\tline\nnext"));
     }
 }

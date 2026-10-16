@@ -12,6 +12,7 @@ const saver = useQuerySave();
 const name = ref("");
 const notes = ref("");
 const folder = ref("");
+const keyword = ref("");
 const library = useLibrary();
 const folderList = useId();
 const fields = ref({});
@@ -27,6 +28,7 @@ watch(open, (value) => {
     (/^Query \d+$/.test(tab?.title ?? "") ? "" : (tab?.title ?? ""));
   notes.value = query?.notes ?? "";
   folder.value = query?.folder ?? "";
+  keyword.value = query?.keyword ?? "";
   fields.value = {};
 });
 
@@ -37,6 +39,7 @@ async function submit() {
       name: name.value,
       notes: notes.value,
       folder: folder.value,
+      keyword: keyword.value,
     })) ?? {};
   saving.value = false;
 }
@@ -76,6 +79,14 @@ async function submit() {
         />
       </datalist>
       <TextInput v-model="notes" label="Notes" placeholder="Optional" />
+      <TextInput
+        v-model="keyword"
+        label="Snippet keyword"
+        placeholder="Optional, e.g. pend"
+        hint="Type it in the editor to insert this query. ${name} in the SQL becomes a field to fill in."
+        :error="fields.keyword"
+        mono
+      />
     </form>
     <template #footer>
       <BaseButton @click="open = false">Cancel</BaseButton>

@@ -267,6 +267,71 @@ impl StoredResult {
     }
 }
 
+impl StoredResult {
+    /// The scoped rows as an Excel workbook at `path`.
+    pub fn export_xlsx(
+        &self,
+        path: &Path,
+        scope: &Scope,
+        sort: Option<Sort>,
+    ) -> Result<usize, AppError> {
+        let (columns, rows) = self.selected(scope, sort);
+        let names: Vec<String> = columns
+            .iter()
+            .map(|&c| self.columns[c].name.clone())
+            .collect();
+        let metas: Vec<ColumnMeta> = columns.iter().map(|&c| self.columns[c].clone()).collect();
+        let mut sheet = crate::database::transfer::XlsxSheet::new(&names, true)?;
+        let mut count = 0;
+        for row in rows {
+            let cells: Vec<&Cell> = columns.iter().map(|&c| &row[c]).collect();
+            sheet.row(&metas, &cells)?;
+            count += 1;
+        }
+        sheet.save(path)?;
+        Ok(count)
+    }
+
+    /// The scoped rows in any transfer format. SQL formats address `table`
+    /// (already quoted) and UPDATE keys on `key` (column names).
+    #[allow(clippy::too_many_arguments)] // Mirrors the export command's inputs.
+    pub fn write_rows(
+        &self,
+        out: &mut impl Write,
+        scope: &Scope,
+        sort: Option<Sort>,
+        format: crate::database::transfer::TransferFormat,
+        engine: crate::database::Engine,
+        table: String,
+        key: &[String],
+    ) -> Result<usize, AppError> {
+        let (columns, rows) = self.selected(scope, sort);
+        let names: Vec<String> = columns
+            .iter()
+            .map(|&c| self.columns[c].name.clone())
+            .collect();
+        let key = key
+            .iter()
+            .filter_map(|name| names.iter().position(|n| n == name))
+            .collect();
+        let mut writer = crate::database::transfer::RowWriter::new(
+            format,
+            engine,
+            table,
+            names,
+            key,
+            scope.include_header,
+        );
+        writer.header(out)?;
+        for row in rows {
+            let cells: Vec<&Cell> = columns.iter().map(|&c| &row[c]).collect();
+            writer.row(out, &cells)?;
+        }
+        writer.finish(out)?;
+        Ok(writer.rows())
+    }
+}
+
 /// Quotes a CSV field when it contains a comma, quote, line break or
 /// leading/trailing space; quotes inside are doubled.
 pub fn csv_field(text: &str) -> String {

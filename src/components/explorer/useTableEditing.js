@@ -151,7 +151,7 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
         changes,
       );
       preview.value = null;
-      editor.discard();
+      editor.reset();
       toasts.success(
         `Saved ${plural(count, "change")} to “${node.value.name}”`,
       );
@@ -184,6 +184,8 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   return {
     editor,
     editable,
+    /** Structure of each column by name: enum values, references, nullability. */
+    columnInfo,
     /** The table's key column names, in key order. Paging needs them. */
     primaryKey,
     /**

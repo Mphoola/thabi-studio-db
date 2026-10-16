@@ -35,6 +35,7 @@ export function useQuerySave() {
         profileId: tab.profileId,
         notes: existing?.notes ?? "",
         folder: existing?.folder ?? "",
+        keyword: existing?.keyword ?? "",
       });
       tab.savedSql = tab.sql;
     } catch (error) {
@@ -49,7 +50,7 @@ export function useQuerySave() {
   }
 
   /** Called by the dialog. Returns field errors, or null when saved. */
-  async function submit({ name, notes, folder }) {
+  async function submit({ name, notes, folder, keyword = "" }) {
     const { tab, query } = pending.value ?? {};
     try {
       const saved = await library.save({
@@ -57,6 +58,7 @@ export function useQuerySave() {
         name,
         notes,
         folder,
+        keyword,
         queryText: query ? query.queryText : tab.sql,
         profileId: query ? query.profileId : tab.profileId,
       });

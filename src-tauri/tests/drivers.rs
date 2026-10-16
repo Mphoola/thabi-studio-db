@@ -220,7 +220,15 @@ async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     // `maybe` is a text column because a NULL parameter binds as text, and
     // PostgreSQL will not cast text to integer even for NULL — recorded as a
     // limit in docs/decisions/0030-bound-parameters.md.
-    let setup = "DROP TABLE IF EXISTS thabi_param_test;                  CREATE TABLE thabi_param_test (id int PRIMARY KEY, note varchar(200),                  amount decimal(10,2), maybe varchar(50))";
+    let note = if engine == Engine::SqlServer {
+        "nvarchar(200)"
+    } else {
+        "varchar(200)"
+    };
+    let setup = format!(
+        "DROP TABLE IF EXISTS thabi_param_test; CREATE TABLE thabi_param_test (id int PRIMARY KEY, note {note}, amount decimal(10,2), maybe varchar(50), big bigint)"
+    );
+    let setup = setup.as_str();
     session.execute(setup, 10).await.unwrap();
 
     let hostile = "O'Brien'; DROP TABLE thabi_param_test; --";
@@ -229,19 +237,25 @@ async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     // statement to before it gets here.
     let insert = match engine {
         Engine::Postgres => {
-            "INSERT INTO thabi_param_test (id, note, amount, maybe)\
-                            VALUES ($1, $2, $3, $4)"
+            "INSERT INTO thabi_param_test (id, note, amount, maybe, big) VALUES ($1, $2, $3, $4, $5)"
         }
-        _ => "INSERT INTO thabi_param_test (id, note, amount, maybe) VALUES (?, ?, ?, ?)",
+        Engine::MySql => {
+            "INSERT INTO thabi_param_test (id, note, amount, maybe, big) VALUES (?, ?, ?, ?, ?)"
+        }
+        Engine::SqlServer => {
+            "INSERT INTO thabi_param_test (id, note, amount, maybe, big) VALUES (@P1, @P2, @P3, @P4, @P5)"
+        }
     };
     let result = session
         .execute_bound(
             insert,
             &[
-                Param::Number(1.0),
+                Param::Number("1".into()),
                 Param::Text(hostile.into()),
-                Param::Number(1234.56),
+                Param::Number("1234.56".into()),
                 Param::Null,
+                // Above 2^53: a float would round it.
+                Param::Number("9007199254740993".into()),
             ],
             10,
         )
@@ -257,7 +271,7 @@ async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     // person would see in the grid.
     let read = session
         .execute(
-            "SELECT note, amount, maybe FROM thabi_param_test WHERE id = 1",
+            "SELECT note, amount, maybe, big FROM thabi_param_test WHERE id = 1",
             10,
         )
         .await
@@ -274,6 +288,11 @@ async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
         "number lost precision"
     );
     assert_eq!(row[2], Cell::Null, "NULL did not stay NULL");
+    assert_eq!(
+        row[3],
+        Cell::Value("9007199254740993".into()),
+        "a big integer lost digits"
+    );
 
     // And the row is still there, so the semicolon did not end the statement.
     let count = session
@@ -400,6 +419,49 @@ async fn describes_enums_and_references(
         .describe(db, sch, "thabi_country", ObjectKind::Table)
         .await
         .unwrap();
+    // Autocomplete sees the table and its columns, in order.
+    let completion = session.completion_schema(database).await.unwrap();
+    let child = completion
+        .iter()
+        .find(|t| t.table == "thabi_child")
+        .unwrap_or_else(|| panic!("{engine:?}: {completion:?}"));
+    assert_eq!(child.columns, ["id", "status", "country_id"]);
+
+    // A join's plan renders on every engine and names both tables.
+    let plan = thabi_studio_lib::database::plan::explain(
+        &mut session,
+        engine,
+        "SELECT * FROM thabi_child JOIN thabi_country ON thabi_country.id = thabi_child.country_id",
+        false,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{engine:?}: {} {:?}", e.message, e.detail));
+    fn labels(nodes: &[thabi_studio_lib::database::plan::PlanNode], out: &mut String) {
+        for node in nodes {
+            out.push_str(&node.label);
+            out.push('\n');
+            labels(&node.children, out);
+        }
+    }
+    let mut all = String::new();
+    labels(&plan.nodes, &mut all);
+    assert!(
+        all.contains("thabi_child") && all.contains("thabi_country"),
+        "{engine:?} plan: {all}\n{}",
+        plan.raw
+    );
+
+    // And the other way: who points at the parent.
+    let children = session
+        .referencing(database, schema, "thabi_country")
+        .await
+        .unwrap();
+    assert!(
+        children.iter().any(|r| r.table == "thabi_child"
+            && r.column == "country_id"
+            && r.referenced_column == "id"),
+        "{engine:?}: {children:?}"
+    );
     let label = label_column("id", parent.columns.iter().map(|c| c.name.as_str()));
     assert_eq!(label, Some("name"));
     let result = session
@@ -416,6 +478,35 @@ async fn describes_enums_and_references(
 mod postgres {
     use super::*;
     const E: Engine = Engine::Postgres;
+
+    #[tokio::test]
+    #[ignore]
+    async fn explain_analyze_changes_nothing() {
+        let mut session = open(E).await;
+        session
+            .execute(
+                "DROP TABLE IF EXISTS thabi_analyze; CREATE TABLE thabi_analyze (id int); INSERT INTO thabi_analyze VALUES (1), (2)",
+                1,
+            )
+            .await
+            .unwrap();
+        let plan = thabi_studio_lib::database::plan::explain(
+            &mut session,
+            E,
+            "DELETE FROM thabi_analyze",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(plan.analyzed);
+        assert_eq!(plan.nodes[0].label, "ModifyTable on thabi_analyze");
+        let count = session
+            .execute("SELECT COUNT(*) FROM thabi_analyze", 1)
+            .await
+            .unwrap();
+        assert_eq!(count.rows[0][0], Cell::Value("2".into()), "rolled back");
+        session.close().await.unwrap();
+    }
 
     #[tokio::test]
     #[ignore]
@@ -640,7 +731,7 @@ mod sqlserver {
     #[tokio::test]
     #[ignore]
     async fn bound_values_are_stored_verbatim() {
-        binds_values_verbatim(E, false).await;
+        binds_values_verbatim(E, true).await;
     }
 
     #[tokio::test]
@@ -888,5 +979,42 @@ mod explorer {
         assert!(schemas.contains(&"dbo".to_owned()));
         check_objects(&mut session, "thabi it", "Sales Ünïcödé").await;
         session.close().await.unwrap();
+    }
+}
+
+/// Mutual TLS against a server that demands a client certificate: with the
+/// certificate it connects, without it the server refuses.
+mod mutual_tls {
+    use super::*;
+
+    fn mtls(cert: bool) -> ConnectParams {
+        let dir = std::path::PathBuf::from(env("THABI_IT_MTLS_DIR"));
+        let mut p = params(Engine::Postgres, TlsMode::Verify);
+        p.port = env("THABI_IT_PG_MTLS_PORT").parse().unwrap();
+        // pg_hba "cert": the certificate is the login, no password needed.
+        p.password = None;
+        p.ca_path = Some(dir.join("ca.crt"));
+        if cert {
+            p.client_cert = Some(dir.join("client.crt"));
+            p.client_key = Some(dir.join("client.key"));
+        }
+        p
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn connects_with_a_client_certificate() {
+        let mut session = Session::connect(&mtls(true))
+            .await
+            .unwrap_or_else(|e| panic!("{} {:?}", e.message, e.detail));
+        let result = session.execute("SELECT current_user", 1).await.unwrap();
+        assert_eq!(result.rows[0][0], Cell::Value("thabi".into()));
+        session.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn is_refused_without_one() {
+        assert!(Session::connect(&mtls(false)).await.is_err());
     }
 }

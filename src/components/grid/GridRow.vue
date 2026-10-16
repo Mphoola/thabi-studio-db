@@ -1,6 +1,8 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
 import { displayText } from "../../lib/gridText.js";
+import { inTimeZone } from "../../lib/timeZones.js";
+import { useAppSettings } from "../../composables/useAppSettings.js";
 import CellPicker from "./CellPicker.vue";
 
 /** One grid row. With an `editor`, shows staged edits and the cell editor. */
@@ -80,6 +82,15 @@ function onKeydown(event) {
 function onBlur() {
   if (props.editingCol >= 0) emit("commit", draft.value, null);
 }
+
+const { settings } = useAppSettings();
+/** What a cell shows: offsets converted to the chosen time zone. */
+function label(cell) {
+  const text = displayText(cell);
+  return cell?.kind === "value"
+    ? inTimeZone(text, settings.value.displayTimeZone)
+    : text;
+}
 </script>
 
 <template>
@@ -138,6 +149,7 @@ function onBlur() {
               'text-right tabular-nums',
             shown(position).kind === 'null' && 'text-grid-null italic',
             shown(position).kind === 'binary' && 'text-fg-muted',
+            shown(position).kind === 'default' && 'text-grid-null italic',
             shown(position).kind === 'value' &&
               shown(position).value === '' &&
               'text-fg-subtle',
@@ -154,7 +166,7 @@ function onBlur() {
           {{
             shown(position).kind === "value" && shown(position).value === ""
               ? "''"
-              : displayText(shown(position))
+              : label(shown(position))
           }}
         </span>
       </template>

@@ -35,3 +35,8 @@ const WORDS = {
 };
 
 export const words = WORDS[platform];
+
+/** The platform's command modifier is held: ⌘ on macOS, Ctrl elsewhere. */
+export function isModKey(event) {
+  return isMac ? event.metaKey : event.ctrlKey;
+}

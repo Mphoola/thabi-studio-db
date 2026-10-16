@@ -88,7 +88,7 @@ export function listDatabases(id) {
 export function runStatement(
   id,
   tabId,
-  { database, sql, timeoutSeconds, maxRows },
+  { database, sql, timeoutSeconds, maxRows, bound = null },
 ) {
   return call("run_statement", {
     id,
@@ -97,6 +97,7 @@ export function runStatement(
     sql,
     timeoutSeconds,
     maxRows,
+    bound,
   });
 }
 
@@ -109,8 +110,39 @@ export function fetchRows(id, tabId, resultId, { offset, limit, sort }) {
  * Cells as text for the clipboard. scope: { rows?: [start, end],
  * columns?: number[], includeHeader }. format: "tsv" | "csv".
  */
-export function copyRows(id, tabId, resultId, { scope, sort, format }) {
-  return call("copy_rows", { id, tabId, resultId, scope, sort, format });
+/**
+ * Copies kept result rows in any transfer format. `target` names the table
+ * SQL formats address ({ database, schema, name, primaryKey }), when known.
+ */
+export function copyRows(id, tabId, resultId, { scope, sort, format, target }) {
+  return call("copy_rows", {
+    id,
+    tabId,
+    resultId,
+    scope,
+    sort,
+    format,
+    target: target ?? null,
+  });
+}
+
+/** Writes kept result rows to a file in any transfer format. */
+export function exportResult(
+  id,
+  tabId,
+  resultId,
+  { path, scope, sort, format, target },
+) {
+  return call("export_result", {
+    id,
+    tabId,
+    resultId,
+    path,
+    scope,
+    sort,
+    format,
+    target: target ?? null,
+  });
 }
 
 /** @returns {Promise<{ rows: number, path: string }>} */
@@ -171,6 +203,19 @@ export function previewRowChanges(id, tabId, target, changes) {
  */
 export function lookupReference(id, tabId, database, reference, search) {
   return call("lookup_reference", { id, tabId, database, reference, search });
+}
+
+/** The WHERE clause row filters become, for display. */
+export function previewFilter(id, tabId, filters) {
+  return call("preview_filter", { id, tabId, filters });
+}
+
+/**
+ * Single-column foreign keys elsewhere that point at a table.
+ * @returns {Promise<{ schema: string, table: string, column: string, referencedColumn: string }[]>}
+ */
+export function listReferencing(id, { database, schema, name }) {
+  return call("list_referencing", { id, database, schema, name });
 }
 
 /** Applies staged row edits in one transaction. @returns {Promise<number>} */
@@ -385,4 +430,81 @@ export function saveWorkspaceTabs(tabs) {
 
 export function loadWorkspaceTabs() {
   return call("load_workspace_tabs");
+}
+
+/** Writes every connection, without secrets, to `path`. @returns {Promise<number>} */
+export function exportConnectionProfiles(path) {
+  return call("export_connection_profiles", { path });
+}
+
+/**
+ * Imports connections from an export file; secrets are never imported.
+ * @returns {Promise<{ imported: number, skipped: { name: string, reason: string }[] }>}
+ */
+export function importConnectionProfiles(path) {
+  return call("import_connection_profiles", { path });
+}
+
+/** Opens another workspace window (File > New Window). */
+export function openWorkspaceWindow() {
+  return call("open_workspace_window");
+}
+
+/**
+ * Tables and columns of the tab's database, for autocomplete.
+ * @returns {Promise<{ schema: string, table: string, columns: string[] }[]>}
+ */
+export function completionSchema(id, tabId, database) {
+  return call("completion_schema", { id, tabId, database: database ?? null });
+}
+
+/**
+ * The plan for one statement. `analyze` (PostgreSQL) runs it for real
+ * inside a transaction that is rolled back.
+ * @returns {Promise<{ nodes: object[], raw: string, analyzed: boolean }>}
+ */
+export function explainStatement(
+  id,
+  tabId,
+  { database, sql, analyze = false },
+) {
+  return call("explain_statement", {
+    id,
+    tabId,
+    database: database ?? null,
+    sql,
+    analyze,
+  });
+}
+
+/**
+ * A running statement's progress: rows so far and its first rows.
+ * @returns {Promise<{ received: number, preview: object | null } | null>}
+ */
+export function queryProgress(id, tabId) {
+  return call("query_progress", { id, tabId });
+}
+
+/** A SQL file's text (up to 5 MB), to open in a tab. */
+export function readSqlFile(path) {
+  return call("read_sql_file", { path });
+}
+
+/**
+ * Runs a SQL file statement by statement on the tab's session.
+ * @returns {Promise<{ total: number, ran: number, rowsAffected: number, cancelled: boolean, errors: { line: number, message: string, detail?: string }[] }>}
+ */
+export function runSqlFile(id, tabId, { database, path, keepGoing = false }) {
+  return call("run_sql_file", {
+    id,
+    tabId,
+    database: database ?? null,
+    path,
+    keepGoing,
+  });
+}
+
+/** [done, total] while a SQL file runs, or null. */
+export function sqlFileProgress(id, tabId) {
+  return call("sql_file_progress", { id, tabId });
 }

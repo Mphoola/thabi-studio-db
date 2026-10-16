@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref, toRef } from "vue";
-import { Columns3, Download } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { ChartColumn, Columns3, Download } from "lucide-vue-next";
 import { EXPORT_FORMATS } from "../../lib/tauri/files.js";
 import { resultFooter } from "../../lib/resultFooter.js";
 import { PAGE_SIZE } from "../../composables/useGridData.js";
@@ -12,6 +12,7 @@ import { words } from "../../lib/platform.js";
 import BaseButton from "../common/BaseButton.vue";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import ColumnsDialog from "./ColumnsDialog.vue";
+import ResultChart from "./ResultChart.vue";
 import ResultGrid from "./ResultGrid.vue";
 
 /** A result grid with its summary bar: rows, time, limits and export. */
@@ -22,7 +23,14 @@ const props = defineProps({
   note: { type: String, default: "" },
   /** Staged row edits (useRowEdits); makes the grid editable. */
   editor: { type: Object, default: null },
+  /** Column order and hidden columns, kept by the caller (v-model:layout). */
+  layout: { type: Object, default: null },
+  /** (columnName, cell, exclude) => void; offers quick filters when given. */
+  quickFilter: { type: Function, default: null },
+  /** (columnName, cell) => { label, run }[]: foreign key jumps for a cell. */
+  cellLinks: { type: Function, default: null },
 });
+const emit = defineEmits(["update:layout"]);
 const toasts = useToasts();
 
 const footer = computed(() => resultFooter(props.source, props.result));
@@ -30,9 +38,15 @@ const footer = computed(() => resultFooter(props.source, props.result));
 /** Format for the export; null keeps the source's own default (CSV). */
 const columns = useColumns({
   columns: computed(() => props.source.columns),
-  layout: toRef(props, "layout"),
+  // Writable so hiding or moving a column is remembered by the caller.
+  layout: computed({
+    get: () => props.layout,
+    set: (value) => emit("update:layout", value),
+  }),
 });
 const columnsOpen = ref(false);
+// Chart instead of the grid; offered for query results, not tables.
+const charting = ref(false);
 const grid = ref(null);
 
 /**
@@ -88,15 +102,19 @@ async function exportCsv() {
 
 <template>
   <div class="flex min-h-0 flex-col">
+    <ResultChart v-if="charting" :source="source" class="min-h-0 flex-1" />
     <ResultGrid
+      v-show="!charting"
       ref="grid"
       :source="source"
       :editor="editor"
       :column-indexes="columns.visible.value"
+      :quick-filter="quickFilter"
+      :cell-links="cellLinks"
       class="min-h-0 flex-1"
     />
     <footer
-      class="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-toolbar px-3 text-xs text-fg-muted"
+      class="flex h-7 shrink-0 items-center gap-2 border-t border-line bg-toolbar px-3 text-xs whitespace-nowrap text-fg-muted"
     >
       <span v-if="footer.summary">{{ footer.summary }}</span>
       <span v-if="footer.elapsedMs">· {{ footer.elapsedMs }}</span>
@@ -106,7 +124,9 @@ async function exportCsv() {
         class="text-warning-text"
         >· {{ warning }}</span
       >
-      <span v-if="note">· {{ note }}</span>
+      <span v-if="note" class="min-w-0 truncate" :title="note"
+        >· {{ note }}</span
+      >
       <BaseButton
         size="sm"
         variant="ghost"
@@ -114,6 +134,16 @@ async function exportCsv() {
         @click="columnsOpen = true"
       >
         Columns
+      </BaseButton>
+      <BaseButton
+        v-if="source.kind === 'result'"
+        size="sm"
+        variant="ghost"
+        :icon="ChartColumn"
+        :aria-pressed="charting"
+        @click="charting = !charting"
+      >
+        {{ charting ? "Grid" : "Chart" }}
       </BaseButton>
       <BaseButton
         v-if="source.export"

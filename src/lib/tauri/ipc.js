@@ -30,3 +30,16 @@ export async function call(command, args) {
     throw { kind: "ipc", message: String(error) };
   }
 }
+
+/** The webview window's label: "main", or "workspace-N" for New Window. */
+export async function windowLabel() {
+  if (!isTauri()) return "main";
+  try {
+    const { getCurrentWebviewWindow } =
+      await import("@tauri-apps/api/webviewWindow");
+    return getCurrentWebviewWindow().label;
+  } catch {
+    // No window metadata (the browser preview's mock backend): the main one.
+    return "main";
+  }
+}

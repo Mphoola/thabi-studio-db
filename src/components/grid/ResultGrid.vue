@@ -1,16 +1,7 @@
 <script setup>
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  toRef,
-  watch,
-} from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, toRef } from "vue";
 import { useGridData } from "../../composables/useGridData.js";
 import { useGridSelection } from "../../composables/useGridSelection.js";
-import { fitWidth } from "../../lib/columns.js";
 import { isNumericType } from "../../lib/gridText.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import GridHeader from "./GridHeader.vue";
@@ -18,6 +9,9 @@ import GridRow from "./GridRow.vue";
 import RowDetailDialog from "./RowDetailDialog.vue";
 import ValueInspector from "./ValueInspector.vue";
 import { useGridActions } from "./useGridActions.js";
+import { useColumnWidths } from "./useColumnWidths.js";
+import { useVirtualRows } from "./useVirtualRows.js";
+import { gridKeydown } from "./gridKeydown.js";
 import { useGridEditing } from "./useGridEditing.js";
 import { useRowDetail } from "../../composables/useRowDetail.js";
 
@@ -33,6 +27,10 @@ const props = defineProps({
   editor: { type: Object, default: null },
   /** Source column indexes to show; all of them when not given. */
   columnIndexes: { type: Array, default: null },
+  /** (columnName, cell, exclude) => void; adds "Filter by This Value". */
+  quickFilter: { type: Function, default: null },
+  /** (columnName, cell) => { label, run }[]: foreign key jumps for a cell. */
+  cellLinks: { type: Function, default: null },
 });
 
 const ROW = 26;
@@ -65,89 +63,20 @@ const selection = useGridSelection(
 const numeric = computed(() =>
   columns.value.map((c) => isNumericType(c.typeName)),
 );
-const widths = ref([]);
-/** Fit-to-contents widths, applied until the user resizes a column. */
-const fitted = ref(null);
-watch(
+const { widths, fitToContents, resizeColumn, template } = useColumnWidths({
   columns,
-  (cols) => {
-    if (fitted.value?.length === cols.length) {
-      widths.value = [...fitted.value];
-      return;
-    }
-    widths.value = cols.map((c) => (isNumericType(c.typeName) ? 120 : 180));
-  },
-  { immediate: true },
-);
-
-/** Widths that fit the rows loaded so far. */
-function fitToContents() {
-  const rows = data.loadedRows();
-  fitted.value = columns.value.map((column, position) =>
-    fitWidth(
-      rows.map((row) => row?.[columnIndexes.value[position]]?.value ?? ""),
-      0,
-      column.typeName,
-    ),
-  );
-  widths.value = [...fitted.value];
-}
-
+  columnIndexes,
+  data,
+  numberColumn: NUMBER_COL,
+});
 const scroller = ref(null);
-const scrollTop = ref(0);
-const viewport = ref(400);
-let observer;
-onMounted(() => {
-  observer = new ResizeObserver(
-    ([entry]) => (viewport.value = entry.contentRect.height),
-  );
-  observer.observe(scroller.value);
+const { scrollTop, viewport, page, goToPage, visible } = useVirtualRows({
+  data,
+  rowCount,
+  scroller,
+  rowHeight: ROW,
+  overscan: OVERSCAN,
 });
-onBeforeUnmount(() => observer?.disconnect());
-
-const first = computed(() =>
-  Math.max(0, Math.floor(scrollTop.value / ROW) - OVERSCAN),
-);
-const last = computed(() =>
-  Math.min(
-    rowCount.value,
-    Math.ceil((scrollTop.value + viewport.value) / ROW) + OVERSCAN,
-  ),
-);
-/** Which page is on screen, for the pager. */
-const page = computed(
-  () =>
-    data.windowStart.value +
-    Math.floor(scrollTop.value / (ROW * data.pageSize())),
-);
-
-/** Keeps scrolling going: the next page loads as the end comes into view. */
-watch(
-  () => [scrollTop.value, viewport.value],
-  () => {
-    if (!data.hasMore.value) return;
-    const end = rowCount.value * ROW;
-    if (scrollTop.value + viewport.value >= end - ROW * 20) data.extend();
-  },
-);
-
-/** Jumps to a page; the window moves there rather than fetching up to it. */
-async function goToPage(index) {
-  await data.goto(index);
-  scrollTop.value = 0;
-  if (scroller.value) scroller.value.scrollTop = 0;
-}
-
-const visible = computed(() => {
-  void data.version.value;
-  const rows = [];
-  for (let i = first.value; i < last.value; i += 1)
-    rows.push({ index: i, cells: data.rowAt(i) });
-  return rows;
-});
-const template = computed(
-  () => `${NUMBER_COL}px ${widths.value.map((w) => `${w}px`).join(" ")}`,
-);
 
 const actions = useGridActions(props, data, selection);
 
@@ -155,16 +84,8 @@ const menu = ref(null);
 const inspector = ref(null);
 const detailOpen = ref(false);
 
-function scrollIntoView(row) {
-  const el = scroller.value;
-  const top = row * ROW;
-  const header = ROW;
-  if (top < el.scrollTop) el.scrollTop = top;
-  else if (top + ROW + header > el.scrollTop + el.clientHeight)
-    el.scrollTop = top + ROW + header - el.clientHeight;
-}
-
 const {
+  onEditKey,
   editing,
   startEdit,
   commitEdit,
@@ -180,38 +101,20 @@ const {
   actions,
 });
 
-function onKeydown(event) {
-  if (editing.value) return;
-  if (
-    selection.move(event, Math.max(1, Math.floor(viewport.value / ROW) - 1))
-  ) {
-    event.preventDefault();
-    nextTick(() => scrollIntoView(selection.focus.value.row));
-    return;
-  }
-  if (event.metaKey && event.key.toLowerCase() === "a") {
-    event.preventDefault();
-    selection.selectAll();
-  } else if (event.metaKey && event.key.toLowerCase() === "c") {
-    event.preventDefault();
-    actions.copy("tsv", event.shiftKey);
-  } else if (event.key === "Enter" || event.key === "F2") {
-    event.preventDefault();
-    if (!startEdit()) openInspector();
-  } else if (event.key === " ") {
-    event.preventDefault();
-    openInspector();
-  } else if (event.altKey && event.key.toLowerCase() === "i") {
-    event.preventDefault();
-    openDetail();
-  } else if (
-    props.editor?.enabled.value &&
-    (event.key === "Delete" || event.key === "Backspace")
-  ) {
-    event.preventDefault();
-    toggleDeleteSelected();
-  }
-}
+const onKeydown = gridKeydown({
+  editing,
+  selection,
+  viewport,
+  rowHeight: ROW,
+  scroller,
+  onEditKey,
+  actions,
+  startEdit,
+  openInspector,
+  openDetail,
+  toggleDeleteSelected,
+  editable: () => Boolean(props.editor?.enabled.value),
+});
 
 function openInspector() {
   const { row, col } = selection.focus.value;
@@ -248,11 +151,7 @@ function onContextMenu(event) {
   menu.value?.openAt(event.clientX, event.clientY);
 }
 
-function resize(index, width) {
-  // A manual resize wins over "fit to contents" until the columns change.
-  fitted.value = null;
-  widths.value[index] = Math.min(800, Math.max(60, width));
-}
+const resize = resizeColumn;
 
 // Lets the command palette open the panel without a ref through the tree.
 const rowDetail = useRowDetail();

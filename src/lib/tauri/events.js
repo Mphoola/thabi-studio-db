@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "./ipc.js";
 
 /**
@@ -20,5 +21,13 @@ export async function onConnectionClosed(handler) {
  */
 export async function onMenuCommand(handler) {
   if (!isTauri()) return () => {};
-  return listen("menu-command", (event) => handler(event.payload));
+  // This window only: Rust sends menu commands to the focused window.
+  try {
+    return await getCurrentWebviewWindow().listen("menu-command", (event) =>
+      handler(event.payload),
+    );
+  } catch {
+    // The browser preview has no native window or menu.
+    return () => {};
+  }
 }

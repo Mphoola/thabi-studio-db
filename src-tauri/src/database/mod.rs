@@ -12,8 +12,10 @@ pub mod filter;
 pub mod metadata;
 mod mysql;
 pub mod paging;
+pub mod plan;
 mod postgres;
 pub mod quote;
+pub mod script;
 mod sqlserver;
 pub mod transfer;
 pub mod values;
@@ -179,8 +181,16 @@ pub trait DatabaseSession: Sized {
     fn capabilities(&self) -> Capabilities;
     async fn ping(&mut self) -> Result<(), AppError>;
     async fn list_databases(&mut self) -> Result<Vec<String>, AppError>;
-    /// Runs user-authored SQL as written and keeps at most `max_rows` rows.
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError>;
+    /// Runs user-authored SQL as written, putting every row set into
+    /// `sink` as rows arrive (each capped at the sink's row limit).
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError>;
+    /// Runs user-authored SQL and keeps at most `max_rows` rows per row set.
+    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+        let sink = values::RowSink::shared(max_rows);
+        self.execute_into(sql, &sink).await?;
+        let result = sink.lock().expect("row sink").take();
+        Ok(result)
+    }
     /// Runs user SQL with values bound to its placeholders.
     ///
     /// Binding needs the prepared statement protocol, which returns typed
@@ -336,9 +346,21 @@ impl Session {
 
     pub async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         let started = Instant::now();
-        let mut result = dispatch!(self, s => s.execute(sql, max_rows).await)?;
+        let sink = values::RowSink::shared(max_rows);
+        self.execute_into(sql, &sink).await?;
+        let mut result = sink.lock().expect("row sink").take();
         result.elapsed_ms = started.elapsed().as_millis() as u64;
         Ok(result)
+    }
+
+    /// Runs user SQL into a shared sink, so progress and partial rows are
+    /// visible to the caller while (and after) it runs.
+    pub async fn execute_into(
+        &mut self,
+        sql: &str,
+        sink: &values::SharedSink,
+    ) -> Result<(), AppError> {
+        dispatch!(self, s => s.execute_into(sql, sink).await)
     }
 
     /// Runs user SQL with bound values; see the trait method for why this is
@@ -375,6 +397,41 @@ impl Session {
         kind: ObjectKind,
     ) -> Result<ObjectStructure, AppError> {
         dispatch!(self, s => s.describe(database, schema, name, kind).await)
+    }
+
+    /// Every table's columns in a database, for editor autocomplete.
+    pub async fn completion_schema(
+        &mut self,
+        database: &str,
+    ) -> Result<Vec<metadata::CompletionTable>, AppError> {
+        let engine = self.server_info().engine;
+        let sql = metadata::completion_sql(engine, database);
+        let params: &[&str] = if engine == Engine::MySql {
+            &[database]
+        } else {
+            &[]
+        };
+        let rows = dispatch!(self, s => s.query_text(&sql, params).await)?;
+        Ok(metadata::completion_rows(rows))
+    }
+
+    /// Single-column foreign keys elsewhere that point at a table.
+    pub async fn referencing(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+    ) -> Result<Vec<metadata::Referencing>, AppError> {
+        let engine = self.server_info().engine;
+        let sql = metadata::referencing_sql(engine, database);
+        // MySQL's "schema" here is the database.
+        let owner = if engine == Engine::MySql {
+            database
+        } else {
+            schema
+        };
+        let rows = dispatch!(self, s => s.query_text(&sql, &[owner, name]).await)?;
+        Ok(metadata::referencing_rows(rows))
     }
 
     /// First `limit` rows of a table or view, read-only.

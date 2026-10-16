@@ -15,6 +15,9 @@ pub struct ColumnValue {
     pub column: String,
     /// None is SQL NULL.
     pub value: Option<String>,
+    /// The column's DEFAULT instead of a value.
+    #[serde(default)]
+    pub use_default: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,8 +48,12 @@ fn invalid(message: &str) -> AppError {
     AppError::new("invalid_edit", message.to_owned())
 }
 
-fn value(engine: Engine, value: &Option<String>) -> String {
-    value
+fn value(engine: Engine, column: &ColumnValue) -> String {
+    if column.use_default {
+        return "DEFAULT".to_owned();
+    }
+    column
+        .value
         .as_deref()
         .map_or_else(|| "NULL".to_owned(), |v| quote::literal(engine, v))
 }
@@ -98,13 +105,7 @@ pub fn statements(
                 }
                 let assignments = set
                     .iter()
-                    .map(|c| {
-                        format!(
-                            "{} = {}",
-                            quote::ident(engine, &c.column),
-                            value(engine, &c.value)
-                        )
-                    })
+                    .map(|c| format!("{} = {}", quote::ident(engine, &c.column), value(engine, c)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 Ok(format!(
@@ -124,7 +125,7 @@ pub fn statements(
                     .join(", ");
                 let literals = values
                     .iter()
-                    .map(|c| value(engine, &c.value))
+                    .map(|c| value(engine, c))
                     .collect::<Vec<_>>()
                     .join(", ");
                 Ok(format!(
@@ -224,7 +225,29 @@ mod tests {
         ColumnValue {
             column: column.into(),
             value: value.map(Into::into),
+            use_default: false,
         }
+    }
+
+    #[test]
+    fn default_is_the_keyword_not_text() {
+        let set = vec![ColumnValue {
+            column: "note".into(),
+            value: None,
+            use_default: true,
+        }];
+        assert_eq!(
+            statements(
+                Engine::MySql,
+                &target(),
+                &[RowChange::Update {
+                    key: vec![cv("id", Some("1"))],
+                    set,
+                }]
+            )
+            .unwrap(),
+            ["UPDATE `shop`.`orders` SET `note` = DEFAULT WHERE `id` = '1'"]
+        );
     }
 
     fn target() -> TableTarget {

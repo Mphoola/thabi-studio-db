@@ -4,22 +4,26 @@ import {
   copyRows,
   copyTable,
   countTableRows,
-  exportCsv,
+  exportResult,
   exportTable,
   fetchRows,
   fetchTablePage,
 } from "./tauri/commands.js";
-import {
-  EXPORT_FORMATS,
-  pickExportDestination,
-  pickCsvDestination,
-} from "./tauri/files.js";
+import { EXPORT_FORMATS, pickExportDestination } from "./tauri/files.js";
 
 /**
  * A grid source for a query result kept in Rust: pages, sorting, copying
- * and CSV export all happen there.
+ * and export (every format) all happen there. `target()` returns the table
+ * the result was read from ({ database, schema, name, primaryKey }) when it
+ * is known, so SQL formats address it; otherwise they use a placeholder.
  */
-export function remoteSource({ profileId, tabId, result, exportName }) {
+export function remoteSource({
+  profileId,
+  tabId,
+  result,
+  exportName,
+  target = () => null,
+}) {
   const id = result.resultId;
   return {
     kind: "result",
@@ -30,11 +34,27 @@ export function remoteSource({ profileId, tabId, result, exportName }) {
     load: (offset, limit, sort) =>
       fetchRows(profileId, tabId, id, { offset, limit, sort }),
     copy: (scope, format, sort) =>
-      copyRows(profileId, tabId, id, { scope, sort, format }),
-    async export(scope, sort) {
-      const path = await pickCsvDestination(exportName || "results");
+      copyRows(profileId, tabId, id, {
+        scope,
+        sort,
+        format,
+        target: target(),
+      }),
+    async export(scope, sort, format) {
+      const chosen =
+        EXPORT_FORMATS.find((f) => f.value === format) ?? EXPORT_FORMATS[0];
+      const path = await pickExportDestination(
+        exportName || "results",
+        chosen.extension,
+      );
       if (!path) return null;
-      return exportCsv(profileId, tabId, id, { path, scope, sort });
+      return exportResult(profileId, tabId, id, {
+        path,
+        scope,
+        sort,
+        format: chosen.value,
+        target: target(),
+      });
     },
   };
 }
@@ -140,5 +160,21 @@ function toScope(scope = {}) {
     columns: scope.columns ?? [],
     rows: scope.rows ?? null,
     includeHeader: scope.includeHeader ?? true,
+  };
+}
+
+/**
+ * Rows already in the page (a running query's first rows): shown as they
+ * are, with no sorting, copying or export until the result is complete.
+ */
+export function previewSource(result) {
+  const rows = result.rows ?? [];
+  return {
+    kind: "preview",
+    columns: result.columns,
+    total: rows.length,
+    firstRows: rows,
+    sortable: false,
+    load: async (offset, limit) => rows.slice(offset, offset + limit),
   };
 }

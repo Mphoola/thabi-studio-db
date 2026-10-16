@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0012_connection_limits.sql"),
     include_str!("../migrations/0013_filter_presets.sql"),
     include_str!("../migrations/0014_filter_preset_timestamps.sql"),
+    include_str!("../migrations/0015_snippet_keywords.sql"),
 ];
 
 /// The migration files in order, for tests that need a schema from before the

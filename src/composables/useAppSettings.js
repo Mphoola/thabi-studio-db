@@ -14,6 +14,12 @@ const defaults = {
   historyEnabled: true,
   historyRetentionDays: 30,
   editorFontSize: 13,
+  displayTimeZone: "",
+  editorFontFamily: "",
+  editorTabSize: 2,
+  editorWordWrap: false,
+  editorKeywordCase: "upper",
+  editorVim: false,
 };
 const nativeKeys = {
   themeMode: "theme_mode",
@@ -24,6 +30,12 @@ const nativeKeys = {
   historyEnabled: "history_enabled",
   historyRetentionDays: "history_retention_days",
   editorFontSize: "editor_font_size",
+  displayTimeZone: "display_time_zone",
+  editorFontFamily: "editor_font_family",
+  editorTabSize: "editor_tab_size",
+  editorWordWrap: "editor_word_wrap",
+  editorKeywordCase: "editor_keyword_case",
+  editorVim: "editor_vim",
 };
 const settings = ref({ ...defaults });
 
@@ -33,6 +45,11 @@ function applyToDocument() {
     "--editor-font-size",
     `${settings.value.editorFontSize}px`,
   );
+  // Validated in Rust to a plain family list, so it is safe in CSS.
+  const family = settings.value.editorFontFamily;
+  if (family)
+    document.documentElement.style.setProperty("--editor-font-family", family);
+  else document.documentElement.style.removeProperty("--editor-font-family");
 }
 
 export function initializeAppSettings(value) {

@@ -18,6 +18,7 @@ export function isJsonType(typeName) {
 /** Short text for a grid cell. */
 export function displayText(cell) {
   if (!cell || cell.kind === "null") return "NULL";
+  if (cell.kind === "default") return "DEFAULT";
   if (cell.kind === "binary")
     return `‹${cell.value.bytes.toLocaleString()} bytes›`;
   // Keep cells one line; the inspector shows the full value.

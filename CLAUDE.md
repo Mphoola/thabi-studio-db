@@ -28,11 +28,11 @@ breadth. See `plan.md` §2 and §7b for scope.
   (`0010`), connections page and table data (`0011`), cross-platform support
   and history/saved queries (`0012`, `0013`), connection rail and table row
   filters (`0014`), inline data editing (`0015`).
-- Next: Phase 10 (testing, packaging for all three platforms, release) is
-  deferred until signing options exist; Phase 11 (connections, safety modes
-  and workspace) is in progress on `phase-11-connections-safety`. Safe modes
-  per connection come first: read `docs/decisions/0016-safe-modes.md` when
-  written.
+- Phases 11–13 (connections and safety, table data, smart editor): done on
+  `phase-13-smart-editor` (11 and 12 are stacked under it), not committed.
+  Read `docs/decisions/0016`–`0031`; `0031` lists what closed the gaps.
+- Next: Phase 14 (schema and object management). Phase 10 (packaging) is
+  deferred until signing options exist.
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 

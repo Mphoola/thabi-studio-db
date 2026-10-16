@@ -1295,34 +1295,18 @@ Update this section as work progresses.
   - [x] Review the exact SQL; apply all changes in one transaction; each must change exactly one row or nothing is saved
   - [x] Asks before deleting rows and before any change on Production; integration-tested on all three engines
 - [ ] Phase 10 — Testing, packaging, documentation, and MVP release (deferred until signing options exist; only a Mac is available for clean-install tests)
-- [ ] Phase 11 — Connections, safety modes and workspace (branch `phase-11-connections-safety`)
-  - [x] Safe mode per connection: off, confirm writes, confirm everything, read-only (`docs/decisions/0016-safe-modes.md`)
-  - [x] Replaces the Production-only check: destructive statements still ask, and Production types the database name
-  - [x] Read-only refused in the app and on the server (`SET SESSION TRANSACTION READ ONLY`, `default_transaction_read_only`); SQL Server documented as app-only
-  - [x] Staged edits follow the mode; a read-only connection can't be edited
-  - [x] Connection groups and custom colours (`docs/decisions/0017-connection-groups.md`)
-  - [x] `~/.ssh/config`: Host aliases, IdentityFile and one ProxyJump hop, shown before use (`docs/decisions/0018-ssh-config.md`)
-  - [x] "Ask every time" for the database password, SSH password and key passphrase, plus per-connection SSH keep-alive (`docs/decisions/0019-ask-every-time.md`)
-  - [x] Startup commands per connection, run on every new session including query tabs; a failure stops the connect (`docs/decisions/0020-startup-commands.md`)
-  - [x] Mutual TLS: client certificate and key as paths, on MySQL, PostgreSQL and SQL Server (`docs/decisions/0021-mutual-tls.md`)
-  - [x] Per-connection query timeout and row limit overriding the app default, shown on the connection row (`docs/decisions/0022-connection-limits.md`)
-  - [ ] Import/export without secrets, multiple windows, reconnect
-  - Deferred by the owner (2026-10-15) to start Phase 12; Phase 11 stays open
-    until they are done, so its "two windows" and "export/import" exit
-    criteria are still unmet.
-- [x] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`) — all three exit criteria met (2026-10-15). Foreign key navigation, editing conveniences, value display and .xlsx left open and carried forward.
-  - [x] Table data read a page at a time from the server (LIMIT/OFFSET, OFFSET…FETCH on SQL Server), ordered by the primary key, sorted on the server (`docs/decisions/0023-table-paging.md`)
-  - [x] Catalog row estimate on open, exact count on request
-  - [x] Copy and export stream the table from the server as CSV, TSV, JSON, Markdown, SQL INSERT and SQL UPDATE; copy is capped, export is not (`docs/decisions/0024-transfer-formats.md`)
-  - [ ] .xlsx export (needs a spreadsheet crate, recorded and still open)
-  - [x] Rows per page from the connection's row limit, 1,000 by default, at most 100,000; page buttons (First/Prev/Next/Last) and a scrolling window that grows a page at a time, so a million-row table is navigable (`docs/decisions/0027-table-page-size.md`)
-  - [x] Column controls: hide/show, reorder by drag or arrows, fit to contents, remembered per table (`docs/decisions/0025-columns.md`)
-  - [x] Row detail panel (Mod+Alt+I, also in the command palette): every column with its type, full text, editable through the same staged changes (`docs/decisions/0026-row-detail.md`)
-  - [x] Saved filter presets per table: stored in SQLite, scoped to the connection and object, saved over a name you already used here, applied by putting the filters back on the bar (`docs/decisions/0028-filter-presets.md`)
-  - [x] Editing a query result: offered when the statement plainly reads one table, the whole primary key is in the result and no key repeats; otherwise read-only with the reason shown (`docs/decisions/0029-editing-query-results.md`)
-  - [ ] Foreign key navigation, editing conveniences
-  - [ ] Value display: JSON viewer, image preview, time zone, hex/base64
-- [ ] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`) — exit criteria are autocomplete for aliased joins on all three engines within 100 ms for a 500-table schema, parameters bound by the driver and never spliced into SQL, and plans rendering for a join on all three engines. Starting with query parameters, then autocomplete, then plans.
+- [x] Phase 11 — Connections, safety modes and workspace (branch `phase-11-connections-safety`, finished on `phase-13-smart-editor`)
+  - [x] Safe modes, groups and colours, `~/.ssh/config`, ask every time, startup commands, mutual TLS, per-connection limits (`0016`–`0022`)
+  - [x] Import/export connections without secrets, Reconnect in place, New Window (`0031`)
+  - [x] Mutual TLS proven against a PostgreSQL server that demands a client certificate
+- [x] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`, finished on `phase-13-smart-editor`)
+  - [x] Server paging and sorting, transfer formats, columns, row detail, filter presets, editing query results (`0023`–`0029`)
+  - [x] Filter on/off, Apply All, Show SQL, filter by value; foreign key navigation; Copy as JSON/Markdown/SQL (`0031`)
+  - [x] Duplicate, paste, DEFAULT, undo/redo; JSON tree, image, hex/base64, time zone; .xlsx export (`0031`)
+- [x] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`, not committed)
+  - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
+  - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
+  - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)
 - [ ] Phase 14 — Schema and object management
 - [ ] Phase 15 — Import, export, backup and administration
 

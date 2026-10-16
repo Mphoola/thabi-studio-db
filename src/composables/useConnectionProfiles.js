@@ -63,6 +63,11 @@ export function useConnectionProfiles() {
     }
   }
 
+  /** Re-reads the saved connections, after an import for example. */
+  async function refresh() {
+    if (isTauri()) profiles.value = await listConnectionProfiles();
+  }
+
   function openNew() {
     editingId.value = null;
     dialogs.show("connection");
@@ -177,6 +182,9 @@ export function useConnectionProfiles() {
     forgetStatus: (id) => setStatus(id, null),
     nativeAvailable: isTauri(),
     load,
+    refresh,
+    /** Re-reads live connection states, e.g. when another window changed them. */
+    syncStatuses: () => (isTauri() ? refreshStatuses() : Promise.resolve()),
     openNew,
     openEdit,
     save,

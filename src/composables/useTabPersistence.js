@@ -1,6 +1,6 @@
 import { watch } from "vue";
 import { loadWorkspaceTabs, saveWorkspaceTabs } from "../lib/tauri/commands.js";
-import { isTauri } from "../lib/tauri/ipc.js";
+import { isTauri, windowLabel } from "../lib/tauri/ipc.js";
 import { useTabs } from "./useTabs.js";
 
 const SAVE_DELAY_MS = 800;
@@ -11,7 +11,9 @@ const SAVE_DELAY_MS = 800;
  * saved connections have loaded.
  */
 export async function startTabPersistence() {
-  if (!isTauri()) return;
+  // Only the main window restores and saves tabs: two windows writing the
+  // same list would overwrite each other's work.
+  if (!isTauri() || (await windowLabel()) !== "main") return;
   const workspace = useTabs();
 
   try {

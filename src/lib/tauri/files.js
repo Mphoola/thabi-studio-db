@@ -72,6 +72,7 @@ export const EXPORT_FORMATS = [
   { value: "markdown", label: "Markdown table", extension: "md" },
   { value: "sqlInsert", label: "SQL INSERT statements", extension: "sql" },
   { value: "sqlUpdate", label: "SQL UPDATE statements", extension: "sql" },
+  { value: "xlsx", label: "Excel workbook (.xlsx)", extension: "xlsx" },
 ];
 
 /**
@@ -89,4 +90,36 @@ export async function pickExportDestination(defaultName, extension = "csv") {
 /** Reveals a file in Finder, File Explorer or the Linux file manager. */
 export function showInFileManager(path) {
   return revealItemInDir(path);
+}
+
+/** Save dialog for a connections export (.json). */
+export async function pickConnectionsExport() {
+  const path = await save({
+    title: "Export Connections",
+    defaultPath: "thabi-connections.json",
+    filters: [{ name: "Connections", extensions: ["json"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Open dialog for a connections export to import. */
+export async function pickConnectionsImport() {
+  const path = await open({
+    title: "Import Connections",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Connections", extensions: ["json"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Open dialog for a .sql file. */
+export async function pickSqlFile(title = "Open SQL File") {
+  const path = await open({
+    title,
+    multiple: false,
+    directory: false,
+    filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+  });
+  return typeof path === "string" ? path : null;
 }

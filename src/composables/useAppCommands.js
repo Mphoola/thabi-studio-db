@@ -10,6 +10,9 @@ import { useLayout } from "./useLayout.js";
 import { useTheme } from "./useTheme.js";
 import { useToasts } from "./useToasts.js";
 import { toUserDetail } from "../lib/errors.js";
+import { useConnectionTransfer } from "./useConnectionTransfer.js";
+import { useSqlFiles } from "./useSqlFiles.js";
+import { openWorkspaceWindow } from "../lib/tauri/commands.js";
 
 /**
  * App-wide commands. Shortcuts follow platform conventions (⌘ on macOS, Ctrl elsewhere) and are reserved
@@ -27,6 +30,8 @@ export function useAppCommands() {
   const theme = useTheme();
   const toasts = useToasts();
   const hostKeys = useHostKeyTrust();
+  const transfer = useConnectionTransfer();
+  const sqlFiles = useSqlFiles();
 
   async function connectSelected() {
     const profile = connections.selectedProfile.value;
@@ -119,6 +124,29 @@ export function useAppCommands() {
       run: () => dialogs.show("switcher"),
     },
     {
+      id: "app.newWindow",
+      title: "New Window",
+      group: "General",
+      shortcut: "Mod+Shift+N",
+      run: () =>
+        openWorkspaceWindow().catch((error) =>
+          toasts.error("Couldn’t open a window", toUserDetail(error)),
+        ),
+    },
+    {
+      id: "connections.import",
+      title: "Import Connections…",
+      group: "Connections",
+      run: () => transfer.importFile(),
+    },
+    {
+      id: "connections.export",
+      title: "Export Connections…",
+      group: "Connections",
+      enabled: () => connections.profiles.value.length > 0,
+      run: () => transfer.exportAll(),
+    },
+    {
       id: "tabs.newQuery",
       title: "New Query Tab",
       group: "Query",
@@ -165,6 +193,62 @@ export function useAppCommands() {
       shortcut: "Mod+Enter",
       enabled: queryTabActive,
       run: () => workspace.activeHandle()?.run(false),
+    },
+    {
+      id: "query.format",
+      title: "Format SQL",
+      group: "Query",
+      shortcut: "Mod+I",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.format(),
+    },
+    {
+      id: "query.explain",
+      title: "Explain Query",
+      group: "Query",
+      shortcut: "Mod+Shift+E",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.explain(),
+    },
+    {
+      id: "query.explainAnalyze",
+      title: "Explain Analyze (PostgreSQL)…",
+      group: "Query",
+      enabled: () =>
+        queryTabActive() &&
+        connections.profiles.value.find(
+          (p) => p.id === workspace.active.value?.profileId,
+        )?.driver === "postgres",
+      run: () => workspace.activeHandle()?.explainAnalyze(),
+    },
+    {
+      id: "query.openFile",
+      title: "Open SQL File…",
+      group: "Query",
+      shortcut: "Mod+O",
+      run: () => sqlFiles.openFile(),
+    },
+    {
+      id: "query.runFile",
+      title: "Run SQL File…",
+      group: "Query",
+      enabled: () => connections.profiles.value.length > 0,
+      run: () => sqlFiles.runFile(),
+    },
+    {
+      id: "query.split",
+      title: "Split Editor",
+      group: "Query",
+      shortcut: "Mod+Shift+D",
+      enabled: queryTabActive,
+      run: () => workspace.toggleSplit(),
+    },
+    {
+      id: "query.minify",
+      title: "Minify SQL",
+      group: "Query",
+      enabled: queryTabActive,
+      run: () => workspace.activeHandle()?.minify(),
     },
     {
       id: "query.runAll",

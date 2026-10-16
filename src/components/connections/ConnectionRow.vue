@@ -1,4 +1,5 @@
 <script setup>
+import { isModKey } from "../../lib/platform.js";
 import { computed } from "vue";
 import {
   Clock,
@@ -81,7 +82,7 @@ function onKeydown(event) {
     // Alt+Up / Alt+Down move the connection within its group.
     event.preventDefault();
     emit("move", event.key === "ArrowUp" ? -1 : 1);
-  } else if (event.key === "Backspace" && event.metaKey) {
+  } else if (event.key === "Backspace" && isModKey(event)) {
     event.preventDefault();
     actions.remove(props.profile);
   }

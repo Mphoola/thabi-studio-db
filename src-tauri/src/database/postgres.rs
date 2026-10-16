@@ -250,7 +250,22 @@ impl DatabaseSession for PgSession {
         for param in params {
             query = match param {
                 values::Param::Text(text) => query.bind(text.clone()),
-                values::Param::Number(number) => query.bind(*number),
+                values::Param::Number(text) => {
+                    // Exact: an integer as int8, anything else as NUMERIC.
+                    if let Ok(integer) = text.trim().parse::<i64>() {
+                        query.bind(integer)
+                    } else {
+                        match text.trim().parse::<sqlx::types::BigDecimal>() {
+                            Ok(decimal) => query.bind(decimal),
+                            Err(_) => {
+                                return Err(AppError::new(
+                                    "invalid_parameter",
+                                    format!("“{text}” isn't a number."),
+                                ));
+                            }
+                        }
+                    }
+                }
                 values::Param::Null => query.bind(Option::<String>::None),
             };
         }
@@ -291,68 +306,59 @@ impl DatabaseSession for PgSession {
         Ok(result)
     }
 
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError> {
         let host = self.host.clone();
         let ctx = error::session_context(Engine::Postgres, &host, self.port);
         // The simple query protocol returns every value as text, which is
-        // exactly what the results grid shows.
+        // exactly what the results grid shows. Every row set is kept.
         let mut stream =
             sqlx::raw_sql(AssertSqlSafe(sql.to_owned())).fetch_many(&mut self.connection);
-        let mut result = QueryResult::default();
-        let mut row_sets = 0usize;
-        let mut in_row_set = false;
         while let Some(item) = stream
             .try_next()
             .await
             .map_err(|e| error::from_sqlx(e, ctx))?
         {
+            let mut sink = sink.lock().expect("row sink");
             match item {
                 Either::Left(done) => {
-                    in_row_set = false;
-                    *result.rows_affected.get_or_insert(0) += done.rows_affected();
+                    if sink.is_open() {
+                        sink.end();
+                    } else {
+                        sink.affected(done.rows_affected());
+                    }
                 }
                 Either::Right(row) => {
-                    if !in_row_set {
-                        in_row_set = true;
-                        row_sets += 1;
+                    if !sink.is_open() {
+                        sink.begin(
+                            row.columns()
+                                .iter()
+                                .map(|c| ColumnMeta {
+                                    name: c.name().to_owned(),
+                                    type_name: c.type_info().name().to_owned(),
+                                })
+                                .collect(),
+                        );
                     }
-                    if row_sets > 1 {
-                        continue;
+                    if sink.wants_row() {
+                        sink.push(
+                            (0..row.len())
+                                .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
+                                    Ok(Some(text)) => Cell::Value(text),
+                                    Ok(None) => Cell::Null,
+                                    Err(_) => {
+                                        match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+                                            Ok(Some(bytes)) => Cell::binary(&bytes),
+                                            _ => Cell::Null,
+                                        }
+                                    }
+                                })
+                                .collect(),
+                        );
                     }
-                    if result.columns.is_empty() {
-                        result.columns = row
-                            .columns()
-                            .iter()
-                            .map(|c| ColumnMeta {
-                                name: c.name().to_owned(),
-                                type_name: c.type_info().name().to_owned(),
-                            })
-                            .collect();
-                    }
-                    if result.rows.len() >= max_rows {
-                        result.truncated = true;
-                        break;
-                    }
-                    result.rows.push(
-                        (0..row.len())
-                            .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
-                                Ok(Some(text)) => Cell::Value(text),
-                                Ok(None) => Cell::Null,
-                                Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
-                                    Ok(Some(bytes)) => Cell::binary(&bytes),
-                                    _ => Cell::Null,
-                                },
-                            })
-                            .collect(),
-                    );
                 }
             }
         }
-        result.extra_result_sets = row_sets.saturating_sub(1);
-        if !result.columns.is_empty() {
-            result.rows_affected = None;
-        }
-        Ok(result)
+        Ok(())
     }
 
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {

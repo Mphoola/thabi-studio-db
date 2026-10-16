@@ -1,3 +1,5 @@
+import { isModKey } from "../../lib/platform.js";
+import { pasteText } from "../../lib/clipboard.js";
 import { ref } from "vue";
 
 /**
@@ -71,13 +73,50 @@ export function useGridEditing({
       const cells = data.rowAt(row);
       if (cells && props.editor.canEdit(cells, source(col)))
         props.editor.setValue(cells, source(col), null);
-    } else if (id === "delete-rows") toggleDeleteSelected();
+    } else if (id === "set-default") {
+      const cells = data.rowAt(row);
+      if (cells && props.editor.canEdit(cells, source(col)))
+        props.editor.setDefault(cells, source(col));
+    } else if (id === "duplicate-rows") duplicateSelected();
+    else if (id === "paste-rows") pasteRows();
+    else if (id === "delete-rows") toggleDeleteSelected();
     else if (id === "revert-rows")
       for (const cells of selectedRowsCells()) props.editor.revert(cells);
     else actions.run(id);
   }
 
+  function duplicateSelected() {
+    props.editor?.duplicate(selectedRowsCells());
+  }
+
+  async function pasteRows() {
+    if (!props.editor) return;
+    try {
+      props.editor.paste(await pasteText());
+    } catch {
+      // Nothing readable on the clipboard: nothing to paste.
+    }
+  }
+
+  /**
+   * Editing shortcuts while the grid has focus. Returns true when handled.
+   * Mod+Z / Mod+Shift+Z undo and redo staged edits, Mod+D duplicates the
+   * selected rows, Mod+V pastes clipboard rows as new rows.
+   */
+  function onEditKey(event) {
+    if (!props.editor?.enabled.value || !isModKey(event)) return false;
+    const key = event.key.toLowerCase();
+    if (key === "z") event.shiftKey ? props.editor.redo() : props.editor.undo();
+    else if (key === "y") props.editor.redo();
+    else if (key === "d") duplicateSelected();
+    else if (key === "v") pasteRows();
+    else return false;
+    event.preventDefault();
+    return true;
+  }
+
   return {
+    onEditKey,
     editing,
     startEdit,
     commitEdit,
