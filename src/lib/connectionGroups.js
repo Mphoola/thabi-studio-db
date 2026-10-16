@@ -145,3 +145,16 @@ export function reorderWithin(ids, draggedId, targetId) {
 export function isCollapsed(collapsed, group) {
   return group.user && (collapsed ?? []).includes(group.key);
 }
+
+/**
+ * The list with `profile` in it: replacing the saved copy when it is already
+ * there (an edit), adding it when it is new (a create), in display order.
+ */
+export function upsertProfile(profiles, profile) {
+  const exists = profiles.some((p) => p.id === profile.id);
+  return sortProfiles(
+    exists
+      ? profiles.map((p) => (p.id === profile.id ? profile : p))
+      : [...profiles, profile],
+  );
+}

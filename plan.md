@@ -1303,7 +1303,7 @@ Update this section as work progresses.
   - [x] Server paging and sorting, transfer formats, columns, row detail, filter presets, editing query results (`0023`–`0029`)
   - [x] Filter on/off, Apply All, Show SQL, filter by value; foreign key navigation; Copy as JSON/Markdown/SQL (`0031`)
   - [x] Duplicate, paste, DEFAULT, undo/redo; JSON tree, image, hex/base64, time zone; .xlsx export (`0031`)
-- [x] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`, not committed)
+- [x] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`)
   - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
   - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
   - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)

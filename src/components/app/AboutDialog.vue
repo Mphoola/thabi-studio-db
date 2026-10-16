@@ -75,14 +75,10 @@ const engines = ["MySQL", "PostgreSQL", "SQL Server"];
         </p>
       </section>
 
-      <p class="text-xs text-fg-subtle">
-        Made by Promise Mphoola.
-      </p>
+      <p class="text-xs text-fg-subtle">Made by Promise Mphoola.</p>
     </div>
     <template #footer>
-      <BaseButton variant="primary" @click="open = false"
-        >Done</BaseButton
-      >
+      <BaseButton variant="primary" @click="open = false">Done</BaseButton>
     </template>
   </BaseDialog>
 </template>

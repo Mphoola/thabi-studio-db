@@ -29,8 +29,10 @@ breadth. See `plan.md` §2 and §7b for scope.
   and history/saved queries (`0012`, `0013`), connection rail and table row
   filters (`0014`), inline data editing (`0015`).
 - Phases 11–13 (connections and safety, table data, smart editor): done on
-  `phase-13-smart-editor` (11 and 12 are stacked under it), not committed.
+  `phase-13-smart-editor` (11 and 12 are stacked under it).
   Read `docs/decisions/0016`–`0031`; `0031` lists what closed the gaps.
+- Version 1.0.0, branding (`branding/`, `0032`) and release builds
+  (`.github/workflows/release.yml`: .dmg and .exe on every push to main).
 - Next: Phase 14 (schema and object management). Phase 10 (packaging) is
   deferred until signing options exist.
 

@@ -5,7 +5,9 @@ import { borderClass, describedBy, fieldClass } from "./fieldClasses.js";
 import FormField from "./FormField.vue";
 
 defineProps({
-  label: { type: String, required: true },
+  label: { type: String, default: "" },
+  /** Accessible name when there's no visible label. */
+  ariaLabel: { type: String, default: "" },
   hint: { type: String, default: "" },
   error: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
@@ -24,6 +26,7 @@ const inputId = useId();
         v-model="model"
         :type="visible ? 'text' : 'password'"
         :disabled="disabled"
+        :aria-label="ariaLabel || undefined"
         :aria-invalid="!!error || undefined"
         :aria-describedby="describedBy(inputId, { error, hint })"
         autocomplete="new-password"
