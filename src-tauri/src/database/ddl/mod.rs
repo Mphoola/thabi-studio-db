@@ -12,5 +12,6 @@
 pub mod table;
 
 pub use table::{
-    ColumnSpec, ForeignKey, TableSpec, create_table, drop_table, rename_table, truncate_table,
+    Change, ColumnSpec, ForeignKey, IndexSpec, KeyChange, TableSpec, alter_column, alter_key,
+    create_index, create_table, drop_index, drop_table, rename_table, truncate_table,
 };
