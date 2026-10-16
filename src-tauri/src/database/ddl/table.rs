@@ -219,11 +219,10 @@ pub fn drop_table(
     name: &str,
     if_exists: bool,
 ) -> String {
-    let exists = if if_exists && engine != Engine::MySql {
-        "IF EXISTS "
-    } else {
-        ""
-    };
+    // All three accept IF EXISTS. It was believed MySQL did not, which made
+    // every drop of a table that was not there fail there — and the belief was
+    // in the DDL and its tests together, so nothing could catch it.
+    let exists = if if_exists { "IF EXISTS " } else { "" };
     format!(
         "DROP TABLE {exists}{};",
         quote::table(engine, database, schema, name)
@@ -410,15 +409,15 @@ mod tests {
     }
 
     #[test]
-    fn removes_a_table_with_the_guard_each_engine_offers() {
+    fn removes_a_table_with_the_guard() {
         assert_eq!(
             drop_table(Engine::Postgres, "shop", "public", "orders", true),
             "DROP TABLE IF EXISTS \"public\".\"orders\";"
         );
-        // MySQL has no IF EXISTS on DROP TABLE in the versions this app supports.
+        // MySQL takes it too, which it was long believed not to.
         assert_eq!(
             drop_table(Engine::MySql, "shop", "", "orders", true),
-            "DROP TABLE `shop`.`orders`;"
+            "DROP TABLE IF EXISTS `shop`.`orders`;"
         );
         assert_eq!(
             drop_table(Engine::SqlServer, "shop", "dbo", "orders", false),

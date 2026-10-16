@@ -1162,3 +1162,79 @@ pub async fn apply_table_ddl(
     tab.apply(&params, Some(target.database.clone()), &script)
         .await
 }
+
+/// The statements for a whole-table action, reading the structure a copy is
+/// made from. Both commands come through here, so the SQL shown is the SQL
+/// that runs.
+async fn action_script_for(
+    tab: &crate::queries::QueryTab,
+    params: &database::ConnectParams,
+    engine: database::Engine,
+    target: &database::ddl::TableTarget,
+    action: &database::ddl::TableAction,
+) -> Result<Vec<String>, AppError> {
+    let schema = target.schema.as_deref().unwrap_or_default();
+    let needs_structure = matches!(
+        action,
+        database::ddl::TableAction::DuplicateStructure { .. }
+            | database::ddl::TableAction::DuplicateWithData { .. }
+    );
+    let structure = if needs_structure {
+        let found = tab
+            .with_session(params, Some(target.database.clone()), async |session| {
+                session
+                    .describe(
+                        &target.database,
+                        schema,
+                        &target.name,
+                        database::ObjectKind::Table,
+                    )
+                    .await
+            })
+            .await?;
+        Some(database::ddl::spec_from_structure(&found))
+    } else {
+        None
+    };
+    database::ddl::action_script(
+        engine,
+        &target.database,
+        schema,
+        &target.name,
+        action,
+        structure.as_ref(),
+    )
+    .map_err(|message| AppError::new("invalid", message))
+}
+
+/// The SQL for a whole-table action, before it runs.
+///
+/// The same two-step as a staged change: read the SQL, then run it. An action
+/// that skipped the first step would be the one here that cannot be taken back.
+#[tauri::command]
+pub async fn preview_table_action(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    action: database::ddl::TableAction,
+    state: State<'_, AppState>,
+) -> Result<database::ddl::DdlPreview, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
+    Ok(database::ddl::preview_of(params.engine, script))
+}
+
+/// Runs a whole-table action: the same script the preview showed.
+#[tauri::command]
+pub async fn apply_table_action(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    action: database::ddl::TableAction,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
+    tab.apply(&params, Some(target.database.clone()), &script)
+        .await
+}

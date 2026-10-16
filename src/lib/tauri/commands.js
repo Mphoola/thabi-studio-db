@@ -322,6 +322,16 @@ export function applyTableDdl(id, tabId, target, plan) {
   return call("apply_table_ddl", { id, tabId, target, plan });
 }
 
+/** The SQL for a whole-table action, before it runs. */
+export function previewTableAction(id, tabId, target, action) {
+  return call("preview_table_action", { id, tabId, target, action });
+}
+
+/** Runs a whole-table action: the same script the preview showed. */
+export function applyTableAction(id, tabId, target, action) {
+  return call("apply_table_action", { id, tabId, target, action });
+}
+
 /** One page of a table at `offset`, sorted on the server. */
 export function fetchTablePage(
   id,

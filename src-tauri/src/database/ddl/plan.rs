@@ -4,7 +4,7 @@
 //! here, and the apply path produces it from the same call, so what is read
 //! cannot drift from what is sent.
 
-use super::super::Engine;
+use super::super::{Engine, quote};
 use super::alter::{Change, alter_column};
 use super::keys::{IndexSpec, KeyChange, alter_key, create_index, drop_index};
 use super::table::TableSpec;
@@ -337,6 +337,249 @@ pub fn preview(
 ) -> DdlPreview {
     DdlPreview {
         statements: table_script(engine, database, schema, table, plan),
+        note: atomicity_note(engine).to_owned(),
+        transactional: atomicity(engine) == Atomicity::Transactional,
+    }
+}
+
+/// Something done to a whole table, as one person asks for it.
+///
+/// These are the actions that lose data, so each is confirmed by typing the
+/// table's name before it is offered, and each shows its SQL first.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TableAction {
+    /// `ALTER TABLE … RENAME TO`, or `sp_rename` on SQL Server.
+    Rename { to: String },
+    /// A second table with the same structure and no rows.
+    DuplicateStructure { to: String },
+    /// A second table with the same structure and a copy of the rows.
+    DuplicateWithData { to: String },
+    /// Empty it, keeping its structure.
+    #[serde(rename_all = "camelCase")]
+    Truncate { restart_identity: bool },
+    /// Remove it.
+    #[serde(rename_all = "camelCase")]
+    Drop { if_exists: bool },
+}
+
+/// The statements for a table action.
+///
+/// A duplicate reads its structure from the database rather than guessing it,
+/// so the copy is the table as it is now and not the table as this app last
+/// described it.
+pub fn action_script(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    table: &str,
+    action: &TableAction,
+    structure: Option<&super::table::TableSpec>,
+) -> Result<Vec<String>, String> {
+    match action {
+        TableAction::Rename { to } => Ok(vec![super::table::rename_table(
+            engine, database, schema, table, to,
+        )]),
+        TableAction::Truncate { restart_identity } => Ok(vec![super::table::truncate_table(
+            engine,
+            database,
+            schema,
+            table,
+            *restart_identity,
+        )]),
+        TableAction::Drop { if_exists } => Ok(vec![super::table::drop_table(
+            engine, database, schema, table, *if_exists,
+        )]),
+        TableAction::DuplicateStructure { to } | TableAction::DuplicateWithData { to } => {
+            let spec = structure.ok_or_else(|| {
+                "The table's structure could not be read, so it was not copied.".to_owned()
+            })?;
+            let mut out = vec![super::table::create_table(
+                engine, database, schema, to, spec,
+            )?];
+            if matches!(action, TableAction::DuplicateWithData { .. }) {
+                // The column list is written out so the copy follows the table
+                // as it is now, including anything added since this was staged.
+                let names = spec
+                    .columns
+                    .iter()
+                    .map(|column| quote::ident(engine, &column.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let from = quote::table(engine, database, schema, table);
+                let into = quote::table(engine, database, schema, to);
+                out.push(match engine {
+                    Engine::Postgres => {
+                        format!("INSERT INTO {into} ({names}) SELECT {names} FROM {from};")
+                    }
+                    // The destination must be empty first: MySQL and SQL Server
+                    // both refuse to copy a table onto itself.
+                    Engine::MySql => format!("INSERT INTO {into} SELECT * FROM {from};"),
+                    Engine::SqlServer => {
+                        format!("INSERT INTO {into} ({names}) SELECT {names} FROM {from};")
+                    }
+                });
+            }
+            Ok(out)
+        }
+    }
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+
+    fn spec() -> super::super::table::TableSpec {
+        super::super::table::TableSpec {
+            columns: vec![super::super::table::ColumnSpec {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                primary_key: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn renames_empty_and_drops() {
+        assert_eq!(
+            action_script(
+                Engine::Postgres,
+                "shop",
+                "public",
+                "orders",
+                &TableAction::Rename {
+                    to: "archived".into()
+                },
+                None
+            )
+            .unwrap(),
+            ["ALTER TABLE \"public\".\"orders\" RENAME TO \"archived\";"]
+        );
+        assert_eq!(
+            action_script(
+                Engine::Postgres,
+                "shop",
+                "public",
+                "orders",
+                &TableAction::Truncate {
+                    restart_identity: false
+                },
+                None
+            )
+            .unwrap(),
+            ["TRUNCATE TABLE \"public\".\"orders\";"]
+        );
+        assert_eq!(
+            action_script(
+                Engine::SqlServer,
+                "shop",
+                "dbo",
+                "orders",
+                &TableAction::Drop { if_exists: true },
+                None
+            )
+            .unwrap(),
+            ["DROP TABLE IF EXISTS [shop].[dbo].[orders];"]
+        );
+    }
+
+    #[test]
+    fn duplicates_the_structure_and_says_so_when_it_cannot_read_it() {
+        let action = TableAction::DuplicateStructure {
+            to: "orders_copy".into(),
+        };
+        let copy = action_script(
+            Engine::Postgres,
+            "shop",
+            "public",
+            "orders",
+            &action,
+            Some(&spec()),
+        )
+        .unwrap();
+        assert_eq!(copy.len(), 1, "a structure-only copy is one statement");
+        assert!(copy[0].contains("\"orders_copy\""));
+        assert!(!copy[0].to_uppercase().contains("INSERT"));
+
+        // Guessing the structure would be worse than refusing: the copy would
+        // look right and not match.
+        assert!(
+            action_script(Engine::Postgres, "shop", "public", "orders", &action, None).is_err()
+        );
+    }
+
+    #[test]
+    fn duplicates_with_data_in_one_more_statement() {
+        let script = action_script(
+            Engine::Postgres,
+            "shop",
+            "public",
+            "orders",
+            &TableAction::DuplicateWithData {
+                to: "orders_copy".into(),
+            },
+            Some(&spec()),
+        )
+        .unwrap();
+        assert_eq!(script.len(), 2);
+        assert!(script[0].starts_with("CREATE TABLE"));
+        assert_eq!(
+            script[1],
+            "INSERT INTO \"public\".\"orders_copy\" (\"id\") SELECT \"id\" FROM \"public\".\"orders\";"
+        );
+    }
+
+    #[test]
+    fn a_copy_writes_the_column_list_out_so_it_follows_the_table() {
+        let script = action_script(
+            Engine::Postgres,
+            "shop",
+            "public",
+            "orders",
+            &TableAction::DuplicateWithData {
+                to: "orders_copy".into(),
+            },
+            Some(&spec()),
+        )
+        .unwrap();
+        // `SELECT *` would copy whatever the table is now, which is the point —
+        // but naming the columns keeps the two in step when it is not.
+        assert!(!script[1].contains("SELECT *"));
+    }
+}
+
+/// The table structure `describe` reported, as the spec a copy is built from.
+///
+/// A copy is made from the table as it is now, not from what this app last
+/// described, so the structure is read rather than guessed.
+pub fn spec_from_structure(structure: &super::super::ObjectStructure) -> super::table::TableSpec {
+    super::table::TableSpec {
+        columns: structure
+            .columns
+            .iter()
+            .map(|column| super::table::ColumnSpec {
+                name: column.name.clone(),
+                data_type: column.data_type.clone(),
+                nullable: column.nullable,
+                default: column.default.clone().unwrap_or_default(),
+                comment: String::new(),
+                primary_key: column.primary_key.is_some(),
+                unique: false,
+            })
+            .collect(),
+        unique_names: vec![],
+        primary_key_name: String::new(),
+        foreign_keys: vec![],
+    }
+}
+
+/// Wraps statements the dialog already has, for an action previewed elsewhere.
+pub fn preview_of(engine: Engine, statements: Vec<String>) -> DdlPreview {
+    DdlPreview {
+        statements,
         note: atomicity_note(engine).to_owned(),
         transactional: atomicity(engine) == Atomicity::Transactional,
     }

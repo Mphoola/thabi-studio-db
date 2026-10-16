@@ -222,8 +222,8 @@ async fn decodes_bound_values_by_type(engine: Engine) {
  */
 async fn applies_generated_ddl(engine: Engine) {
     use thabi_studio_lib::database::ddl::{
-        Change, ColumnSpec, IndexAction, IndexSpec, KeyChange, TablePlan, TableSpec, create_table,
-        drop_table, table_script,
+        Change, ColumnSpec, IndexAction, IndexSpec, KeyChange, TableAction, TablePlan, TableSpec,
+        action_script, create_table, drop_table, table_script,
     };
     let mut session = open(engine).await;
     // Each session is already connected to its database: the SQL Server
@@ -237,6 +237,15 @@ async fn applies_generated_ddl(engine: Engine) {
         .execute(&drop_table(engine, db, schema, "thabi ddl", true), 1)
         .await
         .unwrap_or_else(|e| panic!("drop leftovers from a previous run: {e:?}"));
+    // MySQL names check constraints across the whole schema rather than per
+    // table, so a leftover copy of the renamed table would collide with the
+    // one this run is about to make.
+    for leftover in ["thabi_actions", "thabi_actions_copy"] {
+        session
+            .execute(&drop_table(engine, db, schema, leftover, true), 1)
+            .await
+            .expect("drop leftovers");
+    }
 
     // A table with an awkward name, so quoting is exercised for real.
     let spec = TableSpec {
@@ -350,9 +359,6 @@ async fn applies_generated_ddl(engine: Engine) {
         "{engine:?} did not create the unique index: {indexes:?}"
     );
 
-    // A table with no key and no columns is refused before it reaches a server.
-    assert!(create_table(engine, db, schema, "empty", &TableSpec::default()).is_err());
-
     // The path the Create Table wizard uses: a create plan previewed and then
     // applied, which is one statement rather than a list of alters.
     let wizard = TablePlan {
@@ -459,6 +465,132 @@ async fn applies_generated_ddl(engine: Engine) {
             .nullable,
         "{engine:?} did not make the column nullable"
     );
+
+    // Rows first, so a copy with data has something to copy.
+    for id in 1..=3 {
+        session
+            .execute(
+                &format!(
+                    // Distinct: an earlier step made a unique index on status.
+                    "INSERT INTO {} (id, status) VALUES ({id}, 'new{id}')",
+                    thabi_studio_lib::database::quote::table(engine, db, schema, "thabi ddl")
+                ),
+                1,
+            )
+            .await
+            .expect("insert rows to copy");
+    }
+
+    // The whole-table actions, run the way the menu runs them: generate, then
+    // apply. Duplicate with data is the one with something to get wrong.
+    let rename_to = "thabi_actions";
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        "thabi ddl",
+        &TableAction::Rename {
+            to: rename_to.into(),
+        },
+        None,
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let renamed = session
+        .describe(
+            db,
+            schema,
+            rename_to,
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?}: rename did not take: {e:?}"));
+    assert_eq!(renamed.columns.len(), changed.columns.len());
+
+    let spec = thabi_studio_lib::database::ddl::spec_from_structure(&renamed);
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        rename_to,
+        &TableAction::DuplicateWithData {
+            to: "thabi_actions_copy".into(),
+        },
+        Some(&spec),
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let copy = session
+        .describe(
+            db,
+            schema,
+            "thabi_actions_copy",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?}: copy did not take: {e:?}"));
+    assert_eq!(copy.columns.len(), renamed.columns.len());
+    let rows = session
+        .execute(
+            &format!(
+                "SELECT COUNT(*) FROM {}",
+                thabi_studio_lib::database::quote::table(engine, db, schema, "thabi_actions_copy")
+            ),
+            1,
+        )
+        .await
+        .expect("count the copy");
+    assert_eq!(
+        rows.rows[0][0],
+        thabi_studio_lib::database::Cell::Value("3".into()),
+        "{engine:?}: the copy has the wrong rows"
+    );
+
+    // Emptying keeps the structure, which is the difference from dropping.
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        rename_to,
+        &TableAction::Truncate {
+            restart_identity: false,
+        },
+        None,
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?}: {e:?}"));
+    }
+    let after = session
+        .describe(
+            db,
+            schema,
+            rename_to,
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after truncate");
+    assert_eq!(
+        after.columns.len(),
+        renamed.columns.len(),
+        "{engine:?}: truncate changed the structure"
+    );
+
+    // A table with no key and no columns is refused before it reaches a server.
+    assert!(create_table(engine, db, schema, "empty", &TableSpec::default()).is_err());
 }
 
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {

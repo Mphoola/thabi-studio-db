@@ -20,8 +20,8 @@ pub use keys::{IndexSpec, KeyChange};
 pub use alter::alter_column;
 pub use keys::{alter_key, create_index, drop_index};
 pub use plan::{
-    Atomicity, DdlPreview, IndexAction, TablePlan, TableTarget, atomicity, atomicity_note, preview,
-    table_script,
+    Atomicity, DdlPreview, IndexAction, TableAction, TablePlan, TableTarget, action_script,
+    atomicity, atomicity_note, preview, preview_of, spec_from_structure, table_script,
 };
 pub use table::{
     ColumnSpec, ForeignKey, TableSpec, create_table, drop_table, rename_table, truncate_table,

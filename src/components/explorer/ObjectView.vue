@@ -20,6 +20,7 @@ import { useTableEditing } from "./useTableEditing.js";
 import { useTableFilters } from "./useTableFilters.js";
 import { useTableLinks } from "./useTableLinks.js";
 import StructureEditor from "./StructureEditor.vue";
+import TableActions from "./TableActions.vue";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
@@ -179,7 +180,18 @@ const goToPage = (index) => gridView.value?.goToPage(index);
       @add-row="addingRow = true"
       @toggle-filters="tableFilters.toggle"
       @reload="load()"
-    />
+    >
+      <TableActions
+        v-if="node.kind === 'table' && tab === 'data' && canEditStructure"
+        :tab="props.tab"
+        :profile-id="profileId ?? ''"
+        :database="node.database ?? ''"
+        :schema="node.schema ?? ''"
+        :table="node.name"
+        :disabled="current.status === 'loading'"
+        @changed="load()"
+      />
+    </ObjectHeader>
     <FilterBar
       v-if="tableFilters.show.value && columns.length"
       v-model:filters="filters"
