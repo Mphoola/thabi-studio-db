@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  upsertProfile,
   colourDotClass,
   groupConnections,
   groupEdgeClass,
@@ -102,5 +103,31 @@ describe("isCollapsed", () => {
     expect(isCollapsed(["Work"], user)).toBe(true);
     expect(isCollapsed([], user)).toBe(false);
     expect(isCollapsed(["production"], environment)).toBe(false);
+  });
+});
+
+describe("upsertProfile", () => {
+  const a = {
+    id: "a",
+    name: "Alpha",
+    environment: "local",
+    groupName: "",
+    sortOrder: 0,
+  };
+  it("adds a new connection, so it shows up after Save", () => {
+    const b = {
+      id: "b",
+      name: "Beta",
+      environment: "local",
+      groupName: "",
+      sortOrder: 1,
+    };
+    expect(upsertProfile([a], b).map((p) => p.id)).toEqual(["a", "b"]);
+  });
+  it("replaces an edited connection instead of adding it twice", () => {
+    const renamed = { ...a, name: "Alpha 2" };
+    const out = upsertProfile([a], renamed);
+    expect(out).toHaveLength(1);
+    expect(out[0].name).toBe("Alpha 2");
   });
 });

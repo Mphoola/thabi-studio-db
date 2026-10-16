@@ -296,6 +296,29 @@ handlers.preview_filter = ({ filters }) =>
     ? `WHERE ${filters.map((f) => `"${f.column}" ${f.op} '${f.value}'`).join(" AND ")}`
     : "";
 handlers.list_referencing = () => [];
+// Saving a connection in the preview: echoes it back as Rust would.
+let mockProfileId = 100;
+const mockProfile = (input, id) => ({
+  ...input,
+  id,
+  port: Number(input.port),
+  sshPort: Number(input.sshPort || 22),
+  queryTimeoutSeconds: Number(input.queryTimeoutSeconds) || 0,
+  maxResultRows: Number(input.maxResultRows) || 0,
+  hasDatabasePassword: Boolean(input.databasePassword),
+  hasSshPassword: Boolean(input.sshPassword),
+  hasSshKeyPassphrase: Boolean(input.sshKeyPassphrase),
+  sortOrder: 0,
+  lastConnectedAt: null,
+});
+handlers.create_connection_profile = ({ input }) => ({
+  profile: mockProfile(input, `p${(mockProfileId += 1)}`),
+  warning: null,
+});
+handlers.update_connection_profile = ({ id, input }) => ({
+  profile: mockProfile(input, id),
+  warning: null,
+});
 handlers.apply_row_changes = ({ changes }) => changes.length;
 
 handlers.cancel_statement = () => {

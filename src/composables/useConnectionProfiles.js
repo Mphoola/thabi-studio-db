@@ -12,7 +12,7 @@ import {
   testConnectionInput,
   updateConnectionProfile,
 } from "../lib/tauri/commands.js";
-import { sortProfiles } from "../lib/connectionGroups.js";
+import { sortProfiles, upsertProfile } from "../lib/connectionGroups.js";
 import { isTauri } from "../lib/tauri/ipc.js";
 import { applyLocalAppSetting, useAppSettings } from "./useAppSettings.js";
 import { useDialogs } from "./useDialogs.js";
@@ -83,15 +83,12 @@ export function useConnectionProfiles() {
     const result = editingId.value
       ? await updateConnectionProfile(editingId.value, input)
       : await createConnectionProfile(input);
-    profiles.value = sortProfiles(
-      profiles.value.map((profile) =>
-        profile.id === result.profile.id ? result.profile : profile,
-      ),
-    );
+    // A new connection is added; an edited one replaces its old copy.
+    profiles.value = upsertProfile(profiles.value, result.profile);
     // Rust closes the old connection when a profile's settings change.
     if (editingId.value) setStatus(result.profile.id, null);
     dialogs.close();
-    return result.warning;
+    return { warning: result.warning, profile: result.profile };
   }
 
   async function duplicate(id) {
