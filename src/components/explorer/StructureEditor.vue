@@ -126,7 +126,7 @@ function addColumn() {
         :variant="editing ? 'primary' : 'ghost'"
         @click="editing = !editing"
       >
-        {{ editing ? "Done" : "Edit structure" }}
+        {{ editing ? "Done editing" : "Edit structure" }}
       </BaseButton>
       <template v-if="editing">
         <BaseButton
@@ -137,26 +137,28 @@ function addColumn() {
         >
           Add column
         </BaseButton>
-        <span v-if="changes.dirty.value" class="text-xs text-fg-muted">
+      </template>
+      <!-- Staged changes stay reachable whether or not the editor is open.
+           Hiding them behind "Done" is how staged work gets lost. -->
+      <template v-if="changes.dirty.value">
+        <span class="text-xs text-fg-muted">
           {{ changes.edits.value.length }} staged
           {{ changes.edits.value.length === 1 ? "change" : "changes" }}
+          {{ editing ? "" : "— review and run them to save" }}
         </span>
         <BaseButton
-          v-if="changes.dirty.value"
           size="sm"
           class="ml-auto"
           variant="primary"
           :loading="changes.previewing.value"
+          :title="
+            editing ? 'Show the SQL, then run it' : 'Show the SQL, then run it'
+          "
           @click="changes.review"
         >
-          Review SQL
+          {{ editing ? "Review SQL" : "Review and save" }}
         </BaseButton>
-        <BaseButton
-          v-if="changes.dirty.value"
-          size="sm"
-          variant="ghost"
-          @click="changes.discard"
-        >
+        <BaseButton size="sm" variant="ghost" @click="changes.discard">
           Discard
         </BaseButton>
       </template>
@@ -231,11 +233,11 @@ function addColumn() {
     </div>
 
     <DdlReviewDialog
-      v-model:open="reviewOpen"
+      v-model:open="changes.reviewOpen.value"
       :title="`Change ${title}`"
       :preview="changes.preview.value"
       :applying="changes.applying.value"
-      @close="reviewOpen = false"
+      @close="changes.reviewOpen.value = false"
       @apply="changes.run"
     />
   </div>

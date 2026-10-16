@@ -174,7 +174,6 @@ const canName = computed(
     :items="items"
     label="Table actions"
     align="end"
-    :disabled="disabled"
     @select="choose"
   >
     <BaseButton size="sm" :disabled="disabled">Table actions</BaseButton>
