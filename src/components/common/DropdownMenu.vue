@@ -1,3 +1,16 @@
+<script>
+// Whether a mouse button is down anywhere, shared by every menu (see openAt).
+let pointerHeld = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", () => (pointerHeld = true), {
+    capture: true,
+  });
+  window.addEventListener("pointerup", () => (pointerHeld = false), {
+    capture: true,
+  });
+}
+</script>
+
 <script setup>
 import { nextTick, ref, useId } from "vue";
 import { placeFloating } from "../../lib/position.js";
@@ -88,11 +101,23 @@ function choose(item) {
   emit("select", item.id);
 }
 
-/** Opens the menu at a point, for context menus. */
+/**
+ * Opens the menu at a point, for context menus.
+ *
+ * On macOS a right-click opens the context menu while the button is still
+ * down; the release that follows lands outside the brand-new popover and
+ * the browser's light dismiss closed it straight away. So while a button is
+ * held, the menu waits for the release before it opens.
+ */
 function openAt(x, y) {
   returnFocus = document.activeElement;
   if (open.value) menu.value?.hidePopover();
-  show("first", new DOMRect(x, y, 0, 0));
+  const showHere = () => show("first", new DOMRect(x, y, 0, 0));
+  if (!pointerHeld) return showHere();
+  window.addEventListener("pointerup", () => requestAnimationFrame(showHere), {
+    once: true,
+    capture: true,
+  });
 }
 defineExpose({ openAt });
 

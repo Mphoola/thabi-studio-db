@@ -62,7 +62,7 @@ const bigColumns = [
 ];
 
 const handlers = {
-  app_info: () => ({ name: "Thabi Studio", version: "0.1.0-mock" }),
+  app_info: () => ({ name: "Thabi Studio", version: "1.0.0-mock" }),
   get_app_settings: () => ({
     themeMode: "system",
     sidebarWidth: 260,

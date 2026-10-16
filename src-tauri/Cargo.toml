@@ -1,6 +1,6 @@
 [package]
 name = "thabi-studio"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first desktop client for MySQL, PostgreSQL and SQL Server on macOS, Windows and Linux"
 authors = ["Promise Mphoola"]
 edition = "2024"
