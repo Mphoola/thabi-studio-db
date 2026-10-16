@@ -52,6 +52,7 @@ const empty = computed(
         title="Couldn't work out the SQL"
         :message="error"
       />
+      <p v-else-if="!ready" class="text-sm text-fg-muted">Nothing to review.</p>
       <p v-else-if="empty" class="text-sm text-fg-muted">
         Nothing to run. Make a change first.
       </p>
@@ -64,15 +65,15 @@ const empty = computed(
           </li>
         </ol>
         <InlineAlert
-          v-if="preview.note"
-          :tone="preview.transactional ? 'info' : 'warning'"
+          v-if="preview?.note"
+          :tone="preview?.transactional ? 'info' : 'warning'"
           :title="
-            preview.transactional ? 'All or nothing' : 'Not all or nothing'
+            preview?.transactional ? 'All or nothing' : 'Not all or nothing'
           "
-          :message="preview.note"
+          :message="preview?.note || ''"
         >
           <TriangleAlert
-            v-if="!preview.transactional"
+            v-if="preview && !preview.transactional"
             :size="14"
             aria-hidden="true"
           />
@@ -85,7 +86,7 @@ const empty = computed(
         size="sm"
         variant="primary"
         :loading="applying"
-        :disabled="loading || !statements.length"
+        :disabled="loading || !ready || !statements.length"
         @click="emit('apply')"
       >
         {{ applying ? "Running…" : "Run these" }}
