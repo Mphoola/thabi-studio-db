@@ -1,3 +1,4 @@
+use crate::app_lock::AppLock;
 use crate::connections::ConnectionService;
 use crate::credentials::{CredentialStore, OsCredentialStore};
 use crate::errors::AppError;
@@ -8,6 +9,7 @@ pub struct AppState {
     pub database: Arc<Mutex<Connection>>,
     pub credentials: Arc<dyn CredentialStore>,
     pub connections: ConnectionService,
+    pub app_lock: AppLock,
 }
 
 impl AppState {
@@ -16,6 +18,7 @@ impl AppState {
             database: Arc::new(Mutex::new(database)),
             credentials: Arc::new(OsCredentialStore),
             connections: ConnectionService::default(),
+            app_lock: AppLock::default(),
         }
     }
 

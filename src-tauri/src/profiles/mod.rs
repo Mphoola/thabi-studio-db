@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 pub use repository::{
     apply_one_off_secrets, connect_params, connect_params_for_input, create_profile,
-    delete_profile, duplicate_profile, list_profiles, mark_connected, reorder_profiles,
-    required_secret, select_profile, update_validated_profile,
+    delete_profile, duplicate_profile, forget_all_secrets, list_profiles, mark_connected,
+    reorder_profiles, required_secret, select_profile, update_validated_profile,
 };
 pub use validation::{ValidatedProfile, validate};
 

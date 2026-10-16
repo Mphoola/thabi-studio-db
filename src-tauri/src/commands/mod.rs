@@ -4,6 +4,8 @@
 //! blocking thread through `AppState::blocking`.
 
 pub mod app;
+pub mod app_lock;
+pub mod app_recovery;
 pub mod connection_profiles;
 pub mod connections;
 pub mod library;

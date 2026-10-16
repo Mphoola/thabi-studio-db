@@ -7,13 +7,13 @@ defineProps({
 </script>
 
 <template>
-  <div class="flex items-start justify-between gap-6 py-3 first:pt-0 last:pb-0">
-    <div class="flex max-w-72 flex-col">
+  <div class="flex items-start justify-between gap-6 py-3">
+    <div class="flex max-w-80 min-w-0 flex-col">
       <span class="text-base text-fg">{{ title }}</span>
       <span v-if="description" class="text-sm text-fg-subtle">{{
         description
       }}</span>
     </div>
-    <slot />
+    <div class="shrink-0"><slot /></div>
   </div>
 </template>

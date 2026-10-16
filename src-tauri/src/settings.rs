@@ -28,6 +28,8 @@ pub struct AppSettings {
     /// "upper" or "lower": how completed keywords are written.
     pub editor_keyword_case: String,
     pub editor_vim: bool,
+    /// Minutes idle before the app locks, when an app password is set; 0 never.
+    pub auto_lock_minutes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +99,9 @@ pub fn read_settings(connection: &Connection) -> Result<AppSettings, AppError> {
             .filter(|case| matches!(case.as_str(), "upper" | "lower"))
             .unwrap_or_else(|| "upper".to_owned()),
         editor_vim: setting(connection, "editor_vim")?.as_deref() == Some("true"),
+        auto_lock_minutes: setting(connection, "auto_lock_minutes")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(15),
     })
 }
 
@@ -232,6 +237,11 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             Some(case @ ("upper" | "lower")) => case.to_owned(),
             _ => return Err(AppError::new("validation", "Choose a keyword case.")),
         },
+        "auto_lock_minutes" => value
+            .as_u64()
+            .filter(|minutes| *minutes <= 24 * 60)
+            .ok_or_else(|| AppError::new("validation", "Choose when to lock."))?
+            .to_string(),
         "query_timeout_seconds" => value
             .as_u64()
             .filter(|seconds| *seconds <= 24 * 60 * 60)
@@ -354,6 +364,7 @@ mod tests {
                 editor_word_wrap: false,
                 editor_keyword_case: "upper".into(),
                 editor_vim: false,
+                auto_lock_minutes: 15,
             }
         );
     }

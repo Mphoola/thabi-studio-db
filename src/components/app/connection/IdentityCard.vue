@@ -1,6 +1,7 @@
 <script setup>
 import { computed, useId } from "vue";
 import { Check } from "lucide-vue-next";
+import { vTooltip } from "../../../composables/useTooltip.js";
 import { ENVIRONMENTS } from "../../../lib/environments.js";
 import { SAFE_MODES, safeModeFor } from "../../../lib/sqlSafety.js";
 import FormRow from "../../common/FormRow.vue";

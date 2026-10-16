@@ -33,6 +33,8 @@ breadth. See `plan.md` §2 and §7b for scope.
   Read `docs/decisions/0016`–`0031`; `0031` lists what closed the gaps.
 - Version 1.0.0, branding (`branding/`, `0032`) and release builds
   (`.github/workflows/release.yml`: .dmg and .exe on every push to main).
+- Optional app password and lock screen, enforced in Rust, with recovery
+  codes and security questions (`0033`). Settings is a page (`0034`).
 - Next: Phase 14 (schema and object management). Phase 10 (packaging) is
   deferred until signing options exist.
 
@@ -63,14 +65,14 @@ Run `npm run check` after every meaningful change and before calling work done.
 ## Layout
 
 - `src/components/app/` — app shell (sidebar, status bar, error boundary, About).
-- `src/components/app/` also holds the title bar, sidebar, command palette,
-  settings and shortcuts dialogs.
+- `src/components/app/` also holds the title bar, sidebar, command palette
+  and shortcuts dialog.
+- `src/components/settings/` — the Settings page and its sections (`0034`).
 - `src/components/common/` — reusable primitives: `BaseButton`, `IconButton`,
   `TextInput`, `SelectInput`, `CheckboxInput`, `SwitchInput`,
   `SegmentedControl`, `DropdownMenu`, `BaseDialog`, `EmptyState`,
   `InlineAlert`, `SpinnerIcon`, `KbdShortcut`, plus the toast, confirm and
-  tooltip hosts. See them all in the dev-only Component Gallery (⌘P).
-- `src/components/dev/` — development-only screens, never in release builds.
+  tooltip hosts.
 - `src/composables/` — shared state: `useCommands` (commands + shortcuts),
   `useAppCommands`, `useLayout`, `useDialogs`, `useTheme`, `useToasts`,
   `useConfirm`, `useTooltip` (`v-tooltip`), `useAppInfo`.

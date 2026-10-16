@@ -1,13 +1,13 @@
 <script setup>
 import { computed } from "vue";
 import { useAppSettings } from "../../composables/useAppSettings.js";
-import { TIME_ZONE_CHOICES } from "../../lib/timeZones.js";
 import SelectInput from "../common/SelectInput.vue";
 import SwitchInput from "../common/SwitchInput.vue";
 import TextInput from "../common/TextInput.vue";
 import SettingRow from "./SettingRow.vue";
+import SettingsGroup from "./SettingsGroup.vue";
 
-/** SQL editor and value display preferences (Phases 12 and 13). */
+/** SQL editor preferences. */
 const { settings, persistAppSetting } = useAppSettings();
 
 const bind = (key, toValue = (v) => v) =>
@@ -15,16 +15,22 @@ const bind = (key, toValue = (v) => v) =>
     get: () => settings.value[key],
     set: (value) => persistAppSetting(key, toValue(value)),
   });
+const numeric = (key) =>
+  computed({
+    get: () => String(settings.value[key]),
+    set: (value) => persistAppSetting(key, Number(value)),
+  });
+const fontSize = numeric("editorFontSize");
 const fontFamily = bind("editorFontFamily", (v) => v.trim());
-const tabSize = computed({
-  get: () => String(settings.value.editorTabSize),
-  set: (value) => persistAppSetting("editorTabSize", Number(value)),
-});
+const tabSize = numeric("editorTabSize");
 const wordWrap = bind("editorWordWrap");
 const keywordCase = bind("editorKeywordCase");
 const vim = bind("editorVim");
-const timeZone = bind("displayTimeZone");
 
+const fontSizes = [11, 12, 13, 14, 15, 16, 18].map((n) => ({
+  value: String(n),
+  label: `${n} pt`,
+}));
 const tabSizes = [2, 4, 8].map((n) => ({
   value: String(n),
   label: `${n} spaces`,
@@ -36,51 +42,55 @@ const cases = [
 </script>
 
 <template>
-  <SettingRow
-    title="Editor font"
-    description="A font installed on this computer, like “JetBrains Mono”. Leave blank for the system monospace font."
-  >
-    <TextInput
-      v-model.lazy="fontFamily"
-      class="w-44"
-      placeholder="System monospace"
-      aria-label="Editor font"
-    />
-  </SettingRow>
-  <SettingRow title="Indentation">
-    <SelectInput
-      v-model="tabSize"
-      class="w-36"
-      :options="tabSizes"
-      aria-label="Indentation"
-    />
-  </SettingRow>
-  <SettingRow
-    title="Keywords"
-    description="How autocomplete writes SQL keywords."
-  >
-    <SelectInput
-      v-model="keywordCase"
-      class="w-36"
-      :options="cases"
-      aria-label="Keyword case"
-    />
-  </SettingRow>
-  <SettingRow title="Editor behaviour">
-    <div class="flex flex-col items-end gap-2">
-      <SwitchInput v-model="wordWrap" label="Wrap long lines" />
-      <SwitchInput v-model="vim" label="Vim key bindings" />
-    </div>
-  </SettingRow>
-  <SettingRow
-    title="Times with a time zone"
-    description="Values that carry an offset (timestamptz, datetimeoffset) are shown in this zone. Times without one are always shown as stored."
-  >
-    <SelectInput
-      v-model="timeZone"
-      class="w-56"
-      :options="TIME_ZONE_CHOICES"
-      aria-label="Time zone for display"
-    />
-  </SettingRow>
+  <SettingsGroup title="Font">
+    <SettingRow title="Size">
+      <SelectInput
+        v-model="fontSize"
+        class="w-36"
+        :options="fontSizes"
+        aria-label="Editor font size"
+      />
+    </SettingRow>
+    <SettingRow
+      title="Font family"
+      description="A font installed on this computer, like “JetBrains Mono”. Leave blank for the system monospace font."
+    >
+      <TextInput
+        v-model.lazy="fontFamily"
+        class="w-44"
+        placeholder="System monospace"
+        aria-label="Editor font"
+      />
+    </SettingRow>
+  </SettingsGroup>
+  <SettingsGroup title="Typing">
+    <SettingRow title="Indentation">
+      <SelectInput
+        v-model="tabSize"
+        class="w-36"
+        :options="tabSizes"
+        aria-label="Indentation"
+      />
+    </SettingRow>
+    <SettingRow
+      title="Keywords"
+      description="How autocomplete writes SQL keywords."
+    >
+      <SelectInput
+        v-model="keywordCase"
+        class="w-36"
+        :options="cases"
+        aria-label="Keyword case"
+      />
+    </SettingRow>
+    <SettingRow title="Wrap long lines">
+      <SwitchInput v-model="wordWrap" label="Wrap long lines" hide-label />
+    </SettingRow>
+    <SettingRow
+      title="Vim key bindings"
+      description="Normal, insert and visual modes in the SQL editor."
+    >
+      <SwitchInput v-model="vim" label="Vim key bindings" hide-label />
+    </SettingRow>
+  </SettingsGroup>
 </template>

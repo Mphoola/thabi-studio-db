@@ -31,7 +31,8 @@ Implements the layout in `docs/design/workspace.md`.
    fuzzy filtering). Component tests can come later if needed.
 8. **Component gallery** (`src/components/dev/`) is loaded only when
    `import.meta.env.DEV` is true and is absent from release bundles.
-   Open it from ⌘P → "Show Component Gallery".
+   Open it from ⌘P → "Show Component Gallery". (Removed on 2026-10-16;
+   see `0034`.)
 
 ## Not done in Phase 2, by design
 

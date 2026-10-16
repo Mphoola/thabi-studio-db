@@ -9,6 +9,60 @@ export function getAppSettings() {
   return call("get_app_settings");
 }
 
+/** The app password lock (docs/decisions/0033-app-password.md). */
+export function appLockStatus() {
+  return call("app_lock_status");
+}
+
+export function unlockApp(password) {
+  return call("unlock_app", { password });
+}
+
+export function lockApp() {
+  return call("lock_app");
+}
+
+export function setAppPassword(current, password) {
+  return call("set_app_password", { current, password });
+}
+
+export function removeAppPassword(current) {
+  return call("remove_app_password", { current });
+}
+
+export function resetAppPassword() {
+  return call("reset_app_password");
+}
+
+/** Ways back in when the app password is forgotten. */
+export function recoveryOptions() {
+  return call("recovery_options");
+}
+
+export function recoverWithCode(code, password) {
+  return call("recover_with_code", { code, password });
+}
+
+export function recoverWithAnswers(answers, password) {
+  return call("recover_with_answers", { answers, password });
+}
+
+export function regenerateRecoveryCodes(current) {
+  return call("regenerate_recovery_codes", { current });
+}
+
+export function setSecurityQuestions(current, questions) {
+  return call("set_security_questions", { current, questions });
+}
+
+export function removeSecurityQuestions(current) {
+  return call("remove_security_questions", { current });
+}
+
+export function saveRecoveryCodes(path, codes) {
+  return call("save_recovery_codes", { path, codes });
+}
+
 export function importLegacyPreferences(preferences) {
   return call("import_legacy_preferences", { preferences });
 }

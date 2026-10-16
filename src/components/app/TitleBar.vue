@@ -42,7 +42,7 @@ const trafficLightInset = isTauri() && isMac;
       <IconButton
         :icon="Database"
         label="Connections"
-        :pressed="!showingQueries"
+        :pressed="mainView === 'welcome'"
         @click="runCommand('view.connections')"
       />
       <IconButton

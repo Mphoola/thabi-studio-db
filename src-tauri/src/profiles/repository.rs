@@ -962,6 +962,43 @@ pub fn delete_profile(
     Ok(())
 }
 
+/// Removes every saved connection secret, for when the app password is
+/// forgotten: the connections stay, and their passwords are asked for again.
+/// Returns how many connections lost a saved secret.
+pub fn forget_all_secrets(
+    connection: &Connection,
+    credentials: &dyn CredentialStore,
+) -> Result<usize, AppError> {
+    let keys = {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, credential_key FROM connection_profiles
+                 WHERE credential_key IS NOT NULL",
+            )
+            .map_err(|_| AppError::storage())?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|_| AppError::storage())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| AppError::storage())?
+    };
+    for (id, reference) in &keys {
+        credentials.delete(reference)?;
+        connection
+            .execute(
+                "UPDATE connection_profiles SET credential_key = NULL,
+                    has_database_password = 0, has_ssh_password = 0,
+                    has_ssh_key_passphrase = 0, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                [id],
+            )
+            .map_err(|_| AppError::storage())?;
+    }
+    Ok(keys.len())
+}
+
 fn restore_secret(
     credentials: &dyn CredentialStore,
     reference: Option<&str>,
@@ -1017,6 +1054,23 @@ mod tests {
                 .remove(reference);
             Ok(())
         }
+    }
+
+    #[test]
+    fn forgetting_all_secrets_keeps_the_connections() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut with_password = input();
+        with_password.database_password = Some("database-secret".into());
+        let saved = create_profile(&connection, &credentials, with_password).unwrap();
+        create_profile(&connection, &credentials, input()).unwrap();
+
+        assert_eq!(forget_all_secrets(&connection, &credentials).unwrap(), 1);
+        assert!(credentials.0.lock().unwrap().is_empty());
+        let profile = get_profile(&connection, &saved.profile.id).unwrap();
+        assert!(!profile.has_database_password);
+        assert_eq!(list_profiles(&connection).unwrap().len(), 2);
     }
 
     #[test]
