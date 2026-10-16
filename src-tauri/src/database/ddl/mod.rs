@@ -9,9 +9,39 @@
 //! user filled in and identifiers that go through [`super::quote`], so a table
 //! called `order"; DROP TABLE x; --` is one quoted name in every statement.
 
+pub mod alter;
+pub mod keys;
 pub mod table;
 
+pub use alter::Change;
+pub use keys::{IndexSpec, KeyChange};
+
+pub use alter::alter_column;
+pub use keys::{alter_key, create_index, drop_index};
 pub use table::{
-    Change, ColumnSpec, ForeignKey, IndexSpec, KeyChange, TableSpec, alter_column, alter_key,
-    create_index, create_table, drop_index, drop_table, rename_table, truncate_table,
+    ColumnSpec, ForeignKey, TableSpec, create_table, drop_table, rename_table, truncate_table,
 };
+
+/// The statement text with every quoted identifier taken out, so a semicolon
+/// inside a name is not counted as a statement break. Asserting on a statement
+/// that quotes an awkward name needs this: the name is free to contain the very
+/// character the check is looking for.
+#[cfg(test)]
+pub(crate) fn outside_identifiers(sql: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(open) = rest.find(['"', '`', '[']) {
+        out.push_str(&rest[..open]);
+        let close = if rest[open..].starts_with('[') {
+            "]"
+        } else {
+            &rest[open..open + 1]
+        };
+        match rest[open + 1..].find(close) {
+            Some(at) => rest = &rest[open + 1 + at + 1..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}

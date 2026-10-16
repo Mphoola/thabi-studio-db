@@ -109,6 +109,9 @@ Run `npm run check` after every meaningful change and before calling work done.
 ## Coding rules
 
 1. Vue components stay under 250 lines; split by responsibility.
+   Rust files stay under 500 lines of code; split by responsibility. The
+   `ddl` module is laid out this way: `table`, `alter`, `keys`, and tests
+   under `tests/`.
 2. Colours come only from `src/styles/tokens.css` (`bg-surface`, `text-fg-muted`,
    `border-line`, `bg-danger text-danger-fg`, …). Tailwind's default palette is
    switched off, so `text-white` or `bg-zinc-500` produce nothing, and
