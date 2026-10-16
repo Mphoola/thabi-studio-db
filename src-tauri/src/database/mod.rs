@@ -6,6 +6,7 @@
 //! statements run on the same server session, and cancelling a query needs
 //! to know which backend is running it.
 
+pub mod ddl;
 pub mod edit;
 pub mod error;
 pub mod filter;

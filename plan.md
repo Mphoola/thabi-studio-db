@@ -1307,7 +1307,7 @@ Update this section as work progresses.
   - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
   - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
   - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)
-- [ ] Phase 14 — Schema and object management
+- [ ] Phase 14 — Schema and object management (branch `phase-14-schema-management`) — DDL generation per engine started: CREATE TABLE for the wizard, plus rename, drop and truncate, quoted per engine and tested with awkward identifiers. The table designer's ALTER statements are next.
 - [ ] Phase 15 — Import, export, backup and administration
 
 **Final principle:** Build the smallest genuinely reliable database client first. A polished connection flow, accurate query results, safe credential handling, and dependable remote access are more valuable than many incomplete features.
