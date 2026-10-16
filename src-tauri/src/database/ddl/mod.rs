@@ -11,6 +11,7 @@
 
 pub mod alter;
 pub mod keys;
+pub mod plan;
 pub mod table;
 
 pub use alter::Change;
@@ -18,6 +19,10 @@ pub use keys::{IndexSpec, KeyChange};
 
 pub use alter::alter_column;
 pub use keys::{alter_key, create_index, drop_index};
+pub use plan::{
+    Atomicity, DdlPreview, IndexAction, TablePlan, TableTarget, atomicity, atomicity_note, preview,
+    table_script,
+};
 pub use table::{
     ColumnSpec, ForeignKey, TableSpec, create_table, drop_table, rename_table, truncate_table,
 };

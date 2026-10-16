@@ -1,4 +1,5 @@
 use super::*;
+use crate::database::ddl::table_script;
 
 const PG: (&str, &str) = ("shop", "public");
 const MY: (&str, &str) = ("shop", "");
@@ -233,4 +234,69 @@ fn moves_a_column_only_where_column_order_means_something() {
         ),
         ["ALTER TABLE `shop`.`orders` MODIFY COLUMN `note` FIRST;"]
     );
+}
+
+/// The review dialog's promise: the text it shows is the text that runs.
+/// Both come from `table_script`, and this checks the preview is that script
+/// and that the engine's own failure behaviour is stated rather than implied.
+#[test]
+fn the_preview_is_the_script_that_will_run() {
+    use crate::database::ddl::{
+        Change, ColumnSpec, ForeignKey, IndexAction, IndexSpec, KeyChange, TablePlan, preview,
+    };
+
+    let plan = TablePlan {
+        columns: vec![
+            Change::AddColumn(ColumnSpec {
+                name: "summary".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                ..Default::default()
+            }),
+            Change::DropColumn {
+                name: "note".into(),
+            },
+        ],
+        keys: vec![
+            KeyChange::DropForeignKey {
+                name: "orders_note_fkey".into(),
+            },
+            KeyChange::AddForeignKey(ForeignKey {
+                name: "orders_summary_fkey".into(),
+                columns: vec!["summary_id".into()],
+                references: vec!["public".into(), "summaries".into()],
+                referenced_columns: vec!["id".into()],
+                on_delete: "SET NULL".into(),
+                on_update: String::new(),
+            }),
+        ],
+        indexes: vec![IndexAction::Create(IndexSpec {
+            name: "orders_summary_idx".into(),
+            columns: vec!["summary".into()],
+            unique: true,
+        })],
+    };
+
+    for engine in [Engine::Postgres, Engine::MySql, Engine::SqlServer] {
+        let shown = preview(engine, "shop", "public", "orders", &plan);
+        let ran = table_script(engine, "shop", "public", "orders", &plan);
+        assert_eq!(
+            shown.statements, ran,
+            "{engine:?}: preview drifted from apply"
+        );
+        assert!(!shown.statements.is_empty());
+        assert!(shown.note.contains("transaction") || shown.note.contains("commits"));
+        // The claim matches the engine.
+        assert_eq!(shown.transactional, engine != Engine::MySql, "{engine:?}");
+    }
+}
+
+/// A statement that would fail part way through has to be honest about the
+/// half that will already be applied.
+#[test]
+fn mysql_says_it_cannot_roll_back() {
+    let my =
+        crate::database::ddl::preview(Engine::MySql, "shop", "", "orders", &Default::default());
+    assert!(!my.transactional);
+    assert!(my.note.contains("commits each statement"));
 }

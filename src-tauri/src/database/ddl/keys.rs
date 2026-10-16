@@ -3,14 +3,14 @@
 use super::super::{Engine, quote};
 use super::table::{ForeignKey, foreign_key_clause, join_idents};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct IndexSpec {
     pub name: String,
     pub columns: Vec<String>,
     pub unique: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum KeyChange {
     SetPrimaryKey {
         name: String,

@@ -8,7 +8,7 @@ use super::table::{ColumnSpec, ForeignKey};
 /// One of these is one thing the person asked for, which may be more than one
 /// statement: SQL Server changes a column's type in a statement of its own,
 /// and cannot do it in the same one that changes nullability.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub enum Change {
     AddColumn(ColumnSpec),
     DropColumn {

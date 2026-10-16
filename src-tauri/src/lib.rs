@@ -155,6 +155,8 @@ pub fn run() {
             commands::library::list_filter_presets,
             commands::library::save_filter_preset,
             commands::library::delete_filter_preset,
+            commands::connections::preview_table_ddl,
+            commands::connections::apply_table_ddl,
             commands::library::rename_saved_folder,
             commands::library::save_workspace_tabs,
             commands::library::load_workspace_tabs,

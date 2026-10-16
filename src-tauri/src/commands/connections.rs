@@ -1116,3 +1116,49 @@ fn results_extension(path: &str, format: database::transfer::TransferFormat) -> 
         path.with_extension(wanted)
     }
 }
+
+/// The DDL for a table's staged changes, and how they will be applied.
+///
+/// Pure text: nothing runs and no connection is touched, so the review dialog
+/// has something to show before anything is sent.
+#[tauri::command]
+pub async fn preview_table_ddl(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    plan: database::ddl::TablePlan,
+    state: State<'_, AppState>,
+) -> Result<database::ddl::DdlPreview, AppError> {
+    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    Ok(database::ddl::preview(
+        params.engine,
+        &target.database,
+        target.schema.as_deref().unwrap_or_default(),
+        &target.name,
+        &plan,
+    ))
+}
+
+/// Applies a table's staged changes.
+///
+/// The script is built by the same call the preview used, so the text that was
+/// read is the text that runs.
+#[tauri::command]
+pub async fn apply_table_ddl(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    plan: database::ddl::TablePlan,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = database::ddl::table_script(
+        params.engine,
+        &target.database,
+        target.schema.as_deref().unwrap_or_default(),
+        &target.name,
+        &plan,
+    );
+    tab.apply(&params, Some(target.database.clone()), &script)
+        .await
+}
