@@ -311,6 +311,16 @@ async fn applies_generated_ddl(engine: Engine) {
                 nullable: true,
                 data_type: "VARCHAR(20)".into(),
             },
+            // A retype, which is the one that was refused on MySQL: it spells
+            // a restated column MODIFY, not ALTER COLUMN.
+            Change::SetType {
+                name: "note".into(),
+                data_type: match engine {
+                    Engine::MySql => "VARCHAR(120)".into(),
+                    Engine::Postgres => "VARCHAR(120)".into(),
+                    Engine::SqlServer => "NVARCHAR(120)".into(),
+                },
+            },
         ],
         keys: vec![KeyChange::AddCheck {
             name: "status_not_blank".into(),
@@ -464,6 +474,17 @@ async fn applies_generated_ddl(engine: Engine) {
             .unwrap()
             .nullable,
         "{engine:?} did not make the column nullable"
+    );
+    let retyped = changed
+        .columns
+        .iter()
+        .find(|c| c.name == "note")
+        .unwrap()
+        .data_type
+        .to_lowercase();
+    assert!(
+        retyped.contains("120"),
+        "{engine:?} did not change the column's type: {retyped}"
     );
 
     // Rows first, so a copy with data has something to copy.

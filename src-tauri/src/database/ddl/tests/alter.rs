@@ -116,7 +116,24 @@ fn changing_a_type_says_how_on_postgres() {
                 data_type: "DECIMAL(10,2)".into()
             }
         ),
-        ["ALTER TABLE `shop`.`orders` ALTER COLUMN `total` DECIMAL(10,2);"]
+        // MySQL spells a restated column MODIFY. ALTER COLUMN is PostgreSQL's
+        // syntax and MySQL refuses it — found by running it, not by reading it.
+        ["ALTER TABLE `shop`.`orders` MODIFY COLUMN `total` DECIMAL(10,2);"]
+    );
+    // SQL Server happens to use ALTER COLUMN, which is why the two must not
+    // be lumped together as "not PostgreSQL".
+    assert_eq!(
+        alter_column(
+            Engine::SqlServer,
+            MS.0,
+            MS.1,
+            "orders",
+            &Change::SetType {
+                name: "total".into(),
+                data_type: "DECIMAL(10,2)".into()
+            }
+        ),
+        ["ALTER TABLE [shop].[dbo].[orders] ALTER COLUMN [total] DECIMAL(10,2);"]
     );
 }
 

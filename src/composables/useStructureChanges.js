@@ -1,7 +1,7 @@
 import { computed, ref } from "vue";
 import { describeEdit, stageChange, toPlan } from "../lib/structurePlan.js";
 import { applyTableDdl, previewTableDdl } from "../lib/tauri/commands.js";
-import { toUserMessage } from "../lib/errors.js";
+import { toUserDetail, toUserMessage } from "../lib/errors.js";
 import { useToasts } from "./useToasts.js";
 
 /**
@@ -81,7 +81,7 @@ export function useStructureChanges({
       discard();
       onApplied?.();
     } catch (failure) {
-      toasts.error("Couldn't apply the changes", toUserMessage(failure));
+      toasts.error("Couldn't apply the changes", toUserDetail(failure));
     } finally {
       applying.value = false;
     }

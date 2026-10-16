@@ -155,7 +155,14 @@ pub fn alter_column(
                 quote::ident(engine, name),
                 data_type.trim()
             )],
-            _ => vec![format!(
+            // MySQL spells a restated column MODIFY; ALTER COLUMN is
+            // PostgreSQL's, and SQL Server happens to use it too.
+            Engine::MySql => vec![format!(
+                "ALTER TABLE {target} MODIFY COLUMN {} {};",
+                quote::ident(engine, name),
+                data_type.trim()
+            )],
+            Engine::SqlServer => vec![format!(
                 "ALTER TABLE {target} ALTER COLUMN {} {};",
                 quote::ident(engine, name),
                 data_type.trim()
