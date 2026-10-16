@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { describeEdit, stageChange, toPlan } from "../lib/structurePlan.js";
 import { applyTableDdl, previewTableDdl } from "../lib/tauri/commands.js";
 import { toUserDetail, toUserMessage } from "../lib/errors.js";
+import { planWarnings } from "../lib/structurePlan.js";
 import { useToasts } from "./useToasts.js";
 
 /**
@@ -29,6 +30,10 @@ export function useStructureChanges({
   if (!tab.structureEdits) tab.structureEdits = [];
   const edits = computed(() => tab.structureEdits);
   const plan = computed(() => toPlan(structure.value, edits.value));
+  const warnings = computed(() =>
+    planWarnings({ ...structure.value, name: target.value?.name }, plan.value),
+  );
+
   const dirty = computed(() => edits.value.length > 0);
 
   function stage(change) {
@@ -91,6 +96,7 @@ export function useStructureChanges({
     edits,
     plan,
     dirty,
+    warnings,
     reviewOpen,
     preview,
     previewing,

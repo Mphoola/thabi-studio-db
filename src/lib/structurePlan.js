@@ -31,7 +31,22 @@ export function toPlan(structure, edits) {
   const indexes = [];
   const dropped = new Set();
 
-  for (const one of edits) {
+  // A rename renames the column for everything after it. Without this, a
+  // batch that renames a column and then retypes it sends the old name to a
+  // table that no longer has one, and the second statement fails.
+  const renamed = new Map();
+  const currentName = (name) => renamed.get(name) ?? name;
+
+  // Renames first, so the rest of the batch names columns that exist.
+  const ordered = [
+    ...edits.filter((one) => one.kind === "renameColumn"),
+    ...edits.filter((one) => one.kind !== "renameColumn"),
+  ];
+  for (const one of ordered) {
+    if (one.kind === "renameColumn") renamed.set(one.from, one.to);
+  }
+
+  for (const one of ordered) {
     switch (one.kind) {
       case "addColumn":
         columns.push({ addColumn: one.column });
@@ -61,13 +76,13 @@ export function toPlan(structure, edits) {
       }
       case "setType":
         columns.push({
-          setType: { name: one.name, dataType: one.dataType },
+          setType: { name: currentName(one.name), dataType: one.dataType },
         });
         break;
       case "setNullable":
         columns.push({
           setNullable: {
-            name: one.name,
+            name: currentName(one.name),
             nullable: one.nullable,
             // Carried, because two of the three engines restate the column to
             // change nullability and the restatement needs the type.
@@ -77,7 +92,10 @@ export function toPlan(structure, edits) {
         break;
       case "setDefault":
         columns.push({
-          setDefault: { name: one.name, default: one.default ?? "" },
+          setDefault: {
+            name: currentName(one.name),
+            default: one.default ?? "",
+          },
         });
         break;
       case "dropIndex":
@@ -159,3 +177,42 @@ export function stageChange(edits, change) {
 }
 
 export const newEdit = edit;
+
+/**
+ * What about a plan is likely to be refused, before it is run.
+ *
+ * A statement that fails halfway has already been shown, so the cost of
+ * finding out is a round trip and a rollback — except on MySQL, which commits
+ * each DDL statement on its own, where it is a half-applied table.
+ */
+export function planWarnings(structure, plan) {
+  const warnings = [];
+
+  for (const change of plan.columns ?? []) {
+    const [kind, body] = Object.entries(change)[0] ?? [];
+    if (!body) continue;
+    const column = structure.columns.find((one) => one.name === body.name);
+
+    if (kind === "addColumn") {
+      // A new NOT NULL column with no default has nothing to put in the rows
+      // already there, and MySQL refuses exactly this on a populated table.
+      if (body.nullable === false && !body.default)
+        warnings.push(
+          `${body.name} is added as not null with no default. If ${structure.name ?? "the table"} already has rows, the server will refuse this — give it a default, or add it as nullable.`,
+        );
+    } else if (
+      kind === "setType" &&
+      column &&
+      column.nullable === false &&
+      /int/i.test(column.dataType) &&
+      /char|text/i.test(body.dataType)
+    ) {
+      // The column holds whole numbers and is becoming text: anything that no
+      // longer fits will fail the change rather than be truncated quietly.
+      warnings.push(
+        `${body.name} holds ${column.dataType} and is becoming ${body.dataType}. Values that do not fit will fail the change.`,
+      );
+    }
+  }
+  return warnings;
+}

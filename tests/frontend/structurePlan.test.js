@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeEdit,
+  planWarnings,
   sameEdit,
   stageChange,
   toPlan,
@@ -172,5 +173,124 @@ describe("each change says what it is", () => {
     expect(
       describeEdit({ kind: "setDefault", name: "status", default: "" }),
     ).toBe("Drop the default on status");
+  });
+});
+
+/**
+ * A rename renames the column for everything after it in the same batch.
+ * Without this, retyping a column that was just renamed sends the old name to
+ * a table that no longer has one, and the second statement fails.
+ */
+describe("a rename carries through the rest of the batch", () => {
+  it("retypes the new name, not the old one", () => {
+    const plan = toPlan(structure, [
+      { kind: "renameColumn", from: "note", to: "notes" },
+      { kind: "setType", name: "note", dataType: "VARCHAR(200)" },
+    ]);
+    const setType = plan.columns.find((one) => one.setType)?.setType;
+    expect(setType).toEqual({ name: "notes", dataType: "VARCHAR(200)" });
+    // And the rename is sent first, so the column exists when it is restated.
+    expect(Object.keys(plan.columns[0])[0]).toBe("renameColumn");
+  });
+
+  it("carries nullability and defaults through too", () => {
+    const plan = toPlan(structure, [
+      { kind: "renameColumn", from: "note", to: "notes" },
+      { kind: "setNullable", name: "note", nullable: false, dataType: "TEXT" },
+      { kind: "setDefault", name: "note", default: "'x'" },
+    ]);
+    expect(plan.columns.find((one) => one.setNullable).setNullable.name).toBe(
+      "notes",
+    );
+    expect(plan.columns.find((one) => one.setDefault).setDefault.name).toBe(
+      "notes",
+    );
+  });
+
+  it("leaves a column that was not renamed alone", () => {
+    const plan = toPlan(structure, [
+      { kind: "renameColumn", from: "note", to: "notes" },
+      { kind: "setType", name: "status", dataType: "TEXT" },
+    ]);
+    expect(plan.columns.find((one) => one.setType).setType.name).toBe("status");
+  });
+});
+
+/**
+ * A statement that fails halfway has already been shown, so the warning is
+ * worth having before it runs rather than after.
+ */
+describe("a plan says what is likely to be refused", () => {
+  const named = { name: "orders", ...structure };
+
+  it("warns about a not-null column added with no default", () => {
+    // MySQL refuses exactly this on a table that has rows, and it commits DDL
+    // per statement, so the table can be left half changed.
+    const warnings = planWarnings(named, {
+      columns: [
+        {
+          addColumn: {
+            name: "phaxy",
+            dataType: "DECIMAL(10,2)",
+            nullable: false,
+            default: "",
+          },
+        },
+      ],
+    });
+    expect(warnings.join(" ")).toMatch(/not null with no default/);
+    expect(warnings.join(" ")).toMatch(/refuse/);
+  });
+
+  it("says nothing about a nullable column, or one with a default", () => {
+    expect(
+      planWarnings(named, {
+        columns: [
+          {
+            addColumn: {
+              name: "phaxy",
+              dataType: "DECIMAL(10,2)",
+              nullable: true,
+              default: "",
+            },
+          },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      planWarnings(named, {
+        columns: [
+          {
+            addColumn: {
+              name: "phaxy",
+              dataType: "DECIMAL(10,2)",
+              nullable: false,
+              default: "0",
+            },
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("warns when whole numbers are about to become text", () => {
+    const counted = {
+      name: "orders",
+      columns: [{ name: "hits", dataType: "INT", nullable: false }],
+    };
+    const warnings = planWarnings(counted, {
+      columns: [{ setType: { name: "hits", dataType: "TEXT" } }],
+    });
+    expect(warnings.join(" ")).toMatch(/will fail the change/);
+  });
+
+  it("says nothing about text that is only getting longer", () => {
+    // VARCHAR(20) to TEXT fits every value it holds. Warning here would be
+    // noise, and noise is why warnings get ignored.
+    expect(
+      planWarnings(named, {
+        columns: [{ setType: { name: "status", dataType: "TEXT" } }],
+      }),
+    ).toEqual([]);
   });
 });

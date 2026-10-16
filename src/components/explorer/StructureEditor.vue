@@ -206,6 +206,7 @@ function addColumn() {
       v-if="changes.dirty.value"
       :edits="changes.edits.value"
       :describe="changes.describeEdit"
+      :warnings="changes.warnings.value"
       @undo="changes.undo"
       @discard="changes.discard"
     />

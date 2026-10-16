@@ -1,4 +1,5 @@
 <script setup>
+import { TriangleAlert } from "lucide-vue-next";
 import { X } from "lucide-vue-next";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
@@ -15,12 +16,28 @@ defineProps({
   edits: { type: Array, required: true },
   /** How each change reads, from lib/structurePlan.js. */
   describe: { type: Function, required: true },
+  /** Changes likely to be refused, said before they are run. */
+  warnings: { type: Array, default: () => [] },
 });
 const emit = defineEmits(["undo", "discard"]);
 </script>
 
 <template>
   <div class="flex items-start gap-3 border-b border-line px-3 py-2">
+    <ul
+      v-if="warnings.length"
+      class="mb-2 space-y-0.5 text-xs text-warning-text"
+    >
+      <li v-for="warning in warnings" :key="warning" class="flex gap-1.5">
+        <TriangleAlert
+          :size="14"
+          :stroke-width="1.75"
+          class="mt-px shrink-0"
+          aria-hidden="true"
+        />
+        <span>{{ warning }}</span>
+      </li>
+    </ul>
     <ul class="flex min-w-0 flex-1 flex-col gap-1">
       <li
         v-for="(one, index) in edits"
