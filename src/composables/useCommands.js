@@ -31,7 +31,15 @@ export function useCommandRegistration(list) {
   onBeforeUnmount(() => disposers.forEach((dispose) => dispose()));
 }
 
+let paused = () => false;
+
+/** Stops every command and shortcut while `when()` is true (the app lock). */
+export function pauseCommandsWhen(when) {
+  paused = when;
+}
+
 export function runCommand(id) {
+  if (paused()) return;
   const command = commands.value.get(id);
   if (command && (command.enabled?.() ?? true)) command.run();
 }
@@ -51,7 +59,7 @@ export function useCommands() {
  */
 export function installShortcutListener(target = window) {
   function onKeydown(event) {
-    if (event.defaultPrevented || event.isComposing) return;
+    if (event.defaultPrevented || event.isComposing || paused()) return;
     for (const command of commands.value.values()) {
       if (!command.shortcut || !matchesShortcut(command.shortcut, event))
         continue;

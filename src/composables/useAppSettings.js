@@ -20,6 +20,7 @@ const defaults = {
   editorWordWrap: false,
   editorKeywordCase: "upper",
   editorVim: false,
+  autoLockMinutes: 15,
 };
 const nativeKeys = {
   themeMode: "theme_mode",
@@ -36,6 +37,7 @@ const nativeKeys = {
   editorWordWrap: "editor_word_wrap",
   editorKeywordCase: "editor_keyword_case",
   editorVim: "editor_vim",
+  autoLockMinutes: "auto_lock_minutes",
 };
 const settings = ref({ ...defaults });
 

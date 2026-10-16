@@ -60,7 +60,14 @@ md-5 = "0.11"
 base64 = "0.22"
 cbc = { version = "0.2", features = ["alloc"] }
 rust_xlsxwriter = { version = "0.99", default-features = false, features = ["constant_memory"] }
+# The app password is kept only as an Argon2id hash (docs/decisions/0033).
+# password-hash's getrandom feature supplies the OS random salt.
+argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
 
+[dev-dependencies]
+# The mock runtime, to test the app-lock gate on real IPC requests.
+tauri = { version = "2", features = ["test"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

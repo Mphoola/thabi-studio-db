@@ -7,11 +7,14 @@ import { useLayout } from "../../composables/useLayout.js";
 import AboutDialog from "./AboutDialog.vue";
 import AppSidebar from "./AppSidebar.vue";
 import CommandPalette from "./CommandPalette.vue";
-import SettingsDialog from "./SettingsDialog.vue";
 import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StatusBar from "./StatusBar.vue";
 import TitleBar from "./TitleBar.vue";
 import WelcomeView from "./WelcomeView.vue";
+// Settings is a page of its own, opened now and then; load it on first use.
+const SettingsPage = defineAsyncComponent(
+  () => import("../settings/SettingsPage.vue"),
+);
 // The workspace carries the SQL editor (CodeMirror); load it on first use.
 const WorkspaceView = defineAsyncComponent(
   () => import("../workspace/WorkspaceView.vue"),
@@ -26,11 +29,6 @@ import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { onConnectionClosed, onMenuCommand } from "../../lib/tauri/events.js";
 import EnvironmentStrip from "./EnvironmentStrip.vue";
-
-// The component gallery is only bundled in development builds.
-const ComponentGallery = import.meta.env.DEV
-  ? defineAsyncComponent(() => import("../dev/ComponentGallery.vue"))
-  : null;
 
 useAppCommands();
 const { sidebarOpen, mainView } = useLayout();
@@ -97,13 +95,10 @@ function dialogModel(name) {
     <EnvironmentStrip />
     <div class="flex min-h-0 flex-1">
       <ConnectionRail />
-      <AppSidebar v-if="sidebarOpen" />
+      <AppSidebar v-if="sidebarOpen && mainView !== 'settings'" />
       <main class="min-w-0 flex-1 overflow-auto" aria-label="Workspace">
-        <component
-          :is="ComponentGallery"
-          v-if="ComponentGallery && mainView === 'gallery'"
-        />
-        <WorkspaceView v-else-if="mainView === 'workspace'" />
+        <WorkspaceView v-if="mainView === 'workspace'" />
+        <SettingsPage v-else-if="mainView === 'settings'" />
         <WelcomeView v-else />
       </main>
     </div>
@@ -111,7 +106,6 @@ function dialogModel(name) {
 
     <AboutDialog v-bind="dialogModel('about')" />
     <ConnectionProfileDialog v-bind="dialogModel('connection')" />
-    <SettingsDialog v-bind="dialogModel('settings')" />
     <ShortcutsDialog v-bind="dialogModel('shortcuts')" />
     <CommandPalette v-bind="dialogModel('palette')" />
     <ConnectionSwitcher v-bind="dialogModel('switcher')" />

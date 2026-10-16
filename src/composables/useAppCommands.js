@@ -3,6 +3,7 @@ import { useRowDetail } from "./useRowDetail.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useHostKeyTrust } from "./useHostKeyTrust.js";
 import { useDialogs } from "./useDialogs.js";
+import { useAppLock } from "./useAppLock.js";
 import { useExplorer } from "./useExplorer.js";
 import { useTabs } from "./useTabs.js";
 import { useQuerySave } from "./useQuerySave.js";
@@ -20,6 +21,7 @@ import { openWorkspaceWindow } from "../lib/tauri/commands.js";
  */
 export function useAppCommands() {
   const dialogs = useDialogs();
+  const appLock = useAppLock();
   const connections = useConnectionProfiles();
   const layout = useLayout();
   const explorer = useExplorer();
@@ -100,7 +102,14 @@ export function useAppCommands() {
       title: "Settings…",
       group: "General",
       shortcut: "Mod+Comma",
-      run: () => dialogs.show("settings"),
+      run: () => layout.openSettings(),
+    },
+    {
+      id: "app.lock",
+      title: "Lock Thabi Studio",
+      group: "General",
+      enabled: () => appLock.state.value.enabled,
+      run: () => appLock.lock(),
     },
     {
       id: "app.shortcuts",
@@ -321,23 +330,6 @@ export function useAppCommands() {
       run: () => theme.setMode(mode),
     })),
   ];
-
-  if (import.meta.env.DEV) {
-    commands.push(
-      {
-        id: "dev.gallery",
-        title: "Show Component Gallery",
-        group: "Developer",
-        run: () => (layout.mainView.value = "gallery"),
-      },
-      {
-        id: "dev.welcome",
-        title: "Show Welcome View",
-        group: "Developer",
-        run: () => (layout.mainView.value = "welcome"),
-      },
-    );
-  }
 
   useCommandRegistration(commands);
 }

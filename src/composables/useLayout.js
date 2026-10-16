@@ -13,10 +13,14 @@ const sidebarWidth = ref(SIDEBAR_DEFAULT);
 const sidebarPinned = ref(true);
 const sidebarView = ref(/** @type {SidebarView} */ ("explorer"));
 const compact = ref(window.innerWidth < COMPACT_BELOW);
-/** Which pane fills the main area. "gallery" exists only in dev builds. */
+/** Which pane fills the main area. "welcome" is the connections page. */
 const mainView = ref(
-  /** @type {"welcome" | "workspace" | "gallery"} */ ("welcome"),
+  /** @type {"welcome" | "workspace" | "settings"} */ ("welcome"),
 );
+/** The settings section shown, kept while the app runs. */
+const settingsSection = ref("general");
+// Where Done on the settings page goes back to.
+let beforeSettings = "welcome";
 // In a narrow window the sidebar starts hidden but can still be opened.
 const sidebarOpen = ref(!compact.value);
 let widthSaveTimer;
@@ -50,7 +54,18 @@ export function useLayout() {
       250,
     );
   }
+  function openSettings(section) {
+    if (mainView.value !== "settings") beforeSettings = mainView.value;
+    if (section) settingsSection.value = section;
+    mainView.value = "settings";
+  }
+  function closeSettings() {
+    mainView.value = beforeSettings;
+  }
   return {
+    settingsSection,
+    openSettings,
+    closeSettings,
     sidebarOpen,
     sidebarWidth,
     sidebarView,

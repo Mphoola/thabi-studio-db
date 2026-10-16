@@ -123,3 +123,13 @@ export async function pickSqlFile(title = "Open SQL File") {
   });
   return typeof path === "string" ? path : null;
 }
+
+/** Native save dialog for the recovery codes text file. */
+export async function pickRecoveryCodesDestination() {
+  const path = await save({
+    title: "Save Recovery Codes",
+    defaultPath: "thabi-studio-recovery-codes.txt",
+    filters: [{ name: "Text", extensions: ["txt"] }],
+  });
+  return typeof path === "string" ? path : null;
+}

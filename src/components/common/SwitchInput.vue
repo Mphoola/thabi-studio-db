@@ -5,6 +5,8 @@ defineProps({
   label: { type: String, required: true },
   description: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
+  /** Keep the label for screen readers only, when a row already shows it. */
+  hideLabel: { type: Boolean, default: false },
 });
 
 const model = defineModel({ type: Boolean, default: false });
@@ -13,7 +15,7 @@ const id = useId();
 
 <template>
   <div class="flex items-start justify-between gap-4">
-    <div class="flex flex-col">
+    <div class="flex flex-col" :class="hideLabel && 'sr-only'">
       <label :id="`${id}-label`" :for="id" class="text-base text-fg">
         {{ label }}
       </label>

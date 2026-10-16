@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import { installShortcutListener } from "./composables/useCommands.js";
 import { initializeAppSettings } from "./composables/useAppSettings.js";
+import { initAppLock } from "./composables/useAppLock.js";
 import { initLayout } from "./composables/useLayout.js";
 import { initTheme } from "./composables/useTheme.js";
 import { useToasts } from "./composables/useToasts.js";
@@ -67,6 +68,7 @@ if (isTauri()) {
 initializeAppSettings(settings ?? undefined);
 initTheme(settings?.themeMode);
 initLayout(settings);
+await initAppLock();
 
 const app = createApp(App);
 const toasts = useToasts();

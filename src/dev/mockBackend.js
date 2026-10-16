@@ -311,6 +311,121 @@ const mockProfile = (input, id) => ({
   sortOrder: 0,
   lastConnectedAt: null,
 });
+// The app lock. ?mock&locked starts locked with the password "Preview Pass1",
+// the recovery code "11111-22222" and every security answer "preview".
+const startLocked = new URLSearchParams(location.search).has("locked");
+const mockLock = {
+  password: startLocked ? "Preview Pass1" : null,
+  locked: startLocked,
+  codes: startLocked ? ["11111-22222", "33333-44444"] : [],
+  questions: startLocked
+    ? [
+        { question: "What city were you born in?", answer: "preview" },
+        { question: "What was the name of your first pet?", answer: "preview" },
+        { question: "What is your favourite book?", answer: "preview" },
+      ]
+    : [],
+};
+const mockCodes = () =>
+  Array.from({ length: 10 }, () =>
+    Array.from({ length: 2 }, () =>
+      Math.floor(Math.random() * 0xfffff)
+        .toString(16)
+        .padStart(5, "0"),
+    ).join("-"),
+  );
+const recoveryOptions = () => ({
+  codesLeft: mockLock.codes.length,
+  questions: mockLock.questions.map((q) => q.question),
+});
+const fieldError = (field, message) => ({
+  kind: "validation",
+  message: "Check the highlighted fields.",
+  fields: { [field]: message },
+});
+const lockStatus = () => ({
+  enabled: Boolean(mockLock.password),
+  locked: mockLock.locked,
+  retryAfterSeconds: 0,
+});
+const wrongPassword = (field) => ({
+  kind: "validation",
+  message: "Check the highlighted fields.",
+  fields: { [field]: "That password isn't right." },
+});
+handlers.app_lock_status = lockStatus;
+handlers.lock_app = () => {
+  mockLock.locked = Boolean(mockLock.password);
+  return lockStatus();
+};
+handlers.unlock_app = ({ password }) => {
+  if (password !== mockLock.password) throw wrongPassword("password");
+  mockLock.locked = false;
+  return lockStatus();
+};
+handlers.set_app_password = ({ current, password }) => {
+  const first = !mockLock.password;
+  if (!first && current !== mockLock.password) throw wrongPassword("current");
+  mockLock.password = password;
+  mockLock.locked = false;
+  if (first) mockLock.codes = mockCodes();
+  return {
+    status: lockStatus(),
+    recoveryCodes: first ? [...mockLock.codes] : null,
+  };
+};
+handlers.recovery_options = recoveryOptions;
+handlers.recover_with_code = ({ code, password }) => {
+  const index = mockLock.codes.indexOf(code.trim().toLowerCase());
+  if (index < 0)
+    throw fieldError("code", "That code isn't right, or it was already used.");
+  mockLock.codes.splice(index, 1);
+  mockLock.password = password;
+  mockLock.locked = false;
+  return lockStatus();
+};
+handlers.recover_with_answers = ({ answers, password }) => {
+  const right = mockLock.questions.every(
+    (q, i) => (answers[i] ?? "").trim().toLowerCase() === q.answer,
+  );
+  if (!right) throw fieldError("answers", "One or more answers aren't right.");
+  mockLock.password = password;
+  mockLock.locked = false;
+  return lockStatus();
+};
+handlers.regenerate_recovery_codes = ({ current }) => {
+  if (current !== mockLock.password) throw wrongPassword("current");
+  mockLock.codes = mockCodes();
+  return [...mockLock.codes];
+};
+handlers.set_security_questions = ({ current, questions }) => {
+  if (current !== mockLock.password) throw wrongPassword("current");
+  mockLock.questions = questions.map((q) => ({
+    question: q.question,
+    answer: q.answer.trim().toLowerCase(),
+  }));
+  return recoveryOptions();
+};
+handlers.remove_security_questions = ({ current }) => {
+  if (current !== mockLock.password) throw wrongPassword("current");
+  mockLock.questions = [];
+  return recoveryOptions();
+};
+handlers.remove_app_password = ({ current }) => {
+  if (current !== mockLock.password) throw wrongPassword("current");
+  mockLock.password = null;
+  mockLock.codes = [];
+  mockLock.questions = [];
+  return lockStatus();
+};
+handlers.reset_app_password = () => {
+  mockLock.password = null;
+  mockLock.codes = [];
+  mockLock.questions = [];
+  mockLock.locked = false;
+  return lockStatus();
+};
+
 handlers.create_connection_profile = ({ input }) => ({
   profile: mockProfile(input, `p${(mockProfileId += 1)}`),
   warning: null,

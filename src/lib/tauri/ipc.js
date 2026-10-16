@@ -8,6 +8,19 @@ export function isTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+let waitForUnlock = null;
+
+/**
+ * Registers how to wait for the app lock to open. Rust refuses commands
+ * while locked (kind "locked") without running them, so a call refused that
+ * way is safely made again once the password has been entered.
+ *
+ * @param {() => Promise<void>} wait
+ */
+export function setUnlockWaiter(wait) {
+  waitForUnlock = wait;
+}
+
 /**
  * Single entry point for calling Rust commands. Every command goes through
  * here so errors arrive in one predictable shape: { kind, message }.
@@ -26,6 +39,10 @@ export async function call(command, args) {
   try {
     return await invoke(command, args);
   } catch (error) {
+    if (error?.kind === "locked" && waitForUnlock) {
+      await waitForUnlock();
+      return call(command, args);
+    }
     if (error && typeof error === "object" && "kind" in error) throw error;
     throw { kind: "ipc", message: String(error) };
   }
