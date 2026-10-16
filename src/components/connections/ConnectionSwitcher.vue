@@ -3,9 +3,10 @@ import { computed, nextTick, ref, useId, watch } from "vue";
 import { Plug } from "lucide-vue-next";
 import { useConnectionActions } from "../../composables/useConnectionActions.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
-import { environmentFor } from "../../lib/environments.js";
+import { colourDotClass } from "../../lib/connectionGroups.js";
 import { fuzzyFilter } from "../../lib/fuzzy.js";
 import EngineBadge from "./EngineBadge.vue";
+import SafeModeBadge from "./SafeModeBadge.vue";
 
 /** Quick connection switcher (⇧⌘K): type, pick, connected. */
 const open = defineModel("open", { type: Boolean, default: false });
@@ -26,7 +27,8 @@ const results = computed(() =>
   fuzzyFilter(
     query.value,
     byRecent.value,
-    (p) => `${p.name} ${p.host} ${p.databaseName} ${p.environment}`,
+    (p) =>
+      `${p.name} ${p.host} ${p.databaseName} ${p.environment} ${p.groupName ?? ""}`,
   ),
 );
 
@@ -109,10 +111,11 @@ function onKeydown(event) {
       >
         <span
           class="size-2 shrink-0 rounded-full"
-          :class="environmentFor(profile.environment).dotClass"
+          :class="colourDotClass(profile)"
           aria-hidden="true"
         />
         <span class="truncate font-medium">{{ profile.name }}</span>
+        <SafeModeBadge :safe-mode="profile.safeMode" />
         <EngineBadge :driver="profile.driver" compact />
         <span class="ml-auto truncate font-mono text-xs text-fg-subtle">{{
           profile.host

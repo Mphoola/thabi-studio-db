@@ -1,6 +1,24 @@
 const DRIVERS = new Set(["mysql", "postgres", "sqlserver"]);
 const DEFAULT_PORTS = { mysql: "3306", postgres: "5432", sqlserver: "1433" };
 const TLS_MODES = new Set(["verify-full", "require", "disable"]);
+const SAFE_MODES = new Set([
+  "off",
+  "confirm-writes",
+  "confirm-everything",
+  "read-only",
+]);
+/** Tag tokens only; Rust checks the same list. */
+const SAFE_COLOURS = new Set([
+  "",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "teal",
+  "blue",
+  "purple",
+  "gray",
+]);
 const ENVIRONMENTS = new Set([
   "local",
   "development",
@@ -100,6 +118,57 @@ export function validateConnectionProfile(profile) {
   if (hostMessage) errors.host = hostMessage;
   if (!TLS_MODES.has(profile.tlsMode ?? "verify-full"))
     errors.tlsMode = "Choose a TLS setting.";
+  if (!SAFE_MODES.has(profile.safeMode ?? "off"))
+    errors.safeMode = "Choose a safe mode.";
+  const groupName = String(profile.groupName ?? "").trim();
+  if ([...groupName].length > 60 || hasControlCharacters(groupName))
+    errors.groupName = "Use a group name of 60 characters or fewer.";
+  if (!SAFE_COLOURS.has(profile.colour ?? ""))
+    errors.colour = "Choose one of the available colours.";
+
+  const startup = String(profile.startupCommands ?? "");
+  const startupLines = startup.split("\n").filter((line) => line.trim());
+  if (startupLines.length > 20 || startup.length > 4000)
+    errors.startupCommands = "Use 20 commands and 4,000 characters or fewer.";
+  if (profile.safeMode === "read-only") {
+    const notSessionOnly = startupLines.find(
+      (line) => !/^(SET|USE|BEGIN|RESET)\b/i.test(line.trim()),
+    );
+    if (notSessionOnly)
+      errors.startupCommands =
+        "A read-only connection only accepts SET or USE commands.";
+  }
+
+  const keepalive = Number(profile.sshKeepaliveSeconds || 0);
+  if (!Number.isInteger(keepalive) || keepalive < 0 || keepalive > 3600)
+    errors.sshKeepaliveSeconds =
+      "Choose a keep-alive from 0 to 3,600 seconds, or 0 for the default.";
+  if (profile.askDatabasePassword && profile.databasePassword)
+    errors.databasePassword =
+      "Choose to ask for the password each time, or enter one to save — not both.";
+  if (profile.askSshPassword && profile.sshPassword)
+    errors.sshPassword =
+      "Choose to ask for the SSH password each time, or enter one to save — not both.";
+  if (profile.askSshKeyPassphrase && profile.sshKeyPassphrase)
+    errors.sshKeyPassphrase =
+      "Choose to ask for the passphrase each time, or enter one to save — not both.";
+  const clientCert = String(profile.tlsClientCert ?? "").trim();
+  const clientKey = String(profile.tlsClientKey ?? "").trim();
+  if (profile.tlsMode === "disable" && (clientCert || clientKey))
+    errors.tlsClientCert = "Turn TLS on to use a client certificate.";
+  else if (Boolean(clientCert) !== Boolean(clientKey))
+    errors.tlsClientCert =
+      "Choose both a client certificate and its private key.";
+  else if (clientCert && clientKey) {
+    for (const [field, value] of [
+      ["tlsClientCert", clientCert],
+      ["tlsClientKey", clientKey],
+    ]) {
+      if (!value.startsWith("/") || value.length < 3)
+        errors[field] = "Choose this file again.";
+    }
+  }
+
   if (!validatePort(profile.port))
     errors.port = "Enter a port from 1 to 65,535.";
   if (

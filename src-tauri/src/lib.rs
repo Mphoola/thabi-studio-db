@@ -3,6 +3,7 @@ mod connections;
 mod credentials;
 pub mod database;
 mod errors;
+pub mod filter_presets;
 mod library;
 mod menu;
 mod profiles;
@@ -12,6 +13,7 @@ mod settings;
 pub mod ssh;
 mod state;
 mod storage;
+mod windows;
 
 pub use errors::AppError;
 
@@ -64,10 +66,13 @@ pub fn run() {
             commands::app::app_info,
             commands::connection_profiles::list_connection_profiles,
             commands::connection_profiles::create_connection_profile,
+            commands::connection_profiles::export_connection_profiles,
+            commands::connection_profiles::import_connection_profiles,
             commands::connection_profiles::update_connection_profile,
             commands::connection_profiles::duplicate_connection_profile,
             commands::connection_profiles::delete_connection_profile,
             commands::connection_profiles::select_connection_profile,
+            commands::connection_profiles::reorder_connection_profiles,
             commands::connections::test_connection_input,
             commands::connections::connect_connection_profile,
             commands::connections::disconnect_connection_profile,
@@ -77,16 +82,31 @@ pub fn run() {
             commands::connections::list_objects,
             commands::connections::describe_object,
             commands::connections::open_object_data,
+            commands::connections::fetch_table_page,
+            commands::connections::count_table_rows,
+            commands::connections::copy_table,
+            commands::connections::export_table,
             commands::connections::preview_row_changes,
             commands::connections::apply_row_changes,
             commands::connections::lookup_reference,
+            commands::connections::list_referencing,
+            commands::connections::preview_filter,
+            commands::connections::completion_schema,
+            commands::connections::explain_statement,
+            commands::connections::query_progress,
+            commands::connections::read_sql_file,
+            commands::connections::run_sql_file,
+            commands::connections::sql_file_progress,
+            windows::open_workspace_window,
             commands::connections::run_statement,
             commands::connections::cancel_statement,
             commands::connections::close_query_tab,
             commands::connections::fetch_rows,
             commands::connections::copy_rows,
             commands::connections::export_csv,
+            commands::connections::export_result,
             commands::connections::trust_ssh_host_key,
+            commands::connections::resolve_ssh_alias,
             commands::connections::forget_ssh_host_keys,
             commands::library::list_history,
             commands::library::delete_history_entry,
@@ -94,6 +114,9 @@ pub fn run() {
             commands::library::list_saved_queries,
             commands::library::save_query,
             commands::library::delete_saved_query,
+            commands::library::list_filter_presets,
+            commands::library::save_filter_preset,
+            commands::library::delete_filter_preset,
             commands::library::rename_saved_folder,
             commands::library::save_workspace_tabs,
             commands::library::load_workspace_tabs,

@@ -12,7 +12,23 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_ssh_auth.sql"),
     include_str!("../migrations/0005_history_saved_tabs.sql"),
     include_str!("../migrations/0006_saved_query_folders.sql"),
+    include_str!("../migrations/0007_safe_mode.sql"),
+    include_str!("../migrations/0008_connection_groups.sql"),
+    include_str!("../migrations/0009_ask_every_time.sql"),
+    include_str!("../migrations/0010_startup_commands.sql"),
+    include_str!("../migrations/0011_tls_client_certificate.sql"),
+    include_str!("../migrations/0012_connection_limits.sql"),
+    include_str!("../migrations/0013_filter_presets.sql"),
+    include_str!("../migrations/0014_filter_preset_timestamps.sql"),
+    include_str!("../migrations/0015_snippet_keywords.sql"),
 ];
+
+/// The migration files in order, for tests that need a schema from before the
+/// latest one.
+#[cfg(test)]
+pub(crate) fn all_migrations() -> &'static [&'static str] {
+    MIGRATIONS
+}
 
 pub fn migrate(connection: &mut Connection) -> Result<(), AppError> {
     let version: usize = connection

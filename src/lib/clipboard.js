@@ -1,4 +1,4 @@
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isTauri } from "./tauri/ipc.js";
 
 /**
@@ -8,4 +8,10 @@ import { isTauri } from "./tauri/ipc.js";
 export async function copyText(text) {
   if (isTauri()) return writeText(text);
   return navigator.clipboard.writeText(text);
+}
+
+/** Reads clipboard text, for pasting rows into a table. */
+export async function pasteText() {
+  if (isTauri()) return (await readText()) ?? "";
+  return navigator.clipboard.readText();
 }

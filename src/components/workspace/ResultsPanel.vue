@@ -1,26 +1,53 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { CircleAlert, CircleCheck, CircleSlash, Clock } from "lucide-vue-next";
 import InlineAlert from "../common/InlineAlert.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import ResultView from "../grid/ResultView.vue";
-import { remoteSource } from "../../lib/gridSources.js";
+import ChangesPreviewDialog from "../explorer/ChangesPreviewDialog.vue";
+import EditChangesBar from "../explorer/EditChangesBar.vue";
+import { useTableEditing } from "../explorer/useTableEditing.js";
+import { previewSource, remoteSource } from "../../lib/gridSources.js";
+import { useResultEditability } from "./useResultEditability.js";
+import ReconnectButton from "../connections/ReconnectButton.vue";
+import PlanView from "./PlanView.vue";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 
 /** Results of the last run: one tab per statement, plus messages. */
 const props = defineProps({ tab: { type: Object, required: true } });
 
 const run = computed(() => props.tab.runs[props.tab.activeRun] ?? null);
+// The table a single-table SELECT reads, for SQL copy/export formats.
+const resultTarget = ref(null);
+// A cancelled or timed-out run still shows the rows that had arrived.
 const source = computed(() =>
-  run.value?.status === "completed" && run.value.result.columns.length
+  ["completed", "cancelled", "timed_out"].includes(run.value?.status) &&
+  run.value.result?.columns?.length
     ? remoteSource({
         profileId: props.tab.profileId,
         tabId: props.tab.id,
         result: run.value.result,
         exportName: props.tab.title,
+        target: () => resultTarget.value,
       })
     : null,
 );
+const resultColumns = computed(() => run.value?.result?.columns ?? []);
+const { editNode, whyNotEditable } = useResultEditability({
+  tab: props.tab,
+  run,
+  resultTarget,
+});
+
+const editing = useTableEditing({
+  tab: props.tab,
+  node: editNode,
+  profileId: computed(() => props.tab.profileId),
+  columns: resultColumns,
+  reload: () => props.tab.rerunQuery?.(),
+});
+const editor = editing.editor;
+
 const store = useConnectionProfiles();
 // Errors name where the query ran, e.g. Query failed on “Production” (shop).
 const failedTitle = computed(() => {
@@ -51,6 +78,8 @@ const tones = {
 };
 
 function label(entry, index) {
+  if (entry.kind === "plan") return entry.analyzed ? "Plan (analyzed)" : "Plan";
+  if (entry.kind === "script") return entry.file;
   if (entry.status === "running") return `Statement ${index + 1}`;
   if (entry.status !== "completed") return `Statement ${index + 1}`;
   const r = entry.result;
@@ -62,6 +91,10 @@ function label(entry, index) {
 }
 
 function message(entry) {
+  if (entry.kind === "script") {
+    const { ran, total, rowsAffected } = entry.script;
+    return `Ran ${ran.toLocaleString()} of ${total.toLocaleString()} statements · ${rowsAffected.toLocaleString()} rows affected`;
+  }
   const r = entry.result;
   if (!r) return "";
   const time = `${r.elapsedMs.toLocaleString()} ms`;
@@ -112,18 +145,55 @@ function message(entry) {
     >
       Run a statement to see results here.
     </div>
-    <div
-      v-else-if="run.status === 'running'"
-      class="flex flex-1 items-center justify-center gap-2 text-fg-subtle"
-    >
-      <SpinnerIcon :size="14" /> Running…
-    </div>
-    <ResultView
-      v-else-if="source"
+    <template v-else-if="run.status === 'running'">
+      <ResultView
+        v-if="run.progress?.preview?.columns?.length"
+        class="min-h-0 flex-1"
+        :source="previewSource(run.progress.preview)"
+        :result="run.progress.preview"
+        :note="`Still running · ${run.progress.received.toLocaleString()} rows so far`"
+      />
+      <div
+        v-else
+        class="flex flex-1 items-center justify-center gap-2 text-fg-subtle"
+      >
+        <SpinnerIcon :size="14" />
+        {{
+          run.kind === "script" && run.scriptProgress
+            ? `Running file… ${run.scriptProgress[0].toLocaleString()} of ${run.scriptProgress[1].toLocaleString()} statements`
+            : "Running…"
+        }}
+      </div>
+    </template>
+    <PlanView
+      v-else-if="run.kind === 'plan' && run.plan"
       class="min-h-0 flex-1"
-      :source="source"
-      :result="run.result"
+      :plan="run.plan"
     />
+    <template v-else-if="source">
+      <EditChangesBar
+        v-if="editor.summary.value.total"
+        :summary="editor.summary.value"
+        :applying="editing.applying.value"
+        @preview="editing.showPreview"
+        @discard="editing.discard"
+        @apply="editing.apply"
+      />
+      <ResultView
+        class="min-h-0 flex-1"
+        :source="source"
+        :result="run.result"
+        :editor="editNode && run.status === 'completed' ? editor : null"
+        :note="
+          run.status !== 'completed'
+            ? `${run.error?.message ?? 'Stopped.'} These are the rows that arrived first.`
+            : editNode
+              ? editing.readOnlyReason.value ||
+                `Editing as ${editNode.name}. Double-click a cell to edit.`
+              : whyNotEditable
+        "
+      />
+    </template>
     <div v-else class="flex flex-col gap-3 overflow-auto p-4">
       <InlineAlert
         v-if="run.status === 'completed'"
@@ -141,10 +211,21 @@ function message(entry) {
         :title="failedTitle"
         :message="failureDetail(run.error)"
         mono
-      />
+      >
+        <ReconnectButton
+          v-if="['connection_lost', 'not_connected'].includes(run.error?.kind)"
+          :profile-id="tab.profileId"
+        />
+      </InlineAlert>
       <pre
         class="selectable max-h-40 overflow-auto rounded-md bg-surface-hover p-3 font-mono text-sm whitespace-pre-wrap text-fg-muted"
         >{{ run.sql }}</pre>
     </div>
+    <ChangesPreviewDialog
+      :statements="editing.preview.value"
+      :applying="editing.applying.value"
+      @close="editing.preview.value = null"
+      @apply="editing.apply"
+    />
   </div>
 </template>

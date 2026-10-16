@@ -1,6 +1,6 @@
 [package]
 name = "thabi-studio"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first desktop client for MySQL, PostgreSQL and SQL Server on macOS, Windows and Linux"
 authors = ["Promise Mphoola"]
 edition = "2024"
@@ -29,6 +29,18 @@ sqlx = { version = "0.9", default-features = false, features = [
   "mysql",
   "postgres",
 ] }
+# Decoding a bound query's values, which arrive typed rather than as text (see
+# docs/decisions/0030-bound-parameters.md). Each is a type a real schema has:
+# NUMERIC without this loses digits, and a timestamp or uuid column cannot be
+# read at all. These go on the driver crate, not the `sqlx` umbrella, whose
+# features would pull in sqlx-sqlite — which links the same SQLite this app
+# already has through rusqlite, and the two cannot coexist.
+sqlx-postgres = { version = "0.9", default-features = false, features = [
+  "bigdecimal",
+  "chrono",
+  "uuid",
+  "json",
+] }
 tiberius = { version = "0.13", default-features = false, features = [
   "tds80",
   "rustls",
@@ -47,6 +59,7 @@ aes = "0.9"
 md-5 = "0.11"
 base64 = "0.22"
 cbc = { version = "0.2", features = ["alloc"] }
+rust_xlsxwriter = { version = "0.99", default-features = false, features = ["constant_memory"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -6,6 +6,8 @@ defineProps({
   columns: { type: Array, required: true },
   template: { type: String, required: true },
   widths: { type: Array, required: true },
+  /** Display position to source column index, for the copy menu later. */
+  visible: { type: Array, default: null },
   sort: { type: Object, default: null },
   sortable: { type: Boolean, default: true },
 });
@@ -40,7 +42,7 @@ function startResize(event, index, startWidth) {
       :key="index"
       role="columnheader"
       :aria-sort="
-        sort?.column === index
+        sort?.column === column.name
           ? sort.descending
             ? 'descending'
             : 'ascending'
@@ -53,7 +55,7 @@ function startResize(event, index, startWidth) {
         class="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs font-semibold text-fg-muted disabled:cursor-default"
         :disabled="!sortable"
         :title="`${column.name} · ${column.typeName.toLowerCase()}`"
-        @click="emit('sort', index)"
+        @click="emit('sort', column.name)"
       >
         <span class="truncate">{{ column.name }}</span>
         <span class="truncate font-normal text-fg-subtle">
@@ -61,7 +63,7 @@ function startResize(event, index, startWidth) {
         </span>
         <component
           :is="sort.descending ? ArrowDown : ArrowUp"
-          v-if="sort?.column === index"
+          v-if="sort?.column === column.name"
           :size="11"
           :stroke-width="2"
           class="shrink-0 text-accent-text"

@@ -18,6 +18,16 @@ pub struct AppSettings {
     /// 0 keeps history until the size cap.
     pub history_retention_days: u64,
     pub editor_font_size: u64,
+    /// "" shows times as the server sent them; "local", "UTC" or an IANA
+    /// zone converts values that carry an offset.
+    pub display_time_zone: String,
+    /// CSS font family for the SQL editor; "" uses the app's monospace font.
+    pub editor_font_family: String,
+    pub editor_tab_size: u64,
+    pub editor_word_wrap: bool,
+    /// "upper" or "lower": how completed keywords are written.
+    pub editor_keyword_case: String,
+    pub editor_vim: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +87,16 @@ pub fn read_settings(connection: &Connection) -> Result<AppSettings, AppError> {
         editor_font_size: setting(connection, "editor_font_size")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(13),
+        display_time_zone: setting(connection, "display_time_zone")?.unwrap_or_default(),
+        editor_font_family: setting(connection, "editor_font_family")?.unwrap_or_default(),
+        editor_tab_size: setting(connection, "editor_tab_size")?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2),
+        editor_word_wrap: setting(connection, "editor_word_wrap")?.as_deref() == Some("true"),
+        editor_keyword_case: setting(connection, "editor_keyword_case")?
+            .filter(|case| matches!(case.as_str(), "upper" | "lower"))
+            .unwrap_or_else(|| "upper".to_owned()),
+        editor_vim: setting(connection, "editor_vim")?.as_deref() == Some("true"),
     })
 }
 
@@ -179,11 +199,66 @@ pub fn write_setting(connection: &Connection, key: &str, value: &Value) -> Resul
             .filter(|rows| (1..=1_000_000).contains(rows))
             .ok_or_else(|| AppError::new("validation", "Choose how many rows to keep."))?
             .to_string(),
+        "display_time_zone" => value
+            .as_str()
+            .filter(|zone| {
+                zone.len() <= 64
+                    && zone
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c))
+            })
+            .ok_or_else(|| AppError::new("validation", "Choose a time zone."))?
+            .to_owned(),
+        "editor_font_family" => value
+            .as_str()
+            .filter(|font| {
+                font.chars().count() <= 80
+                    && !font
+                        .chars()
+                        .any(|c| c.is_control() || ";{}<>\\".contains(c))
+            })
+            .ok_or_else(|| AppError::new("validation", "Enter a font family name."))?
+            .to_owned(),
+        "editor_tab_size" => value
+            .as_u64()
+            .filter(|size| (1..=8).contains(size))
+            .ok_or_else(|| AppError::new("validation", "Choose a tab size from 1 to 8."))?
+            .to_string(),
+        "editor_word_wrap" | "editor_vim" => value
+            .as_bool()
+            .map(|on| on.to_string())
+            .ok_or_else(|| AppError::new("validation", "Choose on or off."))?,
+        "editor_keyword_case" => match value.as_str() {
+            Some(case @ ("upper" | "lower")) => case.to_owned(),
+            _ => return Err(AppError::new("validation", "Choose a keyword case.")),
+        },
         "query_timeout_seconds" => value
             .as_u64()
             .filter(|seconds| *seconds <= 24 * 60 * 60)
             .ok_or_else(|| AppError::new("validation", "Choose a query timeout."))?
             .to_string(),
+        // Which connection groups are folded away on the connections page.
+        "collapsed_groups" => {
+            let groups = value
+                .as_array()
+                .filter(|groups| groups.len() <= 100)
+                .ok_or_else(|| AppError::new("validation", "Choose which groups are collapsed."))?;
+            let mut names = Vec::with_capacity(groups.len());
+            for group in groups {
+                let name = group.as_str().unwrap_or_default();
+                if name.is_empty()
+                    || name.chars().count() > 60
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(AppError::new(
+                        "validation",
+                        "Choose which groups are collapsed.",
+                    ));
+                }
+                names.push(name.to_owned());
+            }
+            serde_json::to_string(&names).map_err(|_| AppError::storage())?
+        }
         _ => {
             return Err(AppError::new(
                 "validation",
@@ -273,6 +348,12 @@ mod tests {
                 history_enabled: true,
                 history_retention_days: 30,
                 editor_font_size: 13,
+                display_time_zone: String::new(),
+                editor_font_family: String::new(),
+                editor_tab_size: 2,
+                editor_word_wrap: false,
+                editor_keyword_case: "upper".into(),
+                editor_vim: false,
             }
         );
     }

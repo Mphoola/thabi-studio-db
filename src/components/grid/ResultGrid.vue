@@ -1,22 +1,19 @@
 <script setup>
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  toRef,
-  watch,
-} from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, toRef } from "vue";
 import { useGridData } from "../../composables/useGridData.js";
 import { useGridSelection } from "../../composables/useGridSelection.js";
 import { isNumericType } from "../../lib/gridText.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
 import GridHeader from "./GridHeader.vue";
 import GridRow from "./GridRow.vue";
+import RowDetailDialog from "./RowDetailDialog.vue";
 import ValueInspector from "./ValueInspector.vue";
 import { useGridActions } from "./useGridActions.js";
+import { useColumnWidths } from "./useColumnWidths.js";
+import { useVirtualRows } from "./useVirtualRows.js";
+import { gridKeydown } from "./gridKeydown.js";
 import { useGridEditing } from "./useGridEditing.js";
+import { useRowDetail } from "../../composables/useRowDetail.js";
 
 /**
  * Virtualised results grid, read-only unless an `editor` (useRowEdits) is
@@ -28,6 +25,12 @@ import { useGridEditing } from "./useGridEditing.js";
 const props = defineProps({
   source: { type: Object, required: true },
   editor: { type: Object, default: null },
+  /** Source column indexes to show; all of them when not given. */
+  columnIndexes: { type: Array, default: null },
+  /** (columnName, cell, exclude) => void; adds "Filter by This Value". */
+  quickFilter: { type: Function, default: null },
+  /** (columnName, cell) => { label, run }[]: foreign key jumps for a cell. */
+  cellLinks: { type: Function, default: null },
 });
 
 const ROW = 26;
@@ -36,8 +39,23 @@ const NUMBER_COL = 52;
 
 const sourceRef = toRef(props, "source");
 const data = useGridData(sourceRef);
-const columns = computed(() => props.source.columns);
-const rowCount = computed(() => props.source.total);
+
+/**
+ * Source column indexes the grid renders, left to right. Everything inside
+ * the grid speaks display positions; `visible` maps them back to the source
+ * column so selection, editing and copy keep addressing the right one.
+ */
+const columnIndexes = computed(
+  () => props.columnIndexes ?? props.source.columns.map((_, index) => index),
+);
+const columns = computed(() =>
+  columnIndexes.value.map((index) => props.source.columns[index]),
+);
+// The scroller is as tall as what is loaded, not as tall as the table. A
+// million rows would be twenty-six million pixels of spacer, past what a
+// browser will lay out, and holding the rows behind it would be the same
+// mistake a page size is meant to avoid.
+const rowCount = computed(() => data.loaded.value);
 const selection = useGridSelection(
   rowCount,
   computed(() => columns.value.length),
@@ -45,96 +63,29 @@ const selection = useGridSelection(
 const numeric = computed(() =>
   columns.value.map((c) => isNumericType(c.typeName)),
 );
-const widths = ref([]);
-watch(
+const { widths, fitToContents, resizeColumn, template } = useColumnWidths({
   columns,
-  (cols) =>
-    (widths.value = cols.map((c) => (isNumericType(c.typeName) ? 120 : 180))),
-  { immediate: true },
-);
-
+  columnIndexes,
+  data,
+  numberColumn: NUMBER_COL,
+});
 const scroller = ref(null);
-const scrollTop = ref(0);
-const viewport = ref(400);
-let observer;
-onMounted(() => {
-  observer = new ResizeObserver(
-    ([entry]) => (viewport.value = entry.contentRect.height),
-  );
-  observer.observe(scroller.value);
+const { scrollTop, viewport, page, goToPage, visible } = useVirtualRows({
+  data,
+  rowCount,
+  scroller,
+  rowHeight: ROW,
+  overscan: OVERSCAN,
 });
-onBeforeUnmount(() => observer?.disconnect());
-
-const first = computed(() =>
-  Math.max(0, Math.floor(scrollTop.value / ROW) - OVERSCAN),
-);
-const last = computed(() =>
-  Math.min(
-    rowCount.value,
-    Math.ceil((scrollTop.value + viewport.value) / ROW) + OVERSCAN,
-  ),
-);
-const visible = computed(() => {
-  void data.version.value;
-  const rows = [];
-  for (let i = first.value; i < last.value; i += 1)
-    rows.push({ index: i, cells: data.rowAt(i) });
-  return rows;
-});
-const template = computed(
-  () => `${NUMBER_COL}px ${widths.value.map((w) => `${w}px`).join(" ")}`,
-);
 
 const actions = useGridActions(props, data, selection);
 
 const menu = ref(null);
 const inspector = ref(null);
+const detailOpen = ref(false);
 
-function scrollIntoView(row) {
-  const el = scroller.value;
-  const top = row * ROW;
-  const header = ROW;
-  if (top < el.scrollTop) el.scrollTop = top;
-  else if (top + ROW + header > el.scrollTop + el.clientHeight)
-    el.scrollTop = top + ROW + header - el.clientHeight;
-}
-
-function onKeydown(event) {
-  if (editing.value) return;
-  if (
-    selection.move(event, Math.max(1, Math.floor(viewport.value / ROW) - 1))
-  ) {
-    event.preventDefault();
-    nextTick(() => scrollIntoView(selection.focus.value.row));
-    return;
-  }
-  if (event.metaKey && event.key.toLowerCase() === "a") {
-    event.preventDefault();
-    selection.selectAll();
-  } else if (event.metaKey && event.key.toLowerCase() === "c") {
-    event.preventDefault();
-    actions.copy("tsv", event.shiftKey);
-  } else if (event.key === "Enter" || event.key === "F2") {
-    event.preventDefault();
-    if (!startEdit()) openInspector();
-  } else if (event.key === " ") {
-    event.preventDefault();
-    openInspector();
-  } else if (
-    props.editor?.enabled.value &&
-    (event.key === "Delete" || event.key === "Backspace")
-  ) {
-    event.preventDefault();
-    toggleDeleteSelected();
-  }
-}
-
-function openInspector() {
-  const { row, col } = selection.focus.value;
-  const cells = data.rowAt(row);
-  if (cells) inspector.value?.open(columns.value[col], cells[col]);
-}
 const {
+  onEditKey,
   editing,
   startEdit,
   commitEdit,
@@ -150,6 +101,46 @@ const {
   actions,
 });
 
+const onKeydown = gridKeydown({
+  editing,
+  selection,
+  viewport,
+  rowHeight: ROW,
+  scroller,
+  onEditKey,
+  actions,
+  startEdit,
+  openInspector,
+  openDetail,
+  toggleDeleteSelected,
+  editable: () => Boolean(props.editor?.enabled.value),
+});
+
+function openInspector() {
+  const { row, col } = selection.focus.value;
+  const cells = data.rowAt(row);
+  if (!cells) return;
+  inspector.value?.open(columns.value[col], shownCell(cells, col));
+}
+
+/** The row as a whole form, for reading or editing a record properly. */
+function openDetail() {
+  const { row } = selection.focus.value;
+  if (data.rowAt(row)) detailOpen.value = true;
+}
+/**
+ * A cell as the value inspector and the detail panel want it. `position` is a
+ * display position; the editor and the row are addressed by source column.
+ */
+function shownCell(cells, position) {
+  const column = columnIndexes.value[position];
+  const cell = props.editor
+    ? props.editor.display(cells, column)
+    : cells?.[column];
+  // Same rule as a grid row: never hand back nothing.
+  return cell ?? { kind: "null" };
+}
+
 function onCellDown(event, row, col) {
   if (event.button === 2 && selection.isSelected(row, col)) return;
   selection.select(row, col, event.shiftKey);
@@ -160,9 +151,20 @@ function onContextMenu(event) {
   menu.value?.openAt(event.clientX, event.clientY);
 }
 
-function resize(index, width) {
-  widths.value[index] = Math.min(800, Math.max(60, width));
-}
+const resize = resizeColumn;
+
+// Lets the command palette open the panel without a ref through the tree.
+const rowDetail = useRowDetail();
+onMounted(() => rowDetail.set(openDetail));
+onBeforeUnmount(() => rowDetail.set(null));
+
+defineExpose({
+  fitToContents,
+  page,
+  goToPage,
+  pageSize: data.pageSize,
+  hasMore: () => data.hasMore.value,
+});
 </script>
 
 <template>
@@ -181,6 +183,7 @@ function resize(index, width) {
     >
       <GridHeader
         :columns="columns"
+        :visible="columnIndexes"
         :template="template"
         :widths="widths"
         :sort="data.sort.value"
@@ -194,6 +197,7 @@ function resize(index, width) {
           :key="row.index"
           :index="row.index"
           :cells="row.cells"
+          :visible="columnIndexes"
           :template="template"
           :numeric="numeric"
           :selection="selection"
@@ -220,5 +224,13 @@ function resize(index, width) {
       @select="onMenuSelect"
     />
     <ValueInspector ref="inspector" />
+    <RowDetailDialog
+      v-model:open="detailOpen"
+      :columns="columns"
+      :column-indexes="columnIndexes"
+      :cells="data.rowAt(selection.focus.value.row)"
+      :row="selection.focus.value.row + 1"
+      :editor="editor"
+    />
   </div>
 </template>

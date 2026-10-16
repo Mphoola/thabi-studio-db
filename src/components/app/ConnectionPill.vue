@@ -4,6 +4,7 @@ import { vTooltip } from "../../composables/useTooltip.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { environmentFor } from "../../lib/environments.js";
 import { runCommand } from "../../composables/useCommands.js";
+import SafeModeBadge from "../connections/SafeModeBadge.vue";
 
 const store = useConnectionProfiles();
 const { selectedProfile } = store;
@@ -37,6 +38,7 @@ const tooltip = computed(() => {
       aria-hidden="true"
     />
     <template v-if="selectedProfile">
+      <SafeModeBadge :safe-mode="selectedProfile.safeMode" />
       <span class="max-w-36 truncate">{{ selectedProfile.name }}</span>
       <span :class="connected ? 'text-success-text' : 'text-fg-subtle'">
         {{ connected ? "Connected" : "Not connected" }}

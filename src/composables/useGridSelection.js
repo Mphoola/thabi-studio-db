@@ -1,3 +1,4 @@
+import { isModKey } from "../lib/platform.js";
 import { computed, ref } from "vue";
 
 /**
@@ -51,15 +52,15 @@ export function useGridSelection(rowCount, columnCount) {
       ArrowRight: [row, col + 1],
       PageUp: [row - pageRows, col],
       PageDown: [row + pageRows, col],
-      Home: event.metaKey ? [0, 0] : [row, 0],
-      End: event.metaKey
+      Home: isModKey(event) ? [0, 0] : [row, 0],
+      End: isModKey(event)
         ? [rowCount.value - 1, columnCount.value - 1]
         : [row, columnCount.value - 1],
     };
     const target = moves[event.key];
     if (!target) return false;
     const vertical =
-      event.metaKey && (event.key === "ArrowUp" || event.key === "ArrowDown");
+      isModKey(event) && (event.key === "ArrowUp" || event.key === "ArrowDown");
     const to = vertical
       ? [event.key === "ArrowUp" ? 0 : rowCount.value - 1, col]
       : target;

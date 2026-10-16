@@ -62,3 +62,32 @@ describe("row edits", () => {
     expect(counts(edits).edited).toBe(1);
   });
 });
+
+import { DEFAULT_VALUE, parsePastedRows } from "../../src/lib/rowEdits.js";
+
+describe("defaults and pasted rows", () => {
+  it("stages DEFAULT as its own kind and sends it as useDefault", () => {
+    const edits = createEdits();
+    const parts = keyParts(row("7", "a"), columns, [0]);
+    setCell(edits, parts, "note", v("a"), DEFAULT_VALUE);
+    expect(shownCell(edits, rowKey(parts), "note", v("a"))).toEqual({
+      kind: "default",
+    });
+    expect(toChanges(edits)[0].set).toEqual([
+      { column: "note", value: null, useDefault: true },
+    ]);
+  });
+
+  it("reads TSV and CSV, skips a header, and keeps NULL", () => {
+    expect(
+      parsePastedRows("id\tnote\n1\thi\n2\tNULL\n", ["id", "note"]),
+    ).toEqual([
+      { id: "1", note: "hi" },
+      { id: "2", note: null },
+    ]);
+    expect(parsePastedRows('3,"a, ""b"""', ["id", "note"])).toEqual([
+      { id: "3", note: 'a, "b"' },
+    ]);
+    expect(parsePastedRows("", ["id"])).toEqual([]);
+  });
+});

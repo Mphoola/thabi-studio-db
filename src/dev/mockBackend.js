@@ -18,6 +18,7 @@ const profile = {
   authMode: "password",
   tlsMode: "verify-full",
   tlsCaPath: "",
+  safeMode: "off",
   sshEnabled: true,
   sshHost: "bastion.example.com",
   sshPort: 22,
@@ -44,8 +45,24 @@ const status = () => ({
 const v = (value) =>
   value === null ? { kind: "null" } : { kind: "value", value };
 
+// A large sample result kept "in Rust" for paging, sorting and copying.
+const bigRows = Array.from({ length: 5000 }, (_, i) => [
+  v(String(100000 + i)),
+  i % 7 === 0 ? v(null) : v(`customer${i}@example.com`),
+  v(((i * 37.5) % 9000).toFixed(2)),
+  i % 11 === 0 ? v("") : v(["pending", "paid", "refunded"][i % 3]),
+  v(JSON.stringify({ items: i % 5, gift: i % 2 === 0 })),
+]);
+const bigColumns = [
+  { name: "id", typeName: "INT8" },
+  { name: "customer_email", typeName: "TEXT" },
+  { name: "total", typeName: "NUMERIC" },
+  { name: "status", typeName: "TEXT" },
+  { name: "meta", typeName: "JSONB" },
+];
+
 const handlers = {
-  app_info: () => ({ name: "Thabi Studio", version: "0.1.0-mock" }),
+  app_info: () => ({ name: "Thabi Studio", version: "1.0.0-mock" }),
   get_app_settings: () => ({
     themeMode: "system",
     sidebarWidth: 260,
@@ -61,6 +78,7 @@ const handlers = {
       id: "prod",
       name: "Orders (production)",
       environment: "production",
+      safeMode: "confirm-writes",
       driver: "sqlserver",
       host: "sql-prod.internal",
       port: 1433,
@@ -209,27 +227,13 @@ handlers.run_statement = ({ sql }) =>
       });
     };
   });
-// A large sample result kept "in Rust" for paging, sorting and copying.
-const bigRows = Array.from({ length: 5000 }, (_, i) => [
-  v(String(100000 + i)),
-  i % 7 === 0 ? v(null) : v(`customer${i}@example.com`),
-  v(((i * 37.5) % 9000).toFixed(2)),
-  i % 11 === 0 ? v("") : v(["pending", "paid", "refunded"][i % 3]),
-  v(JSON.stringify({ items: i % 5, gift: i % 2 === 0 })),
-]);
-const bigColumns = [
-  { name: "id", typeName: "INT8" },
-  { name: "customer_email", typeName: "TEXT" },
-  { name: "total", typeName: "NUMERIC" },
-  { name: "status", typeName: "TEXT" },
-  { name: "meta", typeName: "JSONB" },
-];
 function sortedRows(sort) {
   if (!sort) return bigRows;
   const numeric =
-    bigColumns[sort.column].typeName !== "TEXT" &&
-    bigColumns[sort.column].typeName !== "JSONB";
-  const key = (row) => row[sort.column].value;
+    bigColumns.find((column) => column.name === sort.column)?.typeName !==
+    "TEXT";
+  const at = bigColumns.findIndex((column) => column.name === sort.column);
+  const key = (row) => row[at].value;
   return [...bigRows].sort((a, b) => {
     const x = key(a),
       y = key(b);
@@ -249,6 +253,7 @@ handlers.copy_rows = ({ scope }) => {
     .join("\n");
 };
 handlers.export_csv = ({ path }) => ({ rows: bigRows.length, path });
+handlers.export_result = ({ path }) => ({ rows: bigRows.length, path });
 
 handlers.open_object_data = ({ name }) =>
   name === "customers"
@@ -278,6 +283,19 @@ handlers.lookup_reference = ({ search }) =>
     value: `customer${i}@example.com`,
     label: `Customer ${i}`,
   })).filter((r) => r.value.includes(search.trim().toLowerCase()));
+handlers.completion_schema = () => [
+  {
+    schema: "public",
+    table: "orders",
+    columns: ["id", "customer_email", "total", "status"],
+  },
+  { schema: "public", table: "customers", columns: ["id", "email", "name"] },
+];
+handlers.preview_filter = ({ filters }) =>
+  filters.length
+    ? `WHERE ${filters.map((f) => `"${f.column}" ${f.op} '${f.value}'`).join(" AND ")}`
+    : "";
+handlers.list_referencing = () => [];
 handlers.apply_row_changes = ({ changes }) => changes.length;
 
 handlers.cancel_statement = () => {
@@ -348,6 +366,7 @@ handlers.save_query = ({ input }) => {
     profileId: input.profileId ?? null,
     notes: input.notes ?? "",
     folder: (input.folder ?? "").trim(),
+    keyword: (input.keyword ?? "").trim(),
   });
   return saved;
 };

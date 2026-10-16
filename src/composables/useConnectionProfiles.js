@@ -7,13 +7,16 @@ import {
   duplicateConnectionProfile,
   listConnections,
   listConnectionProfiles,
+  reorderConnectionProfiles,
   selectConnectionProfile,
   testConnectionInput,
   updateConnectionProfile,
 } from "../lib/tauri/commands.js";
+import { sortProfiles } from "../lib/connectionGroups.js";
 import { isTauri } from "../lib/tauri/ipc.js";
 import { applyLocalAppSetting, useAppSettings } from "./useAppSettings.js";
 import { useDialogs } from "./useDialogs.js";
+import { askForRequiredSecret } from "./useSecretPrompt.js";
 
 const profiles = ref([]);
 const loaded = ref(false);
@@ -60,6 +63,11 @@ export function useConnectionProfiles() {
     }
   }
 
+  /** Re-reads the saved connections, after an import for example. */
+  async function refresh() {
+    if (isTauri()) profiles.value = await listConnectionProfiles();
+  }
+
   function openNew() {
     editingId.value = null;
     dialogs.show("connection");
@@ -75,17 +83,11 @@ export function useConnectionProfiles() {
     const result = editingId.value
       ? await updateConnectionProfile(editingId.value, input)
       : await createConnectionProfile(input);
-    const index = profiles.value.findIndex(
-      (profile) => profile.id === result.profile.id,
+    profiles.value = sortProfiles(
+      profiles.value.map((profile) =>
+        profile.id === result.profile.id ? result.profile : profile,
+      ),
     );
-    profiles.value =
-      index < 0
-        ? [...profiles.value, result.profile].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          )
-        : profiles.value.map((profile) =>
-            profile.id === result.profile.id ? result.profile : profile,
-          );
     // Rust closes the old connection when a profile's settings change.
     if (editingId.value) setStatus(result.profile.id, null);
     dialogs.close();
@@ -94,10 +96,16 @@ export function useConnectionProfiles() {
 
   async function duplicate(id) {
     const result = await duplicateConnectionProfile(id);
-    profiles.value = [...profiles.value, result.profile].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    profiles.value = sortProfiles([...profiles.value, result.profile]);
     return result.warning;
+  }
+
+  /**
+   * Remembers a drag: `ids` is the group's new order. Rust returns the list
+   * in its canonical order, which is what the page then shows.
+   */
+  async function reorder(ids) {
+    profiles.value = await reorderConnectionProfiles(ids);
   }
 
   async function select(id) {
@@ -119,10 +127,15 @@ export function useConnectionProfiles() {
     return testConnectionInput(input, profileId);
   }
 
-  async function connect(id, database = null) {
+  /**
+   * Opens a connection. A profile set to "Ask every time" keeps no secret, so
+   * Rust says which one it needs; the user types it and the attempt is
+   * retried. The value is used for this connection only and never stored.
+   */
+  async function connect(id, database = null, attempt = 0, secrets = {}) {
     setStatus(id, { profileId: id, state: "connecting", server: null });
     try {
-      setStatus(id, await connectConnectionProfile(id, database));
+      setStatus(id, await connectConnectionProfile(id, database, secrets));
       // Rust records the time too; mirror it so "last connected" updates now.
       const now = new Date().toISOString();
       profiles.value = profiles.value.map((p) =>
@@ -130,6 +143,15 @@ export function useConnectionProfiles() {
       );
     } catch (error) {
       setStatus(id, null);
+      // A profile may need two secrets (database and SSH); ask for each in turn.
+      if (error?.kind === "secret_required" && error.data && attempt < 3) {
+        const value = await askForRequiredSecret(error.data);
+        if (value === null) throw error;
+        return connect(id, database, attempt + 1, {
+          ...secrets,
+          [error.data.secret]: value,
+        });
+      }
       throw error;
     }
   }
@@ -160,10 +182,14 @@ export function useConnectionProfiles() {
     forgetStatus: (id) => setStatus(id, null),
     nativeAvailable: isTauri(),
     load,
+    refresh,
+    /** Re-reads live connection states, e.g. when another window changed them. */
+    syncStatuses: () => (isTauri() ? refreshStatuses() : Promise.resolve()),
     openNew,
     openEdit,
     save,
     duplicate,
+    reorder,
     select,
     remove,
     test,

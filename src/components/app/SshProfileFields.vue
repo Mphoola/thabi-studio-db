@@ -10,6 +10,7 @@ import PasswordInput from "../common/PasswordInput.vue";
 import SelectInput from "../common/SelectInput.vue";
 import SwitchInput from "../common/SwitchInput.vue";
 import TextInput from "../common/TextInput.vue";
+import SshConfigHint from "./SshConfigHint.vue";
 
 const form = defineModel("form", { type: Object, required: true });
 
@@ -54,6 +55,7 @@ async function chooseKey() {
           :error="fields.sshPort"
           mono
         />
+        <SshConfigHint v-model:form="form" class="col-span-2" />
       </div>
       <TextInput
         v-model="form.sshUsername"
@@ -72,17 +74,24 @@ async function chooseKey() {
             : ''
         "
       />
-      <PasswordInput
-        v-if="form.sshAuthMode === 'password'"
-        v-model="form.sshPassword"
-        label="SSH password"
-        :hint="
-          hasSavedPassword
-            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
-            : `Saved in ${words.credentialStore}.`
-        "
-        :error="fields.sshPassword"
-      />
+      <div v-if="form.sshAuthMode === 'password'" class="flex flex-col gap-1">
+        <PasswordInput
+          v-if="!form.askSshPassword"
+          v-model="form.sshPassword"
+          label="SSH password"
+          :hint="
+            hasSavedPassword
+              ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+              : `Saved in ${words.credentialStore}.`
+          "
+          :error="fields.sshPassword"
+        />
+        <CheckboxInput
+          v-model="form.askSshPassword"
+          label="Ask for the SSH password each time"
+          hint="Nothing is saved; Thabi Studio asks when connecting."
+        />
+      </div>
       <div v-else-if="form.sshAuthMode === 'key'" class="flex flex-col gap-1">
         <span class="text-sm font-medium text-fg">Private key</span>
         <div class="flex h-7 items-center gap-2">
@@ -114,26 +123,50 @@ async function chooseKey() {
           Read when connecting; the key itself is never copied.
         </p>
       </div>
-      <PasswordInput
-        v-if="form.sshAuthMode === 'key'"
-        v-model="form.sshKeyPassphrase"
-        label="Key passphrase"
-        :hint="
-          hasSavedPassphrase
-            ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
-            : `Only if the key has one. Saved in ${words.credentialStore}.`
-        "
-        :error="fields.sshKeyPassphrase"
-      />
+      <div v-if="form.sshAuthMode === 'key'" class="flex flex-col gap-1">
+        <PasswordInput
+          v-if="!form.askSshKeyPassphrase"
+          v-model="form.sshKeyPassphrase"
+          label="Key passphrase"
+          :hint="
+            hasSavedPassphrase
+              ? `Saved in ${words.credentialStore}. Leave blank to keep it.`
+              : `Only if the key has one. Saved in ${words.credentialStore}.`
+          "
+          :error="fields.sshKeyPassphrase"
+        />
+        <CheckboxInput
+          v-model="form.askSshKeyPassphrase"
+          label="Ask for the key passphrase each time"
+          hint="Nothing is saved; Thabi Studio asks when connecting."
+        />
+      </div>
       <CheckboxInput
-        v-if="form.sshAuthMode === 'password' && hasSavedPassword"
+        v-if="
+          form.sshAuthMode === 'password' &&
+          hasSavedPassword &&
+          !form.askSshPassword
+        "
         v-model="form.clearSshPassword"
         label="Remove saved SSH password"
       />
       <CheckboxInput
-        v-if="form.sshAuthMode === 'key' && hasSavedPassphrase"
+        v-if="
+          form.sshAuthMode === 'key' &&
+          hasSavedPassphrase &&
+          !form.askSshKeyPassphrase
+        "
         v-model="form.clearSshKeyPassphrase"
         label="Remove saved passphrase"
+      />
+      <TextInput
+        v-model="form.sshKeepaliveSeconds"
+        label="Keep-alive"
+        input-mode="numeric"
+        placeholder="0"
+        hint="Seconds between SSH keep-alives. 0 uses the default."
+        :error="fields.sshKeepaliveSeconds"
+        mono
       />
     </div>
   </section>

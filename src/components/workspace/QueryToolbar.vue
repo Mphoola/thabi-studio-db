@@ -1,18 +1,25 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ChevronDown, Database, Play, Square } from "lucide-vue-next";
+import { ChevronDown, Columns2, Database, Play, Square } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { vTooltip } from "../../composables/useTooltip.js";
 import { environmentFor } from "../../lib/environments.js";
 import { listDatabases } from "../../lib/tauri/commands.js";
 import BaseButton from "../common/BaseButton.vue";
+import IconButton from "../common/IconButton.vue";
 import KbdShortcut from "../common/KbdShortcut.vue";
+import { useTabs } from "../../composables/useTabs.js";
 
 /** Run controls and the connection/database the tab will run against. */
 const props = defineProps({ tab: { type: Object, required: true } });
 defineEmits(["run", "run-all", "cancel"]);
 
 const store = useConnectionProfiles();
+const workspace = useTabs();
+// Split Editor on and off from the toolbar too (⇧⌘D does the same).
+const inSplit = computed(() =>
+  Boolean(workspace.splitPanes.value?.includes(props.tab.id)),
+);
 const profile = computed(() =>
   store.profiles.value.find((p) => p.id === props.tab.profileId),
 );
@@ -154,5 +161,16 @@ const cancelHint = computed(() =>
         aria-hidden="true"
       />
     </label>
+    <IconButton
+      :icon="Columns2"
+      size="sm"
+      :label="inSplit ? 'Close Split' : 'Split Editor'"
+      shortcut="Mod+Shift+D"
+      :pressed="inSplit"
+      @click="
+        workspace.activeId.value = tab.id;
+        workspace.toggleSplit();
+      "
+    />
   </div>
 </template>

@@ -16,6 +16,31 @@ services:
       interval: 2s
       retries: 30
 
+  # PostgreSQL that only accepts clients with a certificate from the test CA
+  # (pg_hba "cert"), for the mutual-TLS test. The server key is copied in so
+  # it can be owned by postgres with the permissions PostgreSQL insists on.
+  postgres-mtls:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: thabi
+      POSTGRES_PASSWORD: ${THABI_IT_PASSWORD:?run scripts/integration-tests.sh}
+      POSTGRES_DB: thabi_it
+    volumes:
+      - ${THABI_IT_MTLS_DIR:?run scripts/integration-tests.sh}:/certs:ro
+    entrypoint:
+      - bash
+      - -c
+      - >-
+        install -o postgres -g postgres -m 600 /certs/server.key /var/lib/postgresql/server.key &&
+        exec docker-entrypoint.sh postgres -c ssl=on
+        -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/var/lib/postgresql/server.key
+        -c ssl_ca_file=/certs/ca.crt -c hba_file=/certs/pg_hba.conf
+    ports: ["127.0.0.1:${THABI_IT_PG_MTLS_PORT:-55433}:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thabi -d thabi_it"]
+      interval: 2s
+      retries: 30
+
   mysql:
     image: mysql:8.4
     environment:
@@ -56,6 +81,19 @@ services:
       SSH_PASSWORD: ${THABI_IT_PASSWORD:?run scripts/integration-tests.sh}
       AUTHORIZED_KEYS: ${THABI_IT_AUTHORIZED_KEYS:?run scripts/integration-tests.sh}
     ports: ["127.0.0.1:${THABI_IT_SSH_PORT:-52222}:22"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
+      interval: 2s
+      retries: 30
+
+  # A second bastion for the ProxyJump tests: it forwards on to the `sshd`
+  # service by name, both being on this network, so nothing extra is exposed.
+  sshd-jump:
+    build: ./sshd
+    environment:
+      SSH_PASSWORD: ${THABI_IT_PASSWORD:?run scripts/integration-tests.sh}
+      AUTHORIZED_KEYS: ${THABI_IT_AUTHORIZED_KEYS:?run scripts/integration-tests.sh}
+    ports: ["127.0.0.1:${THABI_IT_SSH_JUMP_PORT:-52223}:22"]
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 22"]
       interval: 2s

@@ -27,6 +27,9 @@ export function keyParts(cells, columns, pkIndexes) {
   return parts;
 }
 
+/** A staged value meaning "the column's DEFAULT", rather than any text. */
+export const DEFAULT_VALUE = "\u0000default";
+
 export function rowKey(parts) {
   return parts ? JSON.stringify(parts.map((p) => p.value)) : null;
 }
@@ -67,9 +70,9 @@ export function revertRow(edits, parts) {
 export function shownCell(edits, key, column, cell) {
   const set = edits.updates[key]?.set;
   if (!set || !(column in set)) return cell;
-  return set[column] === null
-    ? { kind: "null" }
-    : { kind: "value", value: set[column] };
+  if (set[column] === null) return { kind: "null" };
+  if (set[column] === DEFAULT_VALUE) return { kind: "default" };
+  return { kind: "value", value: set[column] };
 }
 
 export function counts(edits) {
@@ -82,6 +85,13 @@ export function counts(edits) {
   return { edited, deleted, inserted, total: edited + deleted + inserted };
 }
 
+/** One column's staged value as Rust takes it. */
+function columnValue(column, value) {
+  return value === DEFAULT_VALUE
+    ? { column, value: null, useDefault: true }
+    : { column, value };
+}
+
 /** The changes in the shape Rust expects. */
 export function toChanges(edits) {
   const changes = [];
@@ -92,16 +102,64 @@ export function toChanges(edits) {
     changes.push({
       kind: "update",
       key,
-      set: Object.entries(set).map(([column, value]) => ({ column, value })),
+      set: Object.entries(set).map(([column, value]) =>
+        columnValue(column, value),
+      ),
     });
   }
   for (const values of edits.inserts)
     changes.push({
       kind: "insert",
-      values: Object.entries(values).map(([column, value]) => ({
-        column,
-        value,
-      })),
+      values: Object.entries(values).map(([column, value]) =>
+        columnValue(column, value),
+      ),
     });
   return changes;
+}
+
+/**
+ * Rows pasted from the clipboard (TSV from a spreadsheet or this grid, or
+ * CSV), as new rows keyed by column name. A first line that repeats the
+ * column names is a header and skipped; `NULL` on its own is SQL NULL.
+ */
+export function parsePastedRows(text, columnNames) {
+  const lines = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n");
+  if (!lines.length || (lines.length === 1 && !lines[0])) return [];
+  const delimiter = lines[0].includes("\t") ? "\t" : ",";
+  const split = (line) =>
+    delimiter === "\t" ? line.split("\t") : splitCsvLine(line);
+  let rows = lines.map(split);
+  const isHeader = rows[0].every(
+    (cell, i) => cell.trim() === (columnNames[i] ?? "").trim(),
+  );
+  if (isHeader) rows = rows.slice(1);
+  return rows.map((cells) =>
+    Object.fromEntries(
+      cells
+        .slice(0, columnNames.length)
+        .map((cell, i) => [columnNames[i], cell === "NULL" ? null : cell]),
+    ),
+  );
+}
+
+function splitCsvLine(line) {
+  const out = [];
+  let current = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"' && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else if (c === '"') quoted = false;
+      else current += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") {
+      out.push(current);
+      current = "";
+    } else current += c;
+  }
+  out.push(current);
+  return out;
 }

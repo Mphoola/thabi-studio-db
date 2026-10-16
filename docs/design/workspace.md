@@ -92,20 +92,25 @@ Minimum window 860 × 560. Below 1000px wide the sidebar collapses to icons.
 
 ## Keyboard shortcuts
 
-| Action                     | Shortcut |
-| -------------------------- | -------- |
-| Open anything              | ⌘P       |
-| Switch connection          | ⇧⌘K      |
-| New connection             | ⌘N       |
-| New query tab              | ⌘T       |
-| Close tab                  | ⌘W       |
-| Run statement or selection | ⌘↵       |
-| Run all                    | ⇧⌘↵      |
-| Cancel query               | ⌘.       |
-| Toggle sidebar             | ⌘1       |
-| Toggle results             | ⌘J       |
-| Refresh explorer           | ⌘R       |
-| Settings                   | ⌘,       |
+| Action                     | Shortcut           |
+| -------------------------- | ------------------ |
+| Open anything              | ⌘P                 |
+| Switch connection          | ⇧⌘K                |
+| New connection             | ⌘N                 |
+| New query tab              | ⌘T                 |
+| Close tab                  | ⌘W                 |
+| Run statement or selection | ⌘↵                 |
+| Run all                    | ⇧⌘↵                |
+| Cancel query               | ⌘.                 |
+| Toggle sidebar             | ⌘1                 |
+| Toggle results             | ⌘J                 |
+| Refresh explorer           | ⌘R                 |
+| Settings                   | ⌘,                 |
+| New window                 | ⇧⌘N                |
+| Explain query              | ⇧⌘E                |
+| Format SQL                 | ⌘I (in the editor) |
+| Split editor               | ⇧⌘D                |
+| Open SQL file              | ⌘O                 |
 
 Connect Selected Connection and Disconnect Selected Connection are available
 in Open Anything when a connection is selected.

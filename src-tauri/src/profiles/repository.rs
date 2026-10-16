@@ -43,6 +43,8 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         auth_mode: row.get("auth_mode")?,
         tls_mode: row.get("tls_mode")?,
         tls_ca_path: row.get("tls_ca_path")?,
+        tls_client_cert: row.get("tls_client_cert")?,
+        tls_client_key: row.get("tls_client_key")?,
         ssh_enabled: row.get::<_, i64>("ssh_enabled")? != 0,
         ssh_host: row.get("ssh_host")?,
         ssh_port: row.get("ssh_port")?,
@@ -52,6 +54,18 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
         has_ssh_key_passphrase: row.get::<_, i64>("has_ssh_key_passphrase")? != 0,
         has_database_password: row.get::<_, i64>("has_database_password")? != 0,
         has_ssh_password: row.get::<_, i64>("has_ssh_password")? != 0,
+        safe_mode: row.get("safe_mode")?,
+        group_name: row.get("group_name")?,
+        colour: row.get("colour")?,
+        sort_order: row.get("sort_order")?,
+        ask_database_password: row.get::<_, i64>("ask_database_password")? != 0,
+        ask_ssh_password: row.get::<_, i64>("ask_ssh_password")? != 0,
+        ask_ssh_key_passphrase: row.get::<_, i64>("ask_ssh_key_passphrase")? != 0,
+        ssh_keepalive_seconds: u32::try_from(row.get::<_, i64>("ssh_keepalive_seconds")?)
+            .unwrap_or(0),
+        startup_commands: row.get("startup_commands")?,
+        query_timeout_seconds: row.get::<_, i64>("query_timeout_seconds")?.max(0) as u64,
+        max_result_rows: row.get::<_, i64>("max_result_rows")?.max(0) as u64,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         last_connected_at: row.get("last_connected_at")?,
@@ -60,10 +74,13 @@ fn profile_from_row(row: &Row<'_>) -> rusqlite::Result<ConnectionProfile> {
 
 fn profile_columns() -> &'static str {
     "id, name, environment, driver, host, port, database_name, username,
-     auth_mode, tls_mode, tls_ca_path, ssh_enabled, ssh_host, ssh_port, ssh_username,
+     auth_mode, tls_mode, tls_ca_path, tls_client_cert, tls_client_key,
+     ssh_enabled, ssh_host, ssh_port, ssh_username,
      ssh_auth_mode, ssh_key_path, has_database_password, has_ssh_password,
-     has_ssh_key_passphrase, created_at, updated_at,
-     last_connected_at"
+     has_ssh_key_passphrase, safe_mode, group_name, colour, sort_order,
+     ask_database_password, ask_ssh_password, ask_ssh_key_passphrase,
+     ssh_keepalive_seconds, startup_commands, query_timeout_seconds,
+     max_result_rows, created_at, updated_at, last_connected_at"
 }
 
 fn get_profile(connection: &Connection, id: &str) -> Result<ConnectionProfile, AppError> {
@@ -127,6 +144,8 @@ struct Target<'a> {
     username: &'a str,
     tls_mode: &'a str,
     tls_ca_path: &'a str,
+    tls_client_cert: &'a str,
+    tls_client_key: &'a str,
 }
 
 fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectParams, AppError> {
@@ -139,8 +158,14 @@ fn params_from(target: Target<'_>, password: Option<String>) -> Result<ConnectPa
         password,
         tls: TlsMode::from_setting(target.tls_mode)?,
         ca_path: Some(PathBuf::from(target.tls_ca_path)).filter(|_| !target.tls_ca_path.is_empty()),
+        client_cert: Some(PathBuf::from(target.tls_client_cert))
+            .filter(|_| !target.tls_client_cert.is_empty()),
+        client_key: Some(PathBuf::from(target.tls_client_key))
+            .filter(|_| !target.tls_client_key.is_empty()),
         ssh: None,
         connect_to: None,
+        read_only: false,
+        startup_commands: Vec::new(),
     })
 }
 
@@ -153,29 +178,118 @@ struct SshTarget<'a> {
     key_path: &'a str,
     password: Option<String>,
     passphrase: Option<String>,
+    keepalive_seconds: u32,
+    /// The user types this password at connect time, so none is stored.
+    ask_ssh_password: bool,
+}
+
+/// Builds the params for a jump host named in `~/.ssh/config`. It signs in the
+/// same way the target does, which is what almost every ProxyJump setup uses.
+fn jump_params(
+    connection: &Connection,
+    alias: &str,
+    auth: &SshAuth,
+) -> Result<SshParams, AppError> {
+    let resolved = crate::ssh::config::resolve_user_alias(alias);
+    let host = resolved
+        .as_ref()
+        .and_then(|config| config.hostname.clone())
+        .unwrap_or_else(|| alias.to_owned());
+    let username = resolved
+        .as_ref()
+        .and_then(|config| config.user.clone())
+        .unwrap_or_else(|| match auth {
+            SshAuth::Password(_) | SshAuth::KeyFile { .. } => String::new(),
+            SshAuth::Agent => std::env::var("USER").unwrap_or_default(),
+        });
+    let port = resolved
+        .as_ref()
+        .and_then(|config| config.port)
+        .unwrap_or(22);
+    let auth = match auth {
+        SshAuth::Password(password) => SshAuth::Password(password.clone()),
+        SshAuth::KeyFile { path, passphrase } => {
+            // The jump host's own identity file wins when the config names one.
+            let path = resolved
+                .as_ref()
+                .and_then(|config| config.identity_file.clone())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| path.clone());
+            SshAuth::KeyFile {
+                path,
+                passphrase: passphrase.clone(),
+            }
+        }
+        SshAuth::Agent => SshAuth::Agent,
+    };
+    Ok(SshParams {
+        host: host.clone(),
+        port,
+        username,
+        auth,
+        known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
+        proxy_jump: None,
+        keepalive: None,
+    })
 }
 
 fn ssh_params(connection: &Connection, target: SshTarget<'_>) -> Result<SshParams, AppError> {
+    // A `Host` alias in the user's own SSH config supplies the same settings
+    // ssh would use, including one ProxyJump hop.
+    let alias = crate::ssh::config::resolve_user_alias(target.host);
+    let host = alias
+        .as_ref()
+        .and_then(|config| config.hostname.clone())
+        .unwrap_or_else(|| target.host.to_owned());
+    let username = alias
+        .as_ref()
+        .and_then(|config| config.user.clone())
+        .unwrap_or_else(|| target.username.to_owned());
+    let port = alias
+        .as_ref()
+        .and_then(|config| config.port)
+        .unwrap_or(target.port);
+    let key_path = if target.auth_mode == "key" {
+        alias
+            .as_ref()
+            .and_then(|config| config.identity_file.clone())
+            .unwrap_or_else(|| target.key_path.to_owned())
+    } else {
+        target.key_path.to_owned()
+    };
+
     let auth = match target.auth_mode {
-        "password" => SshAuth::Password(target.password.ok_or_else(|| {
-            AppError::new(
-                "ssh_credentials",
-                "Enter the SSH password in the connection settings.",
-            )
-        })?),
+        "password" => SshAuth::Password(match target.password {
+            Some(password) => password,
+            // Asked for at connect time: the command fills this in before use.
+            None if target.ask_ssh_password => String::new(),
+            None => {
+                return Err(AppError::new(
+                    "ssh_credentials",
+                    "Enter the SSH password in the connection settings.",
+                ));
+            }
+        }),
         "key" => SshAuth::KeyFile {
-            path: PathBuf::from(target.key_path),
+            path: PathBuf::from(&key_path),
             passphrase: target.passphrase,
         },
         "agent" => SshAuth::Agent,
         _ => return Err(AppError::new("validation", "Choose how to sign in to SSH.")),
     };
+    let proxy_jump = match alias.as_ref().map(|config| config.proxy_jump.clone()) {
+        Some(jump) if !jump.is_empty() => Some(Box::new(jump_params(connection, &jump, &auth)?)),
+        _ => None,
+    };
     Ok(SshParams {
-        host: target.host.to_owned(),
-        port: target.port,
-        username: target.username.to_owned(),
+        host: host.clone(),
+        port,
+        username,
         auth,
-        known_keys: crate::ssh::known_host_keys(connection, target.host, target.port)?,
+        known_keys: crate::ssh::known_host_keys(connection, &host, port)?,
+        proxy_jump,
+        keepalive: (target.keepalive_seconds > 0)
+            .then(|| std::time::Duration::from_secs(target.keepalive_seconds as u64)),
     })
 }
 
@@ -198,6 +312,8 @@ pub fn connect_params(
                 key_path: &profile.ssh_key_path,
                 password: bundle.ssh_password.clone(),
                 passphrase: bundle.ssh_key_passphrase.clone(),
+                keepalive_seconds: profile.ssh_keepalive_seconds,
+                ask_ssh_password: profile.ask_ssh_password,
             },
         )?)
     } else {
@@ -212,10 +328,14 @@ pub fn connect_params(
             username: &profile.username,
             tls_mode: &profile.tls_mode,
             tls_ca_path: &profile.tls_ca_path,
+            tls_client_cert: &profile.tls_client_cert,
+            tls_client_key: &profile.tls_client_key,
         },
         bundle.database_password,
     )?;
     params.ssh = ssh;
+    params.read_only = profile.safe_mode == "read-only";
+    params.startup_commands = startup_lines(&profile.startup_commands);
     Ok((profile, params))
 }
 
@@ -264,6 +384,8 @@ pub fn connect_params_for_input(
                     input.clear_ssh_key_passphrase,
                     saved.ssh_key_passphrase,
                 ),
+                keepalive_seconds: input.ssh_keepalive_seconds,
+                ask_ssh_password: input.ask_ssh_password,
             },
         )?)
     } else {
@@ -278,11 +400,61 @@ pub fn connect_params_for_input(
             username: &input.username,
             tls_mode: &input.tls_mode,
             tls_ca_path: &input.tls_ca_path,
+            tls_client_cert: &input.tls_client_cert,
+            tls_client_key: &input.tls_client_key,
         },
         password,
     )?;
     params.ssh = ssh;
     Ok(params)
+}
+
+/// Puts secrets the user typed for this one connection into the parameters.
+/// They are used for this session only and are never written anywhere.
+pub fn apply_one_off_secrets(
+    params: &mut ConnectParams,
+    secrets: &crate::commands::connections::OneOffSecrets,
+) {
+    if let Some(password) = &secrets.database_password {
+        params.password = Some(password.clone());
+    }
+    let Some(ssh) = params.ssh.as_mut() else {
+        return;
+    };
+    if let Some(password) = &secrets.ssh_password {
+        ssh.auth = SshAuth::Password(password.clone());
+    }
+    if let Some(passphrase) = &secrets.ssh_key_passphrase
+        && let SshAuth::KeyFile {
+            passphrase: slot, ..
+        } = &mut ssh.auth
+    {
+        *slot = Some(passphrase.clone());
+    }
+}
+
+/// Secrets a profile asks the user for at connect time. The app refuses to
+/// connect until one is supplied, rather than trying without and reporting a
+/// confusing authentication failure.
+pub fn required_secret(profile: &ConnectionProfile) -> Option<&'static str> {
+    if profile.ask_database_password {
+        Some("databasePassword")
+    } else if profile.ask_ssh_password {
+        Some("sshPassword")
+    } else if profile.ask_ssh_key_passphrase {
+        Some("sshKeyPassphrase")
+    } else {
+        None
+    }
+}
+
+/// The statements a profile runs on each new session, in order.
+fn startup_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 pub fn mark_connected(connection: &Connection, id: &str) -> Result<(), AppError> {
@@ -364,6 +536,7 @@ fn insert_profile(
     profile: &ValidatedProfile,
     credential_key: Option<&str>,
     bundle: &CredentialBundle,
+    sort_order: i64,
 ) -> Result<(), AppError> {
     connection
         .execute(
@@ -371,10 +544,15 @@ fn insert_profile(
                 id, name, environment, driver, host, port, database_name, username,
                 ssh_enabled, ssh_host, ssh_port, ssh_username, credential_key,
                 has_database_password, has_ssh_password, tls_mode, tls_ca_path,
-                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase
+                tls_client_cert, tls_client_key,
+                ssh_auth_mode, ssh_key_path, has_ssh_key_passphrase, safe_mode,
+                group_name, colour, sort_order, ask_database_password,
+                ask_ssh_password, ask_ssh_key_passphrase, ssh_keepalive_seconds,
+                startup_commands, query_timeout_seconds, max_result_rows
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20
+                ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
+                ?32, ?33
              )",
             params![
                 id,
@@ -394,9 +572,22 @@ fn insert_profile(
                 bundle.ssh_password.is_some(),
                 profile.tls_mode,
                 profile.tls_ca_path,
+                profile.tls_client_cert,
+                profile.tls_client_key,
                 profile.ssh_auth_mode,
                 profile.ssh_key_path,
                 bundle.ssh_key_passphrase.is_some(),
+                profile.safe_mode,
+                profile.group_name,
+                profile.colour,
+                sort_order,
+                profile.ask_database_password,
+                profile.ask_ssh_password,
+                profile.ask_ssh_key_passphrase,
+                profile.ssh_keepalive_seconds,
+                profile.startup_commands,
+                profile.query_timeout_seconds as i64,
+                profile.max_result_rows as i64,
             ],
         )
         .map_err(|_| AppError::storage())?;
@@ -406,7 +597,9 @@ fn insert_profile(
 pub fn list_profiles(connection: &Connection) -> Result<Vec<ConnectionProfile>, AppError> {
     let mut statement = connection
         .prepare(&format!(
-            "SELECT {} FROM connection_profiles ORDER BY name COLLATE NOCASE, id",
+            "SELECT {} FROM connection_profiles
+             ORDER BY (group_name = ''), group_name COLLATE NOCASE, sort_order,
+                      name COLLATE NOCASE, id",
             profile_columns()
         ))
         .map_err(|_| AppError::storage())?;
@@ -416,6 +609,36 @@ pub fn list_profiles(connection: &Connection) -> Result<Vec<ConnectionProfile>, 
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AppError::storage())?;
     Ok(profiles)
+}
+
+/// Sets the manual order from the ids in the order given. Unknown ids are
+/// ignored; profiles left out of the list keep their current number, so the
+/// ordering stays stable when the user reorders one group at a time.
+pub fn reorder_profiles(connection: &mut Connection, ids: &[String]) -> Result<(), AppError> {
+    let transaction = connection.transaction().map_err(|_| AppError::storage())?;
+    for (index, id) in ids.iter().enumerate() {
+        transaction
+            .execute(
+                "UPDATE connection_profiles SET sort_order = ?2, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![id, index as i64],
+            )
+            .map_err(|_| AppError::storage())?;
+    }
+    transaction.commit().map_err(|_| AppError::storage())?;
+    Ok(())
+}
+
+/// A new connection goes to the end of its group so it appears last there.
+fn next_sort_order(connection: &Connection, group_name: &str) -> Result<i64, AppError> {
+    connection
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM connection_profiles
+             WHERE group_name = ?1 COLLATE NOCASE",
+            [group_name],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::storage())
 }
 
 pub fn create_profile(
@@ -442,6 +665,7 @@ pub fn create_profile(
         &profile,
         credential_key.as_deref(),
         &bundle,
+        next_sort_order(connection, &profile.group_name)?,
     ) {
         if credential_key
             .as_deref()
@@ -522,7 +746,12 @@ pub fn update_validated_profile(
             ssh_port = ?11, ssh_username = ?12, credential_key = ?13,
             has_database_password = ?14, has_ssh_password = ?15,
             tls_mode = ?16, tls_ca_path = ?17, ssh_auth_mode = ?18, ssh_key_path = ?19,
-            has_ssh_key_passphrase = ?20,
+            has_ssh_key_passphrase = ?20, safe_mode = ?21,
+            group_name = ?22, colour = ?23,
+            ask_database_password = ?24, ask_ssh_password = ?25,
+            ask_ssh_key_passphrase = ?26, ssh_keepalive_seconds = ?27,
+            startup_commands = ?28, tls_client_cert = ?29, tls_client_key = ?30,
+            query_timeout_seconds = ?31, max_result_rows = ?32,
             updated_at = CURRENT_TIMESTAMP
          WHERE id = ?1",
         params![
@@ -546,6 +775,18 @@ pub fn update_validated_profile(
             profile.ssh_auth_mode,
             profile.ssh_key_path,
             bundle.ssh_key_passphrase.is_some(),
+            profile.safe_mode,
+            profile.group_name,
+            profile.colour,
+            profile.ask_database_password,
+            profile.ask_ssh_password,
+            profile.ask_ssh_key_passphrase,
+            profile.ssh_keepalive_seconds,
+            profile.startup_commands,
+            profile.tls_client_cert,
+            profile.tls_client_key,
+            profile.query_timeout_seconds as i64,
+            profile.max_result_rows as i64,
         ],
     );
     if update_result.is_err() {
@@ -610,6 +851,8 @@ pub fn duplicate_profile(
         username: source.username.clone(),
         tls_mode: source.tls_mode.clone(),
         tls_ca_path: source.tls_ca_path.clone(),
+        tls_client_cert: source.tls_client_cert.clone(),
+        tls_client_key: source.tls_client_key.clone(),
         ssh_enabled: source.ssh_enabled,
         ssh_host: source.ssh_host.clone(),
         ssh_port: source.ssh_port.to_string(),
@@ -622,6 +865,16 @@ pub fn duplicate_profile(
         clear_ssh_password: false,
         ssh_key_passphrase: bundle.ssh_key_passphrase.clone(),
         clear_ssh_key_passphrase: false,
+        safe_mode: source.safe_mode.clone(),
+        group_name: source.group_name.clone(),
+        colour: source.colour.clone(),
+        ask_database_password: source.ask_database_password,
+        ask_ssh_password: source.ask_ssh_password,
+        ask_ssh_key_passphrase: source.ask_ssh_key_passphrase,
+        ssh_keepalive_seconds: source.ssh_keepalive_seconds.to_string(),
+        startup_commands: source.startup_commands.clone(),
+        query_timeout_seconds: source.query_timeout_seconds.to_string(),
+        max_result_rows: source.max_result_rows.to_string(),
     };
     if input.name.chars().count() > 80 {
         input.name = format!("{} copy", source.name.chars().take(75).collect::<String>());
@@ -643,6 +896,7 @@ pub fn duplicate_profile(
         &profile,
         credential_key.as_deref(),
         &bundle,
+        next_sort_order(connection, &profile.group_name)?,
     ) {
         if credential_key
             .as_deref()
@@ -1045,5 +1299,379 @@ mod tests {
             connect_params(&connection, &credentials, &saved.profile.id).unwrap();
         assert!(profile.last_connected_at.is_some());
         assert_eq!(params.tls, TlsMode::EncryptOnly);
+    }
+
+    #[test]
+    fn safe_mode_is_stored_on_the_profile_and_drives_read_only_sessions() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut create = input();
+        create.safe_mode = "read-only".into();
+        let saved = create_profile(&connection, &credentials, create.clone()).unwrap();
+        assert_eq!(saved.profile.safe_mode, "read-only");
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(params.read_only);
+
+        // A copy keeps the mode, and so does an edit that changes it.
+        let copy = duplicate_profile(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(copy.profile.safe_mode, "read-only");
+
+        create.safe_mode = "confirm-writes".into();
+        let updated = update_profile(&connection, &credentials, &saved.profile.id, create).unwrap();
+        assert_eq!(updated.profile.safe_mode, "confirm-writes");
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(!params.read_only);
+    }
+
+    #[test]
+    fn production_profiles_start_on_confirm_writes_and_others_on_off() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        // A database from before safe modes existed, with a Production profile
+        // already in it: upgrading it must keep today's behaviour.
+        let migrations = crate::storage::all_migrations();
+        let before_safe_mode = migrations
+            .iter()
+            .position(|sql| sql.contains("ADD COLUMN safe_mode"))
+            .expect("the safe mode migration is registered");
+        connection
+            .execute_batch(&migrations[..before_safe_mode].join("\n"))
+            .unwrap();
+        connection
+            .pragma_update(None, "user_version", before_safe_mode as i64)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO connection_profiles (id, name, environment, driver, host, port, username)
+                 VALUES ('prod', 'Production', 'production', 'postgres', 'localhost', 5432, 'user')",
+                [],
+            )
+            .unwrap();
+        migrate(&mut connection).unwrap();
+
+        let migrated = get_profile(&connection, "prod").unwrap();
+        assert_eq!(migrated.safe_mode, "confirm-writes");
+
+        let credentials = TestCredentials::default();
+        let created = create_profile(&connection, &credentials, input()).unwrap();
+        assert_eq!(created.profile.safe_mode, "off");
+    }
+
+    #[test]
+    fn groups_and_colours_round_trip_and_dragging_reorders() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut work = input();
+        work.name = "Work laptop".into();
+        work.group_name = "Work".into();
+        work.colour = "purple".into();
+        let first = create_profile(&connection, &credentials, work).unwrap();
+        assert_eq!(first.profile.group_name, "Work");
+        assert_eq!(first.profile.colour, "purple");
+
+        let mut home = input();
+        home.name = "Home box".into();
+        home.group_name = "work".into(); // Same group, different case.
+        home.colour = "green".into();
+        let second = create_profile(&connection, &credentials, home).unwrap();
+
+        let mut loose = input();
+        loose.name = "Scratch".into();
+        let third = create_profile(&connection, &credentials, loose).unwrap();
+        assert_eq!(third.profile.group_name, "");
+
+        // Both land in the same group, ordered by creation, ungrouped last.
+        let listed = list_profiles(&connection).unwrap();
+        assert_eq!(
+            listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Work laptop", "Home box", "Scratch"]
+        );
+
+        // Dragging Home box above Work laptop is remembered.
+        let ids = vec![second.profile.id.clone(), first.profile.id.clone()];
+        reorder_profiles(&mut connection, &ids).unwrap();
+        let listed = list_profiles(&connection).unwrap();
+        assert_eq!(
+            listed.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Home box", "Work laptop", "Scratch"]
+        );
+
+        // An unknown id in the list is ignored rather than failing the reorder.
+        let ids = vec!["nope".to_owned(), third.profile.id.clone()];
+        reorder_profiles(&mut connection, &ids).unwrap();
+        assert_eq!(list_profiles(&connection).unwrap().len(), 3);
+
+        // The copy keeps the group and colour as they were written.
+        let copy = duplicate_profile(&connection, &credentials, &second.profile.id).unwrap();
+        assert_eq!(copy.profile.group_name, "work");
+        assert_eq!(copy.profile.colour, "green");
+    }
+
+    /// A key file has to exist and be a regular file for validation to pass.
+    fn temp_key_file() -> String {
+        let path =
+            std::env::temp_dir().join(format!("thabi-studio-test-key-{}.pem", std::process::id()));
+        std::fs::write(&path, b"not-a-real-key").unwrap();
+        path.display().to_string()
+    }
+
+    #[test]
+    fn ask_every_time_keeps_nothing_in_the_credential_store() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut ask = input();
+        ask.name = "Typed each time".into();
+        // A password typed into the form while "ask" is on must not be kept.
+        ask.database_password = Some("typed-secret".into());
+        ask.ask_database_password = true;
+        ask.ssh_enabled = true;
+        ask.ssh_host = "bastion.example.com".into();
+        ask.ssh_username = "tunnel".into();
+        ask.ssh_password = Some("ssh-secret".into());
+        ask.ask_ssh_password = true;
+        ask.ssh_auth_mode = "key".into();
+        ask.ssh_key_path = temp_key_file();
+        ask.ssh_key_passphrase = Some("passphrase-secret".into());
+        ask.ask_ssh_key_passphrase = true;
+
+        let saved = create_profile(&connection, &credentials, ask).unwrap();
+        let profile = &saved.profile;
+        assert!(profile.ask_database_password);
+        assert!(profile.ask_ssh_password);
+        assert!(profile.ask_ssh_key_passphrase);
+        // Nothing was kept, and the profile says so rather than looking saved.
+        assert!(!profile.has_database_password);
+        assert!(!profile.has_ssh_password);
+        assert!(!profile.has_ssh_key_passphrase);
+        let stored: String = connection
+            .query_row(
+                "SELECT COALESCE(credential_key, '') FROM connection_profiles WHERE id = ?1",
+                [&profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "");
+        for (_, secret) in credentials.0.lock().unwrap().iter() {
+            assert!(!secret.contains("typed-secret"));
+            assert!(!secret.contains("ssh-secret"));
+            assert!(!secret.contains("passphrase-secret"));
+        }
+
+        // The app is told which secret it needs, and refuses without it.
+        assert_eq!(
+            required_secret(profile),
+            Some("databasePassword"),
+            "the first missing secret is asked for"
+        );
+        let (_, params) = connect_params(&connection, &credentials, &profile.id).unwrap();
+        assert!(params.password.is_none());
+        assert!(params.ssh.is_some(), "the profile still has SSH settings");
+    }
+
+    #[test]
+    fn one_off_secrets_reach_the_session_but_are_not_kept() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut ask = input();
+        ask.ssh_enabled = true;
+        ask.ssh_host = "bastion.example.com".into();
+        ask.ssh_username = "tunnel".into();
+        ask.ask_ssh_password = true;
+        let saved = create_profile(&connection, &credentials, ask.clone()).unwrap();
+
+        let (_, mut params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        let secrets = crate::commands::connections::OneOffSecrets {
+            database_password: Some("typed".into()),
+            ssh_password: Some("ssh-typed".into()),
+            ssh_key_passphrase: Some("key-typed".into()),
+        };
+        apply_one_off_secrets(&mut params, &secrets);
+        assert_eq!(params.password.as_deref(), Some("typed"));
+        match params.ssh.as_ref().map(|ssh| &ssh.auth) {
+            Some(SshAuth::Password(password)) => assert_eq!(password, "ssh-typed"),
+            _ => panic!("expected the typed SSH password"),
+        }
+
+        // Nothing was written: the stored record and the keyring are unchanged.
+        let (_, again) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert!(again.password.is_none());
+        let key: Option<String> = connection
+            .query_row(
+                "SELECT credential_key FROM connection_profiles WHERE id = ?1",
+                [&saved.profile.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn an_unknown_keep_alive_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut bad = input();
+        bad.ssh_keepalive_seconds = "99999".into();
+        let error = create_profile(&connection, &credentials, bad)
+            .expect_err("an unreasonable keep-alive should be rejected");
+        assert!(error.fields.unwrap().contains_key("sshKeepaliveSeconds"));
+
+        let mut good = input();
+        good.ssh_keepalive_seconds = "30".into();
+        assert_eq!(
+            create_profile(&connection, &credentials, good)
+                .unwrap()
+                .profile
+                .ssh_keepalive_seconds,
+            30
+        );
+    }
+
+    #[test]
+    fn an_unknown_colour_or_long_group_name_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let mut bad_colour = input();
+        bad_colour.colour = "chartreuse".into();
+        let error = create_profile(&connection, &credentials, bad_colour)
+            .expect_err("unknown colour should be rejected");
+        assert!(error.fields.unwrap().contains_key("colour"));
+
+        let mut long_group = input();
+        long_group.group_name = "x".repeat(61);
+        let error = create_profile(&connection, &credentials, long_group)
+            .expect_err("a long group name should be rejected");
+        assert!(error.fields.unwrap().contains_key("groupName"));
+    }
+
+    #[test]
+    fn an_unknown_safe_mode_is_rejected_by_field() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let mut create = input();
+        create.safe_mode = "yolo".into();
+        let error = create_profile(&connection, &credentials, create)
+            .expect_err("unknown safe mode should be rejected");
+        assert_eq!(error.kind, "validation");
+        assert!(error.fields.unwrap().contains_key("safeMode"));
+    }
+
+    /// Mutual TLS: the client certificate and key reach the driver as paths,
+    /// and neither the key's contents nor its location ends up in a debug log.
+    /// The profile statements are long lists of columns and parameters, and a
+    /// mismatch shows up only as a generic storage error at runtime. This
+    /// checks every one of them against the table, so a mismatch is a test
+    /// failure naming the statement.
+    #[test]
+    fn profile_statements_match_the_table() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        // insert_profile and update_validated_profile each build one long
+        // statement; a full round trip through both proves the columns, the
+        // placeholders and the bound values still line up.
+        let mut create = input();
+        create.database_password = Some("secret".into());
+        let saved = create_profile(&connection, &credentials, create).unwrap();
+        let mut update = input();
+        update.name = "Renamed".into();
+        update_validated_profile(
+            &connection,
+            &credentials,
+            &saved.profile.id,
+            validate(update).unwrap(),
+        )
+        .unwrap();
+        reorder_profiles(
+            &mut connection,
+            &[saved.profile.id.clone(), saved.profile.id.clone()],
+        )
+        .unwrap();
+        assert_eq!(list_profiles(&connection).unwrap()[0].name, "Renamed");
+    }
+
+    /// A connection may set its own timeout and row limit; both round-trip and
+    /// are bounded, and 0 keeps meaning "use the app default".
+    #[test]
+    fn query_limits_round_trip_and_are_bounded() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+
+        let plain = create_profile(&connection, &credentials, input()).unwrap();
+        assert_eq!(plain.profile.query_timeout_seconds, 0);
+        assert_eq!(plain.profile.max_result_rows, 0);
+
+        let mut own = input();
+        own.query_timeout_seconds = "120".into();
+        own.max_result_rows = "500".into();
+        let saved = create_profile(&connection, &credentials, own).unwrap();
+        assert_eq!(saved.profile.query_timeout_seconds, 120);
+        assert_eq!(saved.profile.max_result_rows, 500);
+
+        let copy = duplicate_profile(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(copy.profile.query_timeout_seconds, 120);
+
+        // The field errors are named in camelCase, like every other one.
+        for (field, value) in [
+            ("queryTimeoutSeconds", "99999999"),
+            ("maxResultRows", "99999999"),
+        ] {
+            let mut bad = input();
+            match field {
+                "queryTimeoutSeconds" => bad.query_timeout_seconds = value.into(),
+                _ => bad.max_result_rows = value.into(),
+            }
+            let error = create_profile(&connection, &credentials, bad)
+                .expect_err("an out-of-range limit should be rejected");
+            assert!(error.fields.unwrap().contains_key(field), "{field}");
+        }
+    }
+
+    #[test]
+    fn client_certificate_files_reach_the_driver() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection).unwrap();
+        let credentials = TestCredentials::default();
+        let dir = std::env::temp_dir().join(format!("thabi-mtls-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cert = dir.join("client.crt");
+        let key = dir.join("client.key");
+        std::fs::write(&cert, b"certificate").unwrap();
+        std::fs::write(&key, b"private key").unwrap();
+
+        let mut profile = input();
+        profile.tls_mode = "verify-full".into();
+        profile.tls_client_cert = cert.display().to_string();
+        profile.tls_client_key = key.display().to_string();
+        let saved = create_profile(&connection, &credentials, profile).unwrap();
+        assert_eq!(saved.profile.tls_client_cert, cert.display().to_string());
+
+        let (_, params) = connect_params(&connection, &credentials, &saved.profile.id).unwrap();
+        assert_eq!(
+            params.client_cert.as_ref().map(|p| p.display().to_string()),
+            Some(cert.display().to_string())
+        );
+        assert_eq!(
+            params.client_key.as_ref().map(|p| p.display().to_string()),
+            Some(key.display().to_string())
+        );
+        // Where the private key lives is itself worth keeping out of logs.
+        assert!(!format!("{params:?}").contains("client.key"));
+
+        // A profile without one connects without it.
+        let plain = create_profile(&connection, &credentials, input()).unwrap();
+        let (_, params) = connect_params(&connection, &credentials, &plain.profile.id).unwrap();
+        assert!(params.client_cert.is_none() && params.client_key.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

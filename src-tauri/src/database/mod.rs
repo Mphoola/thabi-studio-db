@@ -11,10 +11,14 @@ pub mod error;
 pub mod filter;
 pub mod metadata;
 mod mysql;
+pub mod paging;
+pub mod plan;
 mod postgres;
 pub mod quote;
+pub mod script;
 mod sqlserver;
-mod values;
+pub mod transfer;
+pub mod values;
 
 use crate::{
     errors::AppError,
@@ -97,11 +101,31 @@ pub struct ConnectParams {
     pub tls: TlsMode,
     /// Custom CA certificate (PEM) used with `TlsMode::Verify`.
     pub ca_path: Option<PathBuf>,
+    /// Client certificate and private key for mutual TLS, as file paths. The
+    /// key is read at connect time and never copied.
+    pub client_cert: Option<PathBuf>,
+    pub client_key: Option<PathBuf>,
     /// Reach the database through this SSH server.
     pub ssh: Option<SshParams>,
     /// Where to open the TCP connection when it differs from host:port
     /// (the local end of an SSH tunnel). Set by `Session::connect`.
     pub connect_to: Option<SocketAddr>,
+    /// Ask the server to refuse writes for this session (safe mode
+    /// "read-only"). The app checks too; this is the backstop for engines
+    /// that can set it.
+    pub read_only: bool,
+    /// Statements to run on every new session for this connection, in order.
+    pub startup_commands: Vec<String>,
+}
+
+/// The session statement that makes a session read-only, per engine. SQL
+/// Server has no session equivalent, so it returns `None`.
+fn read_only_statement(engine: Engine) -> Option<&'static str> {
+    match engine {
+        Engine::MySql => Some("SET SESSION TRANSACTION READ ONLY"),
+        Engine::Postgres => Some("SET default_transaction_read_only = on"),
+        Engine::SqlServer => None,
+    }
 }
 
 impl std::fmt::Debug for ConnectParams {
@@ -115,7 +139,15 @@ impl std::fmt::Debug for ConnectParams {
             .field("password", &self.password.as_ref().map(|_| "<redacted>"))
             .field("tls", &self.tls)
             .field("ca_path", &self.ca_path)
+            .field("client_cert", &self.client_cert)
+            // Never print a path that points at a private key.
+            .field(
+                "client_key",
+                &self.client_key.as_ref().map(|_| "<redacted>"),
+            )
             .field("ssh", &self.ssh)
+            .field("read_only", &self.read_only)
+            .field("startup_commands", &self.startup_commands.len())
             .finish()
     }
 }
@@ -149,8 +181,28 @@ pub trait DatabaseSession: Sized {
     fn capabilities(&self) -> Capabilities;
     async fn ping(&mut self) -> Result<(), AppError>;
     async fn list_databases(&mut self) -> Result<Vec<String>, AppError>;
-    /// Runs user-authored SQL as written and keeps at most `max_rows` rows.
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError>;
+    /// Runs user-authored SQL as written, putting every row set into
+    /// `sink` as rows arrive (each capped at the sink's row limit).
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError>;
+    /// Runs user-authored SQL and keeps at most `max_rows` rows per row set.
+    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+        let sink = values::RowSink::shared(max_rows);
+        self.execute_into(sql, &sink).await?;
+        let result = sink.lock().expect("row sink").take();
+        Ok(result)
+    }
+    /// Runs user SQL with values bound to its placeholders.
+    ///
+    /// Binding needs the prepared statement protocol, which returns typed
+    /// values where the simple protocol returns text, so this is a separate
+    /// path from `execute` rather than a flag on it. An engine that has not
+    /// been given one says so rather than quietly running without the values.
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError>;
     /// Runs app-generated metadata SQL with bound text parameters.
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError>;
     /// Schemas in a database, or `None` when the engine has no schema level
@@ -214,8 +266,26 @@ impl Session {
     /// typo in the host name gets its own message. With a tunnel the
     /// database host only has to resolve on the SSH server.
     pub async fn connect(params: &ConnectParams) -> Result<Self, AppError> {
-        let Some(ssh) = &params.ssh else {
-            return tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let mut session = (if let Some(ssh) = &params.ssh {
+            tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, async {
+                let tunnel = crate::ssh::open_tunnel(ssh, &params.host, params.port).await?;
+                let mut through = params.clone();
+                through.connect_to = Some(tunnel.local_addr());
+                match Driver::connect(&through).await {
+                    Ok(driver) => Ok(Self {
+                        driver,
+                        tunnel: Some(tunnel),
+                    }),
+                    Err(error) => {
+                        tunnel.close().await;
+                        Err(error)
+                    }
+                }
+            })
+            .await
+            .map_err(|_| error::timed_out(&params.host, params.port))?
+        } else {
+            tokio::time::timeout(CONNECT_TIMEOUT, async {
                 error::check_host_resolves(&params.host, params.port).await?;
                 Ok(Self {
                     driver: Driver::connect(params).await?,
@@ -223,26 +293,10 @@ impl Session {
                 })
             })
             .await
-            .map_err(|_| error::timed_out(&params.host, params.port))?;
-        };
-
-        tokio::time::timeout(TUNNEL_CONNECT_TIMEOUT, async {
-            let tunnel = crate::ssh::open_tunnel(ssh, &params.host, params.port).await?;
-            let mut through = params.clone();
-            through.connect_to = Some(tunnel.local_addr());
-            match Driver::connect(&through).await {
-                Ok(driver) => Ok(Self {
-                    driver,
-                    tunnel: Some(tunnel),
-                }),
-                Err(error) => {
-                    tunnel.close().await;
-                    Err(error)
-                }
-            }
-        })
-        .await
-        .map_err(|_| error::timed_out(&params.host, params.port))?
+            .map_err(|_| error::timed_out(&params.host, params.port))?
+        })?;
+        apply_session_settings(&mut session, params).await?;
+        Ok(session)
     }
 
     /// How another session can cancel this one's running statement.
@@ -292,7 +346,33 @@ impl Session {
 
     pub async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
         let started = Instant::now();
-        let mut result = dispatch!(self, s => s.execute(sql, max_rows).await)?;
+        let sink = values::RowSink::shared(max_rows);
+        self.execute_into(sql, &sink).await?;
+        let mut result = sink.lock().expect("row sink").take();
+        result.elapsed_ms = started.elapsed().as_millis() as u64;
+        Ok(result)
+    }
+
+    /// Runs user SQL into a shared sink, so progress and partial rows are
+    /// visible to the caller while (and after) it runs.
+    pub async fn execute_into(
+        &mut self,
+        sql: &str,
+        sink: &values::SharedSink,
+    ) -> Result<(), AppError> {
+        dispatch!(self, s => s.execute_into(sql, sink).await)
+    }
+
+    /// Runs user SQL with bound values; see the trait method for why this is
+    /// separate from `execute`.
+    pub async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        let started = Instant::now();
+        let mut result = dispatch!(self, s => s.execute_bound(sql, params, max_rows).await)?;
         result.elapsed_ms = started.elapsed().as_millis() as u64;
         Ok(result)
     }
@@ -317,6 +397,41 @@ impl Session {
         kind: ObjectKind,
     ) -> Result<ObjectStructure, AppError> {
         dispatch!(self, s => s.describe(database, schema, name, kind).await)
+    }
+
+    /// Every table's columns in a database, for editor autocomplete.
+    pub async fn completion_schema(
+        &mut self,
+        database: &str,
+    ) -> Result<Vec<metadata::CompletionTable>, AppError> {
+        let engine = self.server_info().engine;
+        let sql = metadata::completion_sql(engine, database);
+        let params: &[&str] = if engine == Engine::MySql {
+            &[database]
+        } else {
+            &[]
+        };
+        let rows = dispatch!(self, s => s.query_text(&sql, params).await)?;
+        Ok(metadata::completion_rows(rows))
+    }
+
+    /// Single-column foreign keys elsewhere that point at a table.
+    pub async fn referencing(
+        &mut self,
+        database: &str,
+        schema: &str,
+        name: &str,
+    ) -> Result<Vec<metadata::Referencing>, AppError> {
+        let engine = self.server_info().engine;
+        let sql = metadata::referencing_sql(engine, database);
+        // MySQL's "schema" here is the database.
+        let owner = if engine == Engine::MySql {
+            database
+        } else {
+            schema
+        };
+        let rows = dispatch!(self, s => s.query_text(&sql, &[owner, name]).await)?;
+        Ok(metadata::referencing_rows(rows))
     }
 
     /// First `limit` rows of a table or view, read-only.
@@ -364,6 +479,52 @@ pub async fn cancel_backend(params: &ConnectParams, target: CancelTarget) -> Res
     let result = session.execute(&sql, 1).await.map(|_| ());
     let _ = session.close().await;
     result
+}
+
+/// Applies everything a connection wants on every new session: the read-only
+/// guard first, then the connection's startup commands. SQL Server has no
+/// read-only session equivalent, so that step is skipped there and the app
+/// check is the only guard, which the UI says out loud.
+///
+/// A startup command that fails stops the connection. Half-configured session
+/// state is worse than a clear failure with nothing open.
+async fn apply_session_settings(
+    session: &mut Session,
+    params: &ConnectParams,
+) -> Result<(), AppError> {
+    if params.read_only
+        && let Some(sql) = read_only_statement(params.engine)
+    {
+        session.execute(sql, 1).await.map(|_| ())?;
+    }
+    for command in &params.startup_commands {
+        if let Err(error) = session.execute(command, 1).await {
+            return Err(AppError::new(
+                "startup_command_failed",
+                "A startup command for this connection failed, so it wasn't opened.",
+            )
+            .with_detail(Some(format!(
+                "{}: {}",
+                first_line(command),
+                error.detail.unwrap_or(error.message)
+            )))
+            .with_code(error.code));
+        }
+    }
+    Ok(())
+}
+
+fn first_line(command: &str) -> String {
+    let line = command.trim();
+    let line = line
+        .split_once('\n')
+        .map(|(first, _)| first)
+        .unwrap_or(line);
+    if line.chars().count() > 80 {
+        format!("{}…", line.chars().take(79).collect::<String>())
+    } else {
+        line.to_owned()
+    }
 }
 
 /// SQL that reads up to `limit` rows of a table or view, fully quoted.
@@ -431,10 +592,21 @@ mod tests {
             password: Some("hunter2".into()),
             tls: TlsMode::Verify,
             ca_path: None,
+            client_cert: None,
+            client_key: None,
             ssh: None,
             connect_to: None,
+            read_only: false,
+            startup_commands: Vec::new(),
         };
         assert!(!format!("{params:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn read_only_statement_covers_engines_that_can() {
+        assert!(read_only_statement(Engine::MySql).is_some());
+        assert!(read_only_statement(Engine::Postgres).is_some());
+        assert_eq!(read_only_statement(Engine::SqlServer), None);
     }
 
     #[test]

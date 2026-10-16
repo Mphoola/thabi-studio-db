@@ -1,11 +1,15 @@
 <script setup>
 import { words } from "../../lib/platform.js";
 import { computed, nextTick, reactive, ref, watch } from "vue";
+import { useAppSettings } from "../../composables/useAppSettings.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useDialogs } from "../../composables/useDialogs.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserMessage } from "../../lib/errors.js";
 import { ENVIRONMENTS } from "../../lib/environments.js";
+import { COLOURS } from "../../lib/connectionGroups.js";
+import { describeLimit } from "../../lib/limits.js";
+import { defaultSafeMode } from "../../lib/sqlSafety.js";
 import { suggestedTlsMode } from "../../lib/tls.js";
 import {
   defaultPortFor,
@@ -18,10 +22,12 @@ import TextInput from "../common/TextInput.vue";
 import ConnectionTestAction from "./ConnectionTestAction.vue";
 import ConnectionTestResult from "./ConnectionTestResult.vue";
 import DatabaseFields from "./DatabaseFields.vue";
+import SafetyFields from "./SafetyFields.vue";
 import SshProfileFields from "./SshProfileFields.vue";
 import ConnectionUrlField from "../connections/ConnectionUrlField.vue";
 
 const store = useConnectionProfiles();
+const { settings } = useAppSettings();
 const dialogs = useDialogs();
 const toasts = useToasts();
 const fields = ref({});
@@ -29,6 +35,9 @@ const saving = ref(false);
 const testResult = ref(null);
 // Until the user picks a TLS setting, it follows the host (see lib/tls.js).
 const tlsTouched = ref(false);
+// The safe mode follows the environment until the user picks one (Plan §7b:
+// Production starts on "Confirm Writes").
+const safeModeTouched = ref(false);
 
 const defaults = () => ({
   name: "",
@@ -42,6 +51,8 @@ const defaults = () => ({
   clearDatabasePassword: false,
   tlsMode: suggestedTlsMode("localhost"),
   tlsCaPath: "",
+  tlsClientCert: "",
+  tlsClientKey: "",
   sshEnabled: false,
   sshHost: "",
   sshPort: "22",
@@ -52,6 +63,16 @@ const defaults = () => ({
   sshKeyPath: "",
   sshKeyPassphrase: "",
   clearSshKeyPassphrase: false,
+  safeMode: defaultSafeMode("local"),
+  groupName: "",
+  colour: "",
+  askDatabasePassword: false,
+  askSshPassword: false,
+  askSshKeyPassphrase: false,
+  sshKeepaliveSeconds: "0",
+  startupCommands: "",
+  queryTimeoutSeconds: "0",
+  maxResultRows: "0",
 });
 const form = reactive(defaults());
 const open = computed({
@@ -74,9 +95,11 @@ function resetForm() {
   fields.value = {};
   testResult.value = null;
   tlsTouched.value = false;
+  safeModeTouched.value = false;
   const profile = editingProfile.value;
   if (!profile) return;
   tlsTouched.value = true;
+  safeModeTouched.value = true;
   Object.assign(form, {
     name: profile.name,
     environment: profile.environment,
@@ -87,12 +110,24 @@ function resetForm() {
     username: profile.username,
     tlsMode: profile.tlsMode,
     tlsCaPath: profile.tlsCaPath,
+    tlsClientCert: profile.tlsClientCert ?? "",
+    tlsClientKey: profile.tlsClientKey ?? "",
     sshEnabled: profile.sshEnabled,
     sshHost: profile.sshHost,
     sshPort: String(profile.sshPort),
     sshUsername: profile.sshUsername,
     sshAuthMode: profile.sshAuthMode,
     sshKeyPath: profile.sshKeyPath,
+    safeMode: profile.safeMode ?? defaultSafeMode(profile.environment),
+    groupName: profile.groupName ?? "",
+    colour: profile.colour ?? "",
+    askDatabasePassword: !!profile.askDatabasePassword,
+    askSshPassword: !!profile.askSshPassword,
+    askSshKeyPassphrase: !!profile.askSshKeyPassphrase,
+    sshKeepaliveSeconds: String(profile.sshKeepaliveSeconds ?? 0),
+    startupCommands: profile.startupCommands ?? "",
+    queryTimeoutSeconds: String(profile.queryTimeoutSeconds ?? 0),
+    maxResultRows: String(profile.maxResultRows ?? 0),
   });
 }
 
@@ -111,6 +146,14 @@ watch(
   () => form.host,
   (host) => {
     if (!tlsTouched.value) form.tlsMode = suggestedTlsMode(host);
+  },
+);
+watch(
+  () => form.environment,
+  (environment, previous) => {
+    if (safeModeTouched.value && form.safeMode !== defaultSafeMode(previous))
+      return;
+    form.safeMode = defaultSafeMode(environment);
   },
 );
 watch(
@@ -134,9 +177,16 @@ function buildInput() {
   const ssh = form.sshEnabled;
   return {
     ...form,
-    sshPassword: ssh && form.sshAuthMode === "password" ? form.sshPassword : "",
+    // A secret that is asked for each time is never sent to be saved.
+    databasePassword: form.askDatabasePassword ? "" : form.databasePassword,
+    sshPassword:
+      ssh && form.sshAuthMode === "password" && !form.askSshPassword
+        ? form.sshPassword
+        : "",
     sshKeyPassphrase:
-      ssh && form.sshAuthMode === "key" ? form.sshKeyPassphrase : "",
+      ssh && form.sshAuthMode === "key" && !form.askSshKeyPassphrase
+        ? form.sshKeyPassphrase
+        : "",
   };
 }
 
@@ -205,6 +255,27 @@ async function save() {
           :error="fields.environment"
         />
       </div>
+      <div class="grid grid-cols-2 gap-3">
+        <TextInput
+          v-model="form.groupName"
+          label="Group"
+          placeholder="Work"
+          :error="fields.groupName"
+          hint="Leave empty to keep it with its environment."
+        />
+        <SelectInput
+          v-model="form.colour"
+          label="Colour"
+          :options="COLOURS"
+          :error="fields.colour"
+          hint="Overrides the environment colour."
+        />
+      </div>
+      <SafetyFields
+        v-model:form="form"
+        :fields="fields"
+        @changed="safeModeTouched = true"
+      />
       <DatabaseFields
         v-model:form="form"
         :fields="fields"
@@ -218,6 +289,40 @@ async function save() {
         :has-saved-password="!!editingProfile?.hasSshPassword"
         :has-saved-passphrase="!!editingProfile?.hasSshKeyPassphrase"
       />
+      <TextInput
+        v-model="form.startupCommands"
+        label="Startup commands"
+        multiline
+        :rows="3"
+        mono
+        placeholder="SET search_path = my_schema&#10;SET time_zone = 'UTC'"
+        :error="fields.startupCommands"
+        :hint="
+          form.safeMode === 'read-only'
+            ? 'One per line. A read-only connection only accepts SET or USE, because these run on every new session.'
+            : 'One per line. Run on every new session for this connection, including each query tab. If one fails, the connection is not opened.'
+        "
+      />
+      <div class="grid grid-cols-2 gap-3">
+        <TextInput
+          v-model="form.queryTimeoutSeconds"
+          label="Query timeout"
+          input-mode="numeric"
+          mono
+          placeholder="0"
+          :error="fields.queryTimeoutSeconds"
+          :hint="`0 uses the app default (${describeLimit(settings.queryTimeoutSeconds, 'seconds')}).`"
+        />
+        <TextInput
+          v-model="form.maxResultRows"
+          label="Rows kept per result"
+          input-mode="numeric"
+          mono
+          placeholder="0"
+          :error="fields.maxResultRows"
+          :hint="`0 uses the app default (${describeLimit(settings.maxResultRows, 'rows')}).`"
+        />
+      </div>
       <ConnectionTestResult v-if="testResult" :result="testResult" />
     </form>
     <template #footer>

@@ -1,10 +1,11 @@
 use super::{
     Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
     ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
-    quote,
+    quote, values,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
+use sqlx::postgres::PgRow;
 use sqlx::{
     AssertSqlSafe, Column, ConnectOptions, Connection, Either, Row, TypeInfo,
     postgres::{PgConnectOptions, PgConnection, PgSslMode},
@@ -17,6 +18,94 @@ pub struct PgSession {
     backend_pid: i32,
     host: String,
     port: u16,
+}
+
+/// One cell of a bound query's result, as the grid shows it.
+///
+/// A bound statement goes through the prepared protocol, which returns values
+/// typed rather than as text, so each column is read as its own type and
+/// rendered here. `NUMERIC` is the reason this cannot simply be a string:
+/// reading it as a float would quietly drop digits the grid exists to show
+/// exactly.
+///
+/// A type that is not listed is an error naming it, never a blank cell. The
+/// text path degrades a failed read to NULL, which is right there because the
+/// simple protocol hands back everything as text and there is nothing to
+/// misread; here it would hide a value the user asked to see.
+fn bound_cell(row: &PgRow, index: usize, type_name: &str) -> Result<Cell, AppError> {
+    let unsupported = || {
+        AppError::new(
+            "unsupported_type",
+            format!("A column of type {type_name} cannot be shown in a bound query."),
+        )
+    };
+    macro_rules! as_text {
+        ($type:ty, $render:expr) => {
+            row.try_get::<Option<$type>, _>(index)
+                .map(|value| match value {
+                    Some(value) => Cell::Value(($render)(value)),
+                    None => Cell::Null,
+                })
+                .map_err(|_| unsupported())
+        };
+    }
+    match type_name {
+        "BOOL" => as_text!(bool, |value: bool| {
+            if value {
+                "t".to_string()
+            } else {
+                "f".to_string()
+            }
+        }),
+        "INT2" => as_text!(i16, |value: i16| value.to_string()),
+        "INT4" => as_text!(i32, |value: i32| value.to_string()),
+        "INT8" => as_text!(i64, |value: i64| value.to_string()),
+        "FLOAT4" => as_text!(f32, |value: f32| value.to_string()),
+        "FLOAT8" => as_text!(f64, |value: f64| value.to_string()),
+        // Trailing zeros are dropped, because the simple protocol drops them
+        // too: a bound query has to show what an unbound one shows, or the
+        // same column reads differently depending on whether it had a
+        // parameter. No digit that is not there is added or lost.
+        "NUMERIC" => as_text!(sqlx::types::BigDecimal, |value: sqlx::types::BigDecimal| {
+            let text = value.to_string();
+            if !text.contains('.') {
+                return text;
+            }
+            let trimmed = text.trim_end_matches('0');
+            trimmed.trim_end_matches('.').to_string()
+        }),
+        "TEXT" | "VARCHAR" | "BPCHAR" | "CHAR" | "NAME" | "CITEXT" | "UNKNOWN" => row
+            .try_get::<Option<String>, _>(index)
+            .map(|value| match value {
+                Some(text) => Cell::Value(text),
+                None => Cell::Null,
+            })
+            .map_err(|_| unsupported()),
+        "JSON" | "JSONB" => as_text!(serde_json::Value, |value: serde_json::Value| value
+            .to_string()),
+        "UUID" => as_text!(sqlx::types::Uuid, |value: sqlx::types::Uuid| value
+            .to_string()),
+        "DATE" => as_text!(chrono::NaiveDate, |value: chrono::NaiveDate| value
+            .to_string()),
+        "TIME" => as_text!(chrono::NaiveTime, |value: chrono::NaiveTime| value
+            .to_string()),
+        "TIMESTAMP" => as_text!(chrono::NaiveDateTime, |value: chrono::NaiveDateTime| value
+            .to_string()),
+        "TIMESTAMPTZ" => as_text!(chrono::DateTime<chrono::Utc>, |value: chrono::DateTime<
+            chrono::Utc,
+        >| value.to_string()),
+        "BYTEA" => row
+            .try_get::<Option<Vec<u8>>, _>(index)
+            .map(|value| match value {
+                Some(bytes) => Cell::binary(&bytes),
+                None => Cell::Null,
+            })
+            .map_err(|_| unsupported()),
+        other => Err(AppError::new(
+            "unsupported_type",
+            format!("A column of type {other} cannot be shown in a bound query."),
+        )),
+    }
 }
 
 impl PgSession {
@@ -75,6 +164,10 @@ impl DatabaseSession for PgSession {
         }
         if let Some(ca) = &params.ca_path {
             options = options.ssl_root_cert(ca);
+        }
+        // Mutual TLS: present this certificate and key to the server.
+        if let (Some(cert), Some(key)) = (&params.client_cert, &params.client_key) {
+            options = options.ssl_client_cert(cert).ssl_client_key(key);
         }
         let connection = options
             .connect()
@@ -144,68 +237,128 @@ impl DatabaseSession for PgSession {
         Ok(first_column(result))
     }
 
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::Postgres, &host, self.port);
+        // Bound, so the prepared protocol: the values never touch the text.
+        let mut query = sqlx::query(AssertSqlSafe(sql.to_owned()));
+        for param in params {
+            query = match param {
+                values::Param::Text(text) => query.bind(text.clone()),
+                values::Param::Number(text) => {
+                    // Exact: an integer as int8, anything else as NUMERIC.
+                    if let Ok(integer) = text.trim().parse::<i64>() {
+                        query.bind(integer)
+                    } else {
+                        match text.trim().parse::<sqlx::types::BigDecimal>() {
+                            Ok(decimal) => query.bind(decimal),
+                            Err(_) => {
+                                return Err(AppError::new(
+                                    "invalid_parameter",
+                                    format!("“{text}” isn't a number."),
+                                ));
+                            }
+                        }
+                    }
+                }
+                values::Param::Null => query.bind(Option::<String>::None),
+            };
+        }
+        let rows = query
+            .fetch_all(&mut self.connection)
+            .await
+            .map_err(|e| error::from_sqlx(e, ctx))?;
+        let mut result = QueryResult::default();
+        if let Some(first) = rows.first() {
+            result.columns = first
+                .columns()
+                .iter()
+                .map(|column| ColumnMeta {
+                    name: column.name().to_owned(),
+                    type_name: column.type_info().name().to_owned(),
+                })
+                .collect();
+        }
+        let types: Vec<String> = result
+            .columns
+            .iter()
+            .map(|column| column.type_name.clone())
+            .collect();
+        for row in rows.iter() {
+            if result.rows.len() >= max_rows {
+                result.truncated = true;
+                break;
+            }
+            let mut cells = Vec::with_capacity(types.len());
+            for (index, type_name) in types.iter().enumerate() {
+                cells.push(bound_cell(row, index, type_name)?);
+            }
+            result.rows.push(cells);
+        }
+        if !result.columns.is_empty() {
+            result.rows_affected = None;
+        }
+        Ok(result)
+    }
+
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError> {
         let host = self.host.clone();
         let ctx = error::session_context(Engine::Postgres, &host, self.port);
         // The simple query protocol returns every value as text, which is
-        // exactly what the results grid shows.
+        // exactly what the results grid shows. Every row set is kept.
         let mut stream =
             sqlx::raw_sql(AssertSqlSafe(sql.to_owned())).fetch_many(&mut self.connection);
-        let mut result = QueryResult::default();
-        let mut row_sets = 0usize;
-        let mut in_row_set = false;
         while let Some(item) = stream
             .try_next()
             .await
             .map_err(|e| error::from_sqlx(e, ctx))?
         {
+            let mut sink = sink.lock().expect("row sink");
             match item {
                 Either::Left(done) => {
-                    in_row_set = false;
-                    *result.rows_affected.get_or_insert(0) += done.rows_affected();
+                    if sink.is_open() {
+                        sink.end();
+                    } else {
+                        sink.affected(done.rows_affected());
+                    }
                 }
                 Either::Right(row) => {
-                    if !in_row_set {
-                        in_row_set = true;
-                        row_sets += 1;
+                    if !sink.is_open() {
+                        sink.begin(
+                            row.columns()
+                                .iter()
+                                .map(|c| ColumnMeta {
+                                    name: c.name().to_owned(),
+                                    type_name: c.type_info().name().to_owned(),
+                                })
+                                .collect(),
+                        );
                     }
-                    if row_sets > 1 {
-                        continue;
+                    if sink.wants_row() {
+                        sink.push(
+                            (0..row.len())
+                                .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
+                                    Ok(Some(text)) => Cell::Value(text),
+                                    Ok(None) => Cell::Null,
+                                    Err(_) => {
+                                        match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+                                            Ok(Some(bytes)) => Cell::binary(&bytes),
+                                            _ => Cell::Null,
+                                        }
+                                    }
+                                })
+                                .collect(),
+                        );
                     }
-                    if result.columns.is_empty() {
-                        result.columns = row
-                            .columns()
-                            .iter()
-                            .map(|c| ColumnMeta {
-                                name: c.name().to_owned(),
-                                type_name: c.type_info().name().to_owned(),
-                            })
-                            .collect();
-                    }
-                    if result.rows.len() >= max_rows {
-                        result.truncated = true;
-                        break;
-                    }
-                    result.rows.push(
-                        (0..row.len())
-                            .map(|i| match row.try_get_unchecked::<Option<String>, _>(i) {
-                                Ok(Some(text)) => Cell::Value(text),
-                                Ok(None) => Cell::Null,
-                                Err(_) => match row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
-                                    Ok(Some(bytes)) => Cell::binary(&bytes),
-                                    _ => Cell::Null,
-                                },
-                            })
-                            .collect(),
-                    );
                 }
             }
         }
-        result.extra_result_sets = row_sets.saturating_sub(1);
-        if !result.columns.is_empty() {
-            result.rows_affected = None;
-        }
-        Ok(result)
+        Ok(())
     }
 
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {

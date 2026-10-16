@@ -1,13 +1,15 @@
 //! Saved connection profiles: metadata in SQLite, secrets in the OS credential store.
 
 mod repository;
+pub mod transfer;
 mod validation;
 
 use serde::{Deserialize, Serialize};
 
 pub use repository::{
-    connect_params, connect_params_for_input, create_profile, delete_profile, duplicate_profile,
-    list_profiles, mark_connected, select_profile, update_validated_profile,
+    apply_one_off_secrets, connect_params, connect_params_for_input, create_profile,
+    delete_profile, duplicate_profile, list_profiles, mark_connected, reorder_profiles,
+    required_secret, select_profile, update_validated_profile,
 };
 pub use validation::{ValidatedProfile, validate};
 
@@ -27,6 +29,9 @@ pub struct ConnectionProfile {
     pub tls_mode: String,
     /// Custom CA certificate used with "verify-full"; empty for system roots.
     pub tls_ca_path: String,
+    /// Client certificate and key for mutual TLS, as file paths.
+    pub tls_client_cert: String,
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: u16,
@@ -39,6 +44,25 @@ pub struct ConnectionProfile {
     pub has_database_password: bool,
     pub has_ssh_password: bool,
     pub has_ssh_key_passphrase: bool,
+    /// "off", "confirm-writes", "confirm-everything" or "read-only".
+    pub safe_mode: String,
+    /// User-named group, or "" to stay in its environment group.
+    pub group_name: String,
+    /// Tag token name for a custom colour, or "" to use the environment's.
+    pub colour: String,
+    /// Manual order inside the group; ties fall back to the name.
+    pub sort_order: i64,
+    /// Secrets the user types at connect time instead of keeping saved.
+    pub ask_database_password: bool,
+    pub ask_ssh_password: bool,
+    pub ask_ssh_key_passphrase: bool,
+    /// Keep-alive interval for this connection's SSH session; 0 is the default.
+    pub ssh_keepalive_seconds: u32,
+    /// Statements run on every new session, one per line.
+    pub startup_commands: String,
+    /// Per-connection overrides; 0 means "use the app default".
+    pub query_timeout_seconds: u64,
+    pub max_result_rows: u64,
     pub created_at: String,
     pub updated_at: String,
     pub last_connected_at: Option<String>,
@@ -46,6 +70,10 @@ pub struct ConnectionProfile {
 
 fn default_tls_mode() -> String {
     "verify-full".into()
+}
+
+fn default_safe_mode() -> String {
+    "off".into()
 }
 
 fn default_ssh_auth_mode() -> String {
@@ -66,6 +94,10 @@ pub struct ProfileInput {
     pub tls_mode: String,
     #[serde(default)]
     pub tls_ca_path: String,
+    #[serde(default)]
+    pub tls_client_cert: String,
+    #[serde(default)]
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: String,
@@ -86,6 +118,28 @@ pub struct ProfileInput {
     pub ssh_key_passphrase: Option<String>,
     #[serde(default)]
     pub clear_ssh_key_passphrase: bool,
+    #[serde(default = "default_safe_mode")]
+    pub safe_mode: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub colour: String,
+    #[serde(default)]
+    pub ask_database_password: bool,
+    #[serde(default)]
+    pub ask_ssh_password: bool,
+    #[serde(default)]
+    pub ask_ssh_key_passphrase: bool,
+    /// Keep-alive interval in seconds; 0 uses the default.
+    #[serde(default)]
+    pub ssh_keepalive_seconds: String,
+    #[serde(default)]
+    pub startup_commands: String,
+    /// Overrides the app default; "0" means use it.
+    #[serde(default)]
+    pub query_timeout_seconds: String,
+    #[serde(default)]
+    pub max_result_rows: String,
 }
 
 #[derive(Debug, Serialize)]

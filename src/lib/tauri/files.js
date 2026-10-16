@@ -30,6 +30,30 @@ export async function pickSshKey() {
   return typeof path === "string" ? path : null;
 }
 
+/** Native picker for a TLS client certificate (PEM or DER). */
+export async function pickClientCertificate() {
+  const path = await open({
+    title: "Choose Client Certificate",
+    multiple: false,
+    directory: false,
+    filters: [
+      { name: "Certificates", extensions: ["pem", "crt", "cer", "der"] },
+    ],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Native picker for the private key that matches a client certificate. */
+export async function pickClientKey() {
+  const path = await open({
+    title: "Choose Client Private Key",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Private keys", extensions: ["pem", "key", "der"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
 /** Native save dialog for a CSV export. Resolves to a path or null. */
 export async function pickCsvDestination(defaultName) {
   const path = await save({
@@ -40,7 +64,62 @@ export async function pickCsvDestination(defaultName) {
   return typeof path === "string" ? path : null;
 }
 
+/** The formats a table or result can be written out as, with extensions. */
+export const EXPORT_FORMATS = [
+  { value: "csv", label: "CSV", extension: "csv" },
+  { value: "tsv", label: "TSV (tab-separated)", extension: "csv" },
+  { value: "json", label: "JSON", extension: "json" },
+  { value: "markdown", label: "Markdown table", extension: "md" },
+  { value: "sqlInsert", label: "SQL INSERT statements", extension: "sql" },
+  { value: "sqlUpdate", label: "SQL UPDATE statements", extension: "sql" },
+  { value: "xlsx", label: "Excel workbook (.xlsx)", extension: "xlsx" },
+];
+
+/**
+ * Native save dialog for an export. `format` picks the default extension, so
+ * the file the user chooses is the kind they asked for.
+ */
+export async function pickExportDestination(defaultName, extension = "csv") {
+  const path = await save({
+    title: "Export",
+    defaultPath: `${defaultName.replace(/[\\/:*?"<>|]/g, "_")}.${extension}`,
+  });
+  return typeof path === "string" ? path : null;
+}
+
 /** Reveals a file in Finder, File Explorer or the Linux file manager. */
 export function showInFileManager(path) {
   return revealItemInDir(path);
+}
+
+/** Save dialog for a connections export (.json). */
+export async function pickConnectionsExport() {
+  const path = await save({
+    title: "Export Connections",
+    defaultPath: "thabi-connections.json",
+    filters: [{ name: "Connections", extensions: ["json"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Open dialog for a connections export to import. */
+export async function pickConnectionsImport() {
+  const path = await open({
+    title: "Import Connections",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Connections", extensions: ["json"] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Open dialog for a .sql file. */
+export async function pickSqlFile(title = "Open SQL File") {
+  const path = await open({
+    title,
+    multiple: false,
+    directory: false,
+    filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+  });
+  return typeof path === "string" ? path : null;
 }

@@ -1,7 +1,7 @@
 use super::{
     Capabilities, Cell, ColumnMeta, ConnectParams, DatabaseSession, DbObject, Engine, ObjectKind,
     ObjectStructure, QueryResult, ServerInfo, TextRows, TlsMode, error, first_column, metadata,
-    quote,
+    quote, values,
 };
 use crate::errors::AppError;
 use futures_util::TryStreamExt;
@@ -56,6 +56,15 @@ impl DatabaseSession for SqlServerSession {
                 config.trust_cert();
             }
             TlsMode::Off => config.encryption(EncryptionLevel::NotSupported),
+        }
+
+        // Mutual TLS: Tiberius reads PEM or DER files with the rustls backend
+        // this build uses. Required by TDS 8.0 strict connections.
+        if let (Some(cert), Some(key)) = (&params.client_cert, &params.client_key) {
+            config.client_certificate(
+                cert.to_string_lossy().into_owned(),
+                key.to_string_lossy().into_owned(),
+            );
         }
 
         // Through a tunnel, TCP goes to the local end while TLS still checks
@@ -123,53 +132,55 @@ impl DatabaseSession for SqlServerSession {
         Ok(first_column(result))
     }
 
-    async fn execute(&mut self, sql: &str, max_rows: usize) -> Result<QueryResult, AppError> {
+    /// Not yet: binding needs the prepared protocol, which returns typed
+    /// values rather than text, and this engine's grid values come from the
+    /// simple protocol on purpose. Saying so is better than running the
+    /// statement with the values missing.
+    async fn execute_bound(
+        &mut self,
+        sql: &str,
+        params: &[values::Param],
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
         let host = self.host.clone();
         let ctx = error::session_context(Engine::SqlServer, &host, self.port);
-        let mut stream = self
+        // `@p1`, `@p2`… are bound through sp_executesql: the values never
+        // become part of the statement. Rows come back typed, exactly as the
+        // simple path's do, so both share one reader.
+        let mut query = tiberius::Query::new(sql.to_owned());
+        for param in params {
+            match param {
+                values::Param::Text(text) => query.bind(text.clone()),
+                values::Param::Number(text) => match numeric(text) {
+                    Some(value) => query.bind(value),
+                    None => {
+                        return Err(AppError::new(
+                            "invalid_parameter",
+                            format!("“{text}” isn't a number."),
+                        ));
+                    }
+                },
+                values::Param::Null => query.bind(Option::<String>::None),
+            }
+        }
+        let stream = query
+            .query(&mut self.client)
+            .await
+            .map_err(|e| error::from_tiberius(e, ctx))?;
+        let sink = values::RowSink::shared(max_rows);
+        read_stream(stream, &sink, ctx).await?;
+        Ok(sink.lock().expect("row sink").take())
+    }
+
+    async fn execute_into(&mut self, sql: &str, sink: &values::SharedSink) -> Result<(), AppError> {
+        let host = self.host.clone();
+        let ctx = error::session_context(Engine::SqlServer, &host, self.port);
+        let stream = self
             .client
             .simple_query(sql)
             .await
             .map_err(|e| error::from_tiberius(e, ctx))?;
-        let mut result = QueryResult::default();
-        let mut row_sets = 0usize;
-        // Tiberius needs the stream read to the end before the next query,
-        // so rows past the limit are read and dropped.
-        while let Some(item) = stream
-            .try_next()
-            .await
-            .map_err(|e| error::from_tiberius(e, ctx))?
-        {
-            match item {
-                QueryItem::Metadata(meta) => {
-                    row_sets += 1;
-                    if row_sets == 1 {
-                        result.columns = meta
-                            .columns()
-                            .iter()
-                            .map(|c| ColumnMeta {
-                                name: c.name().to_owned(),
-                                type_name: format!("{:?}", c.column_type()),
-                            })
-                            .collect();
-                    }
-                }
-                QueryItem::Row(row) => {
-                    if row_sets > 1 {
-                        continue;
-                    }
-                    if result.rows.len() >= max_rows {
-                        result.truncated = true;
-                        continue;
-                    }
-                    result
-                        .rows
-                        .push(row.into_iter().map(|data| cell(&data)).collect());
-                }
-            }
-        }
-        result.extra_result_sets = row_sets.saturating_sub(1);
-        Ok(result)
+        read_stream(stream, sink, ctx).await
     }
 
     async fn query_text(&mut self, sql: &str, params: &[&str]) -> Result<TextRows, AppError> {
@@ -386,5 +397,73 @@ mod tests {
             cell(&ColumnData::Binary(Some(Cow::Owned(vec![1, 2, 3])))),
             Cell::Binary { bytes: 3, .. }
         ));
+    }
+}
+
+/// A decimal string as a SQL Server NUMERIC, keeping every digit.
+fn numeric(text: &str) -> Option<tiberius::numeric::Numeric> {
+    let text = text.trim();
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if fraction.len() > 37 || !fraction.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let value: i128 = format!("{whole}{fraction}").parse().ok()?;
+    Some(tiberius::numeric::Numeric::new_with_scale(
+        value,
+        fraction.len() as u8,
+    ))
+}
+
+/// Reads a result stream into the sink: every row set is kept. Tiberius
+/// needs the stream read to the end before the next query, so rows past the
+/// limit are read and dropped.
+async fn read_stream(
+    mut stream: tiberius::QueryStream<'_>,
+    sink: &values::SharedSink,
+    ctx: error::Context<'_>,
+) -> Result<(), AppError> {
+    while let Some(item) = stream
+        .try_next()
+        .await
+        .map_err(|e| error::from_tiberius(e, ctx))?
+    {
+        let mut sink = sink.lock().expect("row sink");
+        match item {
+            QueryItem::Metadata(meta) => {
+                if sink.is_open() {
+                    sink.end();
+                }
+                sink.begin(
+                    meta.columns()
+                        .iter()
+                        .map(|c| ColumnMeta {
+                            name: c.name().to_owned(),
+                            type_name: format!("{:?}", c.column_type()),
+                        })
+                        .collect(),
+                );
+            }
+            QueryItem::Row(row) => {
+                if sink.wants_row() {
+                    sink.push(row.into_iter().map(|data| cell(&data)).collect());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod numeric_tests {
+    use super::numeric;
+
+    #[test]
+    fn decimals_keep_every_digit() {
+        let n = numeric("12345678901234567890.125").unwrap();
+        assert_eq!(n.value(), 12345678901234567890125);
+        assert_eq!(n.scale(), 3);
+        assert_eq!(numeric("-7").unwrap().value(), -7);
+        assert!(numeric("1e5").is_none());
+        assert!(numeric("abc").is_none());
     }
 }

@@ -9,7 +9,7 @@
 //! window.
 
 use tauri::{
-    AppHandle, Emitter, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
     menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, Submenu, SubmenuBuilder},
 };
 
@@ -51,6 +51,26 @@ fn file_items<'a, R: Runtime>(
             "Switch Connection…",
             Some("CmdOrCtrl+Shift+K"),
         )?)
+        .item(&item(
+            app,
+            "app.newWindow",
+            "New Window",
+            Some("CmdOrCtrl+Shift+N"),
+        )?)
+        .separator()
+        .item(&item(
+            app,
+            "connections.import",
+            "Import Connections…",
+            None,
+        )?)
+        .item(&item(
+            app,
+            "connections.export",
+            "Export Connections…",
+            None,
+        )?)
+        .separator()
         .item(&item(
             app,
             "tabs.newQuery",
@@ -158,6 +178,33 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 "Cancel Query",
                 Some("CmdOrCtrl+."),
             )?)
+            .separator()
+            .item(&item(
+                app,
+                "query.explain",
+                "Explain Query",
+                Some("CmdOrCtrl+Shift+E"),
+            )?)
+            .item(&item(
+                app,
+                "query.format",
+                "Format SQL",
+                Some("CmdOrCtrl+I"),
+            )?)
+            .item(&item(app, "query.minify", "Minify SQL", None)?)
+            .item(&item(app, "query.runFile", "Run SQL File…", None)?)
+            .item(&item(
+                app,
+                "query.openFile",
+                "Open SQL File…",
+                Some("CmdOrCtrl+O"),
+            )?)
+            .item(&item(
+                app,
+                "query.split",
+                "Split Editor",
+                Some("CmdOrCtrl+Shift+D"),
+            )?)
             .build()?,
     );
     #[cfg(target_os = "macos")]
@@ -185,7 +232,29 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     MenuBuilder::new(app).items(&refs).build()
 }
 
-/// Forwards custom menu items to the frontend command registry.
+/// Forwards custom menu items to the frontend command registry of the
+/// focused window only, so New Query Tab doesn't open a tab in every window.
+/// "New Window" is handled here, since no window owns it.
 pub fn handle_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
-    let _ = app.emit("menu-command", id);
+    if id == "app.newWindow" {
+        let _ = crate::windows::open_workspace(app);
+        return;
+    }
+    let focused = app
+        .webview_windows()
+        .into_iter()
+        .find(|(_, window)| window.is_focused().unwrap_or(false))
+        .map(|(label, _)| label);
+    let _ = match focused {
+        Some(label) => app.emit_to(
+            tauri::EventTarget::webview_window(label),
+            "menu-command",
+            id,
+        ),
+        None => app.emit_to(
+            tauri::EventTarget::webview_window("main"),
+            "menu-command",
+            id,
+        ),
+    };
 }

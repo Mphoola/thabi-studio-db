@@ -128,3 +128,55 @@ describe("SSH sign-in", () => {
     );
   });
 });
+
+describe("ask every time", () => {
+  const base = {
+    name: "Prod",
+    environment: "production",
+    driver: "postgres",
+    host: "db.example.com",
+    port: "5432",
+    username: "app",
+    tlsMode: "verify-full",
+  };
+
+  it("accepts asking instead of saving", () => {
+    expect(
+      validateConnectionProfile({
+        ...base,
+        askDatabasePassword: true,
+        askSshPassword: true,
+        askSshKeyPassphrase: true,
+        sshKeepaliveSeconds: "0",
+      }),
+    ).toEqual({});
+  });
+
+  it("rejects a typed secret while asking for it", () => {
+    const errors = validateConnectionProfile({
+      ...base,
+      askDatabasePassword: true,
+      databasePassword: "typed",
+    });
+    expect(errors.databasePassword).toMatch(/not both/);
+  });
+
+  it("checks the keep-alive range", () => {
+    expect(
+      validateConnectionProfile({ ...base, sshKeepaliveSeconds: "" })
+        .sshKeepaliveSeconds,
+    ).toBeUndefined();
+    expect(
+      validateConnectionProfile({ ...base, sshKeepaliveSeconds: "30" })
+        .sshKeepaliveSeconds,
+    ).toBeUndefined();
+    expect(
+      validateConnectionProfile({ ...base, sshKeepaliveSeconds: "99999" })
+        .sshKeepaliveSeconds,
+    ).toMatch(/3,600/);
+    expect(
+      validateConnectionProfile({ ...base, sshKeepaliveSeconds: "-1" })
+        .sshKeepaliveSeconds,
+    ).toBeDefined();
+  });
+});

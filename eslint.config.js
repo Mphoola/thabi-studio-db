@@ -21,6 +21,14 @@ export default [
       // updates (tab.sql, tab.database) are intended.
       "vue/no-mutating-props": ["error", { shallowOnly: true }],
       "no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      // A declaration read before it exists throws at runtime with "Cannot
+      // access 'x' before initialization", which no unit test sees and the
+      // build does not catch. Function declarations are hoisted, so they are
+      // fine to use early.
+      "no-use-before-define": [
+        "error",
+        { functions: false, classes: true, variables: true },
+      ],
     },
   },
   {

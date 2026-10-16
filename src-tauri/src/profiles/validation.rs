@@ -12,6 +12,8 @@ pub struct ValidatedProfile {
     pub username: String,
     pub tls_mode: String,
     pub tls_ca_path: String,
+    pub tls_client_cert: String,
+    pub tls_client_key: String,
     pub ssh_enabled: bool,
     pub ssh_host: String,
     pub ssh_port: u16,
@@ -24,7 +26,71 @@ pub struct ValidatedProfile {
     pub clear_database_password: bool,
     pub clear_ssh_password: bool,
     pub clear_ssh_key_passphrase: bool,
+    pub safe_mode: String,
+    pub group_name: String,
+    pub colour: String,
+    pub ask_database_password: bool,
+    pub ask_ssh_password: bool,
+    pub ask_ssh_key_passphrase: bool,
+    pub ssh_keepalive_seconds: u32,
+    /// The user's lines, normalised, for storing back on the profile.
+    pub startup_commands: String,
+    pub query_timeout_seconds: u64,
+    pub max_result_rows: u64,
 }
+
+/// Longest a connection's startup command list may be.
+const MAX_STARTUP_COMMANDS: usize = 20;
+const MAX_STARTUP_CHARS: usize = 4_000;
+
+/// Splits the user's lines into statements, dropping blanks.
+///
+/// A read-only connection may only carry session-level statements, so this
+/// also rejects anything that looks like it changes the server. This is the
+/// app-level half of read-only; the session setting is the other.
+pub fn startup_commands(text: &str, read_only: bool) -> Result<Vec<String>, String> {
+    let commands: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if commands.len() > MAX_STARTUP_COMMANDS {
+        return Err("Use 20 startup commands or fewer.".into());
+    }
+    if text.chars().count() > MAX_STARTUP_CHARS {
+        return Err("Use 4,000 characters or fewer.".into());
+    }
+    for command in &commands {
+        if command.chars().any(|c| c.is_control() && c != '\t') {
+            return Err("Remove the line break inside this startup command.".into());
+        }
+        // Session settings and database switches can't change data on any
+        // engine; anything else might, so read-only stops here.
+        if read_only && !is_session_only(command) {
+            return Err(
+                "A read-only connection can only start with SET or USE commands, because they run on every session."
+                    .into(),
+            );
+        }
+    }
+    Ok(commands)
+}
+
+/// Whether a statement only changes this session's settings.
+fn is_session_only(command: &str) -> bool {
+    let keyword = command
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    matches!(keyword.as_str(), "SET" | "USE" | "BEGIN" | "RESET")
+}
+
+/// Tag tokens a connection may be coloured with (`tag-*` in tokens.css).
+pub const COLOURS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray",
+];
 
 /// Largest CA certificate file accepted (a bundle is a few hundred KB at most).
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
@@ -86,6 +152,39 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         String::new()
     };
 
+    // Mutual TLS needs both halves and both files; half a pair is a mistake
+    // that would otherwise surface as a confusing handshake error.
+    let tls_client_cert = input.tls_client_cert.trim().to_owned();
+    let tls_client_key = input.tls_client_key.trim().to_owned();
+    if tls_mode == "disable" && !(tls_client_cert.is_empty() && tls_client_key.is_empty()) {
+        fields.insert(
+            "tlsClientCert".into(),
+            "Turn TLS on to use a client certificate.".into(),
+        );
+    } else {
+        match (tls_client_cert.is_empty(), tls_client_key.is_empty()) {
+            (true, true) => {}
+            (false, false) => {
+                if let Err(message) = check_key_file(&tls_client_cert) {
+                    fields.insert("tlsClientCert".into(), message.into());
+                }
+                if let Err(message) = check_key_file(&tls_client_key) {
+                    fields.insert("tlsClientKey".into(), message.into());
+                }
+            }
+            _ => {
+                fields.insert(
+                    "tlsClientCert".into(),
+                    "Choose both a client certificate and its private key.".into(),
+                );
+                fields.insert(
+                    "tlsClientKey".into(),
+                    "Choose both a client certificate and its private key.".into(),
+                );
+            }
+        }
+    }
+
     let mut ssh_host = input.ssh_host.trim().to_owned();
     let ssh_username = input.ssh_username.trim().to_owned();
     let ssh_port = if input.ssh_enabled {
@@ -110,6 +209,30 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
     let ssh_auth_mode = input.ssh_auth_mode.trim().to_owned();
     if !matches!(ssh_auth_mode.as_str(), "password" | "key" | "agent") {
         fields.insert("sshAuthMode".into(), "Choose how to sign in to SSH.".into());
+    }
+    let safe_mode = input.safe_mode.trim().to_owned();
+    if !matches!(
+        safe_mode.as_str(),
+        "off" | "confirm-writes" | "confirm-everything" | "read-only"
+    ) {
+        fields.insert("safeMode".into(), "Choose a safe mode.".into());
+    }
+
+    // The group name is shown as a heading and compared case-insensitively,
+    // so it only needs to be short, single-line and free of control characters.
+    let group_name = input.group_name.trim().to_owned();
+    if group_name.chars().count() > 60 || group_name.chars().any(char::is_control) {
+        fields.insert(
+            "groupName".into(),
+            "Use a group name of 60 characters or fewer.".into(),
+        );
+    }
+    let colour = input.colour.trim().to_owned();
+    if !colour.is_empty() && !COLOURS.contains(&colour.as_str()) {
+        fields.insert(
+            "colour".into(),
+            "Choose one of the available colours.".into(),
+        );
     }
     let ssh_key_path = if ssh_auth_mode == "key" {
         let path = input.ssh_key_path.trim().to_owned();
@@ -162,6 +285,62 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         );
     }
 
+    let ssh_keepalive_seconds = match input.ssh_keepalive_seconds.trim() {
+        "" => 0,
+        value => match value.parse::<u32>() {
+            Ok(seconds) if seconds <= 3600 => seconds,
+            _ => {
+                fields.insert(
+                    "sshKeepaliveSeconds".into(),
+                    "Choose a keep-alive from 0 to 3,600 seconds, or 0 for the default.".into(),
+                );
+                0
+            }
+        },
+    };
+
+    // A secret that is asked for every time is never kept, so a typed or
+    // saved one has to be removed rather than quietly stored alongside.
+    let (database_password, ask_database_password) = if input.ask_database_password {
+        (None, true)
+    } else {
+        (input.database_password.filter(|v| !v.is_empty()), false)
+    };
+    let (ssh_password, ask_ssh_password) = if input.ask_ssh_password {
+        (None, true)
+    } else {
+        (input.ssh_password.filter(|v| !v.is_empty()), false)
+    };
+    let (ssh_key_passphrase, ask_ssh_key_passphrase) = if input.ask_ssh_key_passphrase {
+        (None, true)
+    } else {
+        (input.ssh_key_passphrase.filter(|v| !v.is_empty()), false)
+    };
+
+    let query_timeout_seconds = bound_limit(
+        &input.query_timeout_seconds,
+        "queryTimeoutSeconds",
+        24 * 60 * 60,
+        "Choose a query timeout from 0 to 86,400 seconds, or 0 for the app default.",
+        &mut fields,
+    );
+    let max_result_rows = bound_limit(
+        &input.max_result_rows,
+        "maxResultRows",
+        1_000_000,
+        "Choose how many rows to keep, from 0 to 1,000,000, or 0 for the app default.",
+        &mut fields,
+    );
+
+    let read_only = input.safe_mode.trim() == "read-only";
+    let startup = match startup_commands(&input.startup_commands, read_only) {
+        Ok(commands) => commands,
+        Err(message) => {
+            fields.insert("startupCommands".into(), message);
+            Vec::new()
+        }
+    };
+
     if !fields.is_empty() {
         return Err(AppError::validation(fields));
     }
@@ -176,19 +355,51 @@ pub fn validate(input: super::ProfileInput) -> Result<ValidatedProfile, AppError
         username,
         tls_mode,
         tls_ca_path,
+        tls_client_cert,
+        tls_client_key,
         ssh_enabled: input.ssh_enabled,
         ssh_host,
         ssh_port,
         ssh_username,
         ssh_auth_mode,
         ssh_key_path,
-        database_password: input.database_password.filter(|value| !value.is_empty()),
-        ssh_password: input.ssh_password.filter(|value| !value.is_empty()),
-        ssh_key_passphrase: input.ssh_key_passphrase.filter(|value| !value.is_empty()),
+        database_password,
+        ssh_password,
+        ssh_key_passphrase,
+        ask_database_password,
+        ask_ssh_password,
+        ask_ssh_key_passphrase,
+        ssh_keepalive_seconds,
+        startup_commands: startup.join("\n"),
+        query_timeout_seconds,
+        max_result_rows,
         clear_database_password: input.clear_database_password,
         clear_ssh_password: input.clear_ssh_password,
         clear_ssh_key_passphrase: input.clear_ssh_key_passphrase,
+        safe_mode,
+        group_name,
+        colour,
     })
+}
+
+/// A numeric override: empty or "0" means "use the app default".
+fn bound_limit(
+    value: &str,
+    field: &str,
+    max: u64,
+    message: &'static str,
+    fields: &mut BTreeMap<String, String>,
+) -> u64 {
+    match value.trim() {
+        "" => 0,
+        text => match text.parse::<u64>() {
+            Ok(number) if number <= max => number,
+            _ => {
+                fields.insert(field.into(), message.into());
+                0
+            }
+        },
+    }
 }
 
 fn validate_port(value: &str, field: &str, fields: &mut BTreeMap<String, String>) -> u16 {
@@ -297,6 +508,8 @@ pub(crate) mod tests {
             username: "user".into(),
             tls_mode: "disable".into(),
             tls_ca_path: String::new(),
+            tls_client_cert: String::new(),
+            tls_client_key: String::new(),
             ssh_enabled: false,
             ssh_host: String::new(),
             ssh_port: "22".into(),
@@ -309,6 +522,16 @@ pub(crate) mod tests {
             clear_ssh_password: false,
             ssh_key_passphrase: None,
             clear_ssh_key_passphrase: false,
+            safe_mode: "off".into(),
+            group_name: String::new(),
+            colour: String::new(),
+            ask_database_password: false,
+            ask_ssh_password: false,
+            ask_ssh_key_passphrase: false,
+            ssh_keepalive_seconds: "0".into(),
+            startup_commands: String::new(),
+            query_timeout_seconds: "0".into(),
+            max_result_rows: "0".into(),
         }
     }
 
@@ -386,5 +609,38 @@ pub(crate) mod tests {
 
         with_ca.tls_mode = "require".into();
         assert_eq!(validate(with_ca).unwrap().tls_ca_path, "");
+    }
+
+    #[test]
+    fn startup_commands_are_split_and_bounded() {
+        assert!(startup_commands("", false).unwrap().is_empty());
+        let commands =
+            startup_commands("  SET search_path = x\n\n SET time_zone = 'UTC'  ", false).unwrap();
+        assert_eq!(commands, ["SET search_path = x", "SET time_zone = 'UTC'"]);
+
+        let too_many = (0..25).map(|_| "SET a = 1").collect::<Vec<_>>().join("\n");
+        assert!(startup_commands(&too_many, false).is_err());
+        assert!(startup_commands(&"x".repeat(5000), false).is_err());
+        assert!(startup_commands("SET a = 1\nSET b = \u{0007}2", false).is_err());
+    }
+
+    #[test]
+    fn a_read_only_connection_only_allows_session_statements() {
+        assert!(startup_commands("SET search_path = x", true).is_ok());
+        assert!(startup_commands("USE other_db", true).is_ok());
+        for writing in [
+            "CREATE TABLE t (id int)",
+            "INSERT INTO t VALUES (1)",
+            "DROP TABLE t",
+            "GRANT ALL ON t TO someone",
+            "DO something()",
+        ] {
+            assert!(
+                startup_commands(writing, true).is_err(),
+                "{writing} must not be allowed on a read-only connection"
+            );
+        }
+        // The same statement is fine on a connection that isn't read-only.
+        assert!(startup_commands("CREATE TABLE t (id int)", false).is_ok());
     }
 }

@@ -13,11 +13,15 @@ const tabs = ref([]);
 /** Run/cancel/focus handles registered by mounted query tabs. */
 const handles = new Map();
 const activeId = ref(null);
+/** Two query tabs shown side by side ([left, right]), or null. */
+const split = ref(null);
 let counter = 0;
 
 function newId() {
   counter += 1;
-  return `tab-${Date.now().toString(36)}-${counter}`;
+  // Unique across windows too: every tab id names its own database session.
+  const random = Math.random().toString(36).slice(2, 8);
+  return `tab-${Date.now().toString(36)}-${counter}-${random}`;
 }
 
 export function useTabs() {
@@ -87,7 +91,11 @@ export function useTabs() {
     });
   }
 
-  function openObject(node, view = "data") {
+  /**
+   * Opens a table or view. `filters` (filter bar rows) opens it already
+   * filtered, as a foreign key jump does; an open tab is re-filtered.
+   */
+  function openObject(node, view = "data", { filters = null } = {}) {
     const profileId = store.selectedProfile.value?.id ?? null;
     const existing = tabs.value.find(
       (t) =>
@@ -97,6 +105,11 @@ export function useTabs() {
     );
     if (existing) {
       existing.view = view;
+      if (filters) {
+        existing.filters = filters;
+        existing.showFilters = true;
+        existing.reloadToken = (existing.reloadToken ?? 0) + 1;
+      }
       return show(existing);
     }
     const tab = reactive({
@@ -106,6 +119,7 @@ export function useTabs() {
       profileId,
       node,
       view,
+      ...(filters ? { filters, showFilters: true } : {}),
     });
     tabs.value.push(tab);
     show(tab);
@@ -148,6 +162,7 @@ export function useTabs() {
       if (!ok) return false;
     }
     tabs.value.splice(index, 1);
+    if (split.value?.includes(id)) split.value = null;
     // Query and object tabs each have their own database session.
     if (tab.profileId) closeQueryTab(tab.profileId, tab.id).catch(() => {});
     if (activeId.value === id) {
@@ -155,6 +170,31 @@ export function useTabs() {
       activeId.value = next?.id ?? null;
     }
     return true;
+  }
+
+  /** Both split panes are visible when the active tab is one of them. */
+  const splitPanes = computed(() =>
+    split.value?.includes(activeId.value) ? split.value : null,
+  );
+
+  /**
+   * Split Editor: shows a second query tab beside the active one, on the
+   * same connection and database; again, goes back to one pane.
+   */
+  function toggleSplit() {
+    if (splitPanes.value) {
+      split.value = null;
+      return;
+    }
+    const current = active.value;
+    if (current?.type !== "query") return;
+    const other = newQuery({
+      profileId: current.profileId,
+      database: current.database,
+      activate: false,
+    });
+    split.value = [current.id, other.id];
+    activeId.value = other.id;
   }
 
   /** The active query tab's handle ({ run, cancel, focus }), if any. */
@@ -169,6 +209,8 @@ export function useTabs() {
     unregisterHandle: (id) => handles.delete(id),
     activeId,
     active,
+    splitPanes,
+    toggleSplit,
     show,
     newQuery,
     openSaved,

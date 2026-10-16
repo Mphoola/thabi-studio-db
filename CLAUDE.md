@@ -23,26 +23,16 @@ breadth. See `plan.md` §2 and §7b for scope.
 - Phase 4 (database drivers and connection lifecycle): complete. Read
   `docs/decisions/0006-connection-model.md` before touching connections.
   Remote-server verification is still open (see plan.md).
-- Phase 5 (remote connectivity and SSH tunnels): complete on branch
-  `phase-5-remote-ssh`. Read `docs/decisions/0007-ssh-tunnels.md`.
-- Phase 6 (database explorer): complete on branch `phase-6-explorer`. Read
-  `docs/decisions/0008-explorer.md`.
-- Phase 7 (SQL editor): committed on `phase-7-sql-editor`. Read
-  `docs/decisions/0009-sql-editor.md`.
-- Phase 8 (results grid): committed on `phase-8-results-grid`. Read
-  `docs/decisions/0010-results-grid.md`.
-- Connections page and table data improvements: committed on
-  `connections-and-table-data` (`docs/decisions/0011`).
-- Cross-platform support and Phase 9 (history, saved queries, recovery):
-  on `phase-9-history-saved-queries`, not committed (the user tests first).
-  Read `docs/decisions/0012-cross-platform.md` and `0013-history-saved-queries.md`.
-  Also on this branch: saved-query folders, SSH fixes (keyboard-interactive,
-  legacy PEM keys), the connection rail and table row filters (`0014`).
-- Phase 9b (inline data editing): on `phase-9b-inline-editing`, not
-  committed. Read `docs/decisions/0015-inline-editing.md`.
-- Next: Phase 10 (testing, packaging for all three platforms, release),
-  then the extended Phases 11–15 in `plan.md` §7b (read its "Read this
-  first" section before starting any of them).
+- Phases 5–9b merged into `main` (2026-10-15): remote connectivity and SSH
+  tunnels (`0007`), explorer (`0008`), SQL editor (`0009`), results grid
+  (`0010`), connections page and table data (`0011`), cross-platform support
+  and history/saved queries (`0012`, `0013`), connection rail and table row
+  filters (`0014`), inline data editing (`0015`).
+- Phases 11–13 (connections and safety, table data, smart editor): done on
+  `phase-13-smart-editor` (11 and 12 are stacked under it), not committed.
+  Read `docs/decisions/0016`–`0031`; `0031` lists what closed the gaps.
+- Next: Phase 14 (schema and object management). Phase 10 (packaging) is
+  deferred until signing options exist.
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 

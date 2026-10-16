@@ -19,6 +19,8 @@ fn ssh(auth: SshAuth, known_keys: Vec<KnownHost>) -> SshParams {
         username: "thabi".into(),
         auth,
         known_keys,
+        proxy_jump: None,
+        keepalive: None,
     }
 }
 
@@ -48,8 +50,12 @@ fn database(engine: Engine, ssh: SshParams) -> ConnectParams {
         password: Some(env("THABI_IT_PASSWORD")),
         tls,
         ca_path: None,
+        client_cert: None,
+        client_key: None,
         ssh: Some(ssh),
         connect_to: None,
+        read_only: false,
+        startup_commands: Vec::new(),
     }
 }
 
@@ -136,6 +142,80 @@ async fn closing_the_session_closes_the_tunnel() {
     let session = Session::connect(&database(Engine::Postgres, ssh(password(), known)))
         .await
         .unwrap();
+    let local = session.tunnel_addr().expect("tunnel address");
+    assert!(tokio::net::TcpStream::connect(local).await.is_ok());
+    session.close().await.unwrap();
+    assert!(tokio::net::TcpStream::connect(local).await.is_err());
+}
+
+/// One ProxyJump hop, as `~/.ssh/config` allows it: the first bastion is
+/// reached directly, and it forwards on to the second, which carries the
+/// database connection. Both bastions are the same image; the jump reaches
+/// the target by its Compose service name, so nothing extra is published.
+#[tokio::test]
+#[ignore]
+async fn a_proxy_jump_config_reaches_the_server_through_a_bastion() {
+    // The jump host: reached directly from the test, on its own port.
+    let mut jump = ssh(password(), vec![]);
+    jump.port = env("THABI_IT_SSH_JUMP_PORT").parse().unwrap();
+    let jump_keys = {
+        let error = thabi_studio_lib::ssh::open_tunnel(&jump, "postgres", 5432)
+            .await
+            .err()
+            .expect("an unknown jump host key must not be accepted");
+        assert_eq!(error.kind, "ssh_host_unknown", "{error:?}");
+        let data = error.data.expect("host key data");
+        vec![KnownHost {
+            key: russh::keys::PublicKey::from_openssh(data["publicKey"].as_str().unwrap()).unwrap(),
+            from_openssh: false,
+        }]
+    };
+    jump.known_keys = jump_keys;
+
+    // The target: only the jump host can see it, by its service name.
+    let mut target = ssh(password(), trusted_host_key().await);
+    target.host = "sshd".into();
+    target.port = 22;
+    target.proxy_jump = Some(Box::new(jump));
+
+    let mut session = Session::connect(&database(Engine::Postgres, target))
+        .await
+        .unwrap_or_else(|e| panic!("{} {:?}", e.message, e.detail));
+    let result = session.execute("SELECT 1", 10).await.unwrap();
+    assert_eq!(result.rows.len(), 1);
+    session.close().await.unwrap();
+}
+
+/// Closing the connection must take the jump tunnel with it.
+#[tokio::test]
+#[ignore]
+async fn closing_a_jumped_tunnel_closes_the_jump() {
+    let mut jump = ssh(password(), vec![]);
+    jump.port = env("THABI_IT_SSH_JUMP_PORT").parse().unwrap();
+    jump.known_keys = vec![];
+
+    let mut target = ssh(password(), trusted_host_key().await);
+    target.host = "sshd".into();
+    target.port = 22;
+    // Trust the jump by connecting to it once through a direct tunnel.
+    let error = thabi_studio_lib::ssh::open_tunnel(&jump, "postgres", 5432)
+        .await
+        .err()
+        .expect("first jump connection needs confirmation");
+    jump.known_keys = vec![KnownHost {
+        key: russh::keys::PublicKey::from_openssh(
+            error.data.expect("host key data")["publicKey"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap(),
+        from_openssh: false,
+    }];
+    target.proxy_jump = Some(Box::new(jump));
+
+    let session = Session::connect(&database(Engine::Postgres, target))
+        .await
+        .unwrap_or_else(|e| panic!("{} {:?}", e.message, e.detail));
     let local = session.tunnel_addr().expect("tunnel address");
     assert!(tokio::net::TcpStream::connect(local).await.is_ok());
     session.close().await.unwrap();

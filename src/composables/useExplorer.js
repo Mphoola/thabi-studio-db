@@ -1,3 +1,4 @@
+import { forgetCompletionSchema } from "./useCompletionSchema.js";
 import { computed, reactive, ref } from "vue";
 import {
   databaseNode,
@@ -125,6 +126,8 @@ export function useExplorer() {
   }
 
   async function refresh(node = null) {
+    // New tables or columns should show up in autocomplete too.
+    if (profile.value) forgetCompletionSchema(profile.value.id);
     if (!node) {
       reset();
       forConnection = connected.value ? status.value.connectionId : null;

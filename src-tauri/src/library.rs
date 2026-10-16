@@ -173,6 +173,8 @@ pub struct SavedQuery {
     pub profile_id: Option<String>,
     pub notes: String,
     pub folder: String,
+    /// Trigger word that expands this query in the editor; "" for none.
+    pub keyword: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -189,6 +191,8 @@ pub struct SavedQueryInput {
     pub notes: String,
     #[serde(default)]
     pub folder: String,
+    #[serde(default)]
+    pub keyword: String,
 }
 
 fn saved_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedQuery> {
@@ -201,11 +205,12 @@ fn saved_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedQuery> {
         folder: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        keyword: row.get(8)?,
     })
 }
 
 const SAVED_COLUMNS: &str =
-    "id, name, query_text, profile_id, notes, folder, created_at, updated_at";
+    "id, name, query_text, profile_id, notes, folder, created_at, updated_at, keyword";
 
 pub fn list_saved(connection: &Connection) -> Result<Vec<SavedQuery>, AppError> {
     let mut statement = connection
@@ -240,18 +245,51 @@ fn clean_folder(folder: &str) -> Result<&str, AppError> {
     Ok(folder)
 }
 
+/// A snippet keyword: one word (letters, digits, `_`), at most 40
+/// characters, or empty for none.
+fn clean_keyword(keyword: &str) -> Result<&str, AppError> {
+    let keyword = keyword.trim();
+    if keyword.chars().count() > 40 || !keyword.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err(field_error(
+            "keyword",
+            "Use one word of letters, digits or underscores.",
+        ));
+    }
+    Ok(keyword)
+}
+
 pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<SavedQuery, AppError> {
     let name = input.name.trim();
     if name.is_empty() || name.chars().count() > 120 {
         return Err(field_error("name", "Enter a name of up to 120 characters."));
     }
     let folder = clean_folder(&input.folder)?;
+    let keyword = clean_keyword(&input.keyword)?;
+    let taken = |id: Option<&str>| -> Result<bool, AppError> {
+        if keyword.is_empty() {
+            return Ok(false);
+        }
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM saved_queries WHERE keyword = ?1 AND id <> COALESCE(?2, '')",
+                params![keyword, id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(storage)
+    };
+    if taken(input.id.as_deref())? {
+        return Err(field_error(
+            "keyword",
+            "Another saved query already uses that keyword.",
+        ));
+    }
     let id = match input.id {
         Some(id) => {
             let changed = connection
                 .execute(
                     "UPDATE saved_queries SET name = ?2, query_text = ?3, profile_id = ?4,
-                        notes = ?5, folder = ?6, updated_at = CURRENT_TIMESTAMP
+                        notes = ?5, folder = ?6, keyword = ?7, updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?1",
                     params![
                         id,
@@ -259,7 +297,8 @@ pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<Sav
                         input.query_text,
                         input.profile_id,
                         input.notes,
-                        folder
+                        folder,
+                        keyword
                     ],
                 )
                 .map_err(storage)?;
@@ -277,15 +316,16 @@ pub fn save_query(connection: &Connection, input: SavedQueryInput) -> Result<Sav
                 .map_err(storage)?;
             connection
                 .execute(
-                    "INSERT INTO saved_queries (id, name, query_text, profile_id, notes, folder)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO saved_queries (id, name, query_text, profile_id, notes, folder, keyword)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         id,
                         name,
                         input.query_text,
                         input.profile_id,
                         input.notes,
-                        folder
+                        folder,
+                        keyword
                     ],
                 )
                 .map_err(storage)?;
@@ -466,6 +506,7 @@ mod tests {
                 profile_id: None,
                 notes: String::new(),
                 folder: " Reports ".into(),
+                keyword: String::new(),
             },
         )
         .unwrap();
@@ -480,6 +521,7 @@ mod tests {
                 profile_id: Some("p".into()),
                 notes: "daily".into(),
                 folder: "Reports".into(),
+                keyword: String::new(),
             },
         )
         .unwrap();
@@ -497,12 +539,38 @@ mod tests {
                     profile_id: None,
                     notes: String::new(),
                     folder: String::new(),
+                    keyword: String::new(),
                 },
             )
             .unwrap_err()
             .kind,
             "validation"
         );
+    }
+
+    #[test]
+    fn snippet_keywords_are_one_word_and_unique() {
+        let connection = db();
+        let add = |name: &str, keyword: &str| {
+            save_query(
+                &connection,
+                SavedQueryInput {
+                    id: None,
+                    name: name.into(),
+                    query_text: "SELECT 1".into(),
+                    profile_id: None,
+                    notes: String::new(),
+                    folder: String::new(),
+                    keyword: keyword.into(),
+                },
+            )
+        };
+        assert_eq!(add("a", " sel ").unwrap().keyword, "sel");
+        assert_eq!(add("b", "sel").unwrap_err().kind, "validation");
+        assert_eq!(add("c", "two words").unwrap_err().kind, "validation");
+        // Several queries may have no keyword.
+        add("d", "").unwrap();
+        add("e", "").unwrap();
     }
 
     #[test]
@@ -518,6 +586,7 @@ mod tests {
                     profile_id: None,
                     notes: String::new(),
                     folder: folder.into(),
+                    keyword: String::new(),
                 },
             )
             .unwrap()

@@ -1290,14 +1290,23 @@ Update this section as work progresses.
   - [x] Open query tabs restored after quitting; editor font size and history preferences
   - [x] Privacy note in About and `docs/PRIVACY.md`; accessibility pass
   - [x] Saved-query folders; SSH keyboard-interactive and legacy PEM keys; connection rail; table row filters
-- [x] Phase 9b — Inline data editing, added as its own milestone (2026-10-15, branch `phase-9b-inline-editing`, not committed)
+- [x] Phase 9b — Inline data editing, added as its own milestone (2026-10-15, branch `phase-9b-inline-editing`, merged into `main`)
   - [x] Edit cells, Set to NULL, delete rows and add rows on tables with a primary key; staged until applied
   - [x] Review the exact SQL; apply all changes in one transaction; each must change exactly one row or nothing is saved
   - [x] Asks before deleting rows and before any change on Production; integration-tested on all three engines
-- [ ] Phase 10 — Testing, packaging, documentation, and MVP release
-- [ ] Phase 11 — Connections, safety modes and workspace
-- [ ] Phase 12 — Table data and results power-ups
-- [ ] Phase 13 — Smart SQL editor
+- [ ] Phase 10 — Testing, packaging, documentation, and MVP release (deferred until signing options exist; only a Mac is available for clean-install tests)
+- [x] Phase 11 — Connections, safety modes and workspace (branch `phase-11-connections-safety`, finished on `phase-13-smart-editor`)
+  - [x] Safe modes, groups and colours, `~/.ssh/config`, ask every time, startup commands, mutual TLS, per-connection limits (`0016`–`0022`)
+  - [x] Import/export connections without secrets, Reconnect in place, New Window (`0031`)
+  - [x] Mutual TLS proven against a PostgreSQL server that demands a client certificate
+- [x] Phase 12 — Table data and results power-ups (branch `phase-12-table-data`, finished on `phase-13-smart-editor`)
+  - [x] Server paging and sorting, transfer formats, columns, row detail, filter presets, editing query results (`0023`–`0029`)
+  - [x] Filter on/off, Apply All, Show SQL, filter by value; foreign key navigation; Copy as JSON/Markdown/SQL (`0031`)
+  - [x] Duplicate, paste, DEFAULT, undo/redo; JSON tree, image, hex/base64, time zone; .xlsx export (`0031`)
+- [x] Phase 13 — Smart SQL editor (branch `phase-13-smart-editor`, not committed)
+  - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
+  - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
+  - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)
 - [ ] Phase 14 — Schema and object management
 - [ ] Phase 15 — Import, export, backup and administration
 

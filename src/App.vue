@@ -2,6 +2,8 @@
 import AppShell from "./components/app/AppShell.vue";
 import ErrorBoundary from "./components/app/ErrorBoundary.vue";
 import ConfirmHost from "./components/common/ConfirmHost.vue";
+import ParameterPromptHost from "./components/common/ParameterPromptHost.vue";
+import SecretPromptHost from "./components/common/SecretPromptHost.vue";
 import ToastHost from "./components/common/ToastHost.vue";
 import TooltipHost from "./components/common/TooltipHost.vue";
 </script>
@@ -11,6 +13,8 @@ import TooltipHost from "./components/common/TooltipHost.vue";
     <AppShell />
   </ErrorBoundary>
   <ConfirmHost />
+  <SecretPromptHost />
+  <ParameterPromptHost />
   <ToastHost />
   <TooltipHost />
 </template>
