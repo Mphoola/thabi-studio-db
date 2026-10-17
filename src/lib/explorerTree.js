@@ -33,6 +33,24 @@ export function schemaNode(database, schema) {
 }
 
 /**
+ * Where a diagram of this node should be drawn, or null if it draws nothing.
+ *
+ * Both node kinds carry `database` and `schema` and are named by `label` —
+ * there is no `name` on either, which is easy to assume and produces a diagram
+ * of "undefined". Returns null rather than a half-filled target, so the caller
+ * can say so instead of opening an empty tab.
+ */
+export function diagramTargetFor(node) {
+  if (!node || (node.type !== "database" && node.type !== "schema"))
+    return null;
+  const database = node.database;
+  if (!database) return null;
+  // A database node has schema: null; on MySQL there is no schema to name.
+  const schema = node.type === "schema" ? (node.schema ?? node.label) : null;
+  return { database, schema, title: `${node.label ?? database} diagram` };
+}
+
+/**
  * A table or view node, keyed exactly as the explorer keys it, so opening it
  * from elsewhere (a foreign key jump) reuses the same tab.
  */

@@ -13,7 +13,7 @@ import { useTabs } from "../../composables/useTabs.js";
 import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
-import { qualifiedName } from "../../lib/explorerTree.js";
+import { diagramTargetFor, qualifiedName } from "../../lib/explorerTree.js";
 
 /** Context-menu items and actions for explorer nodes. */
 export function useExplorerActions() {
@@ -82,14 +82,26 @@ export function useExplorerActions() {
         return copy(qualifiedName(engine, node));
       case "refresh":
         return explorer.refresh(node);
-      case "diagram":
+      case "diagram": {
+        // store exposes statusFor(), not status. Reading a name the store does
+        // not have throws on the first menu click, which is how this reached
+        // a release.
+        const live = store.statusFor(profile?.id);
+        if (!live?.connectionId) {
+          toasts.error("Nothing to draw", "Connect to a database first.");
+          return;
+        }
+        const target = diagramTargetFor(node);
+        if (!target) {
+          toasts.error("Nothing to draw", "Pick a database or a schema first.");
+          return;
+        }
         return workspace.openDiagram({
           profileId: profile?.id,
-          connectionId: store.status.value?.connectionId,
-          database: node.database ?? store.status.value?.server?.database,
-          schema: node.type === "schema" ? node.name : (node.schema ?? null),
-          title: `${node.type === "schema" ? node.name : node.name} diagram`,
+          connectionId: live.connectionId,
+          ...target,
         });
+      }
       case "switch":
         try {
           await hostKeys.run(() => store.connect(profile.id, node.database));
