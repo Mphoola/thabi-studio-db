@@ -5,7 +5,7 @@ import {
   applyTableAction,
   previewTableAction,
 } from "../../lib/tauri/commands.js";
-import { toUserMessage } from "../../lib/errors.js";
+import { toUserDetail, toUserMessage } from "../../lib/errors.js";
 import { confirm } from "../../composables/useConfirm.js";
 import { useToasts } from "../../composables/useToasts.js";
 import BaseButton from "../common/BaseButton.vue";
@@ -154,9 +154,12 @@ async function run() {
     preview.value = null;
     emit("changed");
   } catch (failure) {
+    // Same as the structure editor: a failed DDL batch may still have applied
+    // part of it, so the table has to be re-read rather than left as it was.
+    emit("changed");
     toasts.error(
       `Couldn't ${COPY[pending.value]?.verb.toLowerCase() ?? "run"} the table`,
-      toUserMessage(failure),
+      toUserDetail(failure),
     );
   } finally {
     applying.value = false;

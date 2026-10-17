@@ -1041,6 +1041,61 @@ mod mysql {
         applies_generated_ddl(E).await;
     }
 
+    /// The premise behind the MySQL half-applied message, checked against the
+    /// server rather than reasoned about: a DDL batch that fails on its second
+    /// statement leaves the first one committed. This has been assumed four
+    /// times in this file and is wrong every time it is reasoned about.
+    #[tokio::test]
+    #[ignore]
+    async fn a_failed_ddl_batch_keeps_the_statements_that_ran() {
+        let mut session = open(E).await;
+        session
+            .execute("CREATE TABLE `partial_test` (`keepme` INT NOT NULL);", 0)
+            .await
+            .expect("create");
+
+        // First statement is fine. Second names a column that does not exist.
+        let batch = "ALTER TABLE `partial_test` CHANGE COLUMN `keepme` `kept` INT NOT NULL;\n\
+                     ALTER TABLE `partial_test` MODIFY COLUMN `never_was` TEXT;";
+        let failure = session.execute(batch, 0).await.expect_err("must fail");
+        let detail = failure.detail.clone().unwrap_or_default();
+        assert!(
+            detail.to_lowercase().contains("unknown column")
+                || detail.to_lowercase().contains("doesn't exist"),
+            "unexpected reason: {detail}"
+        );
+
+        // The point: the rename above is already committed, so the table is
+        // half changed even though the batch as a whole failed.
+        let structure = session
+            .describe(
+                "thabi_it",
+                "",
+                "partial_test",
+                thabi_studio_lib::database::ObjectKind::Table,
+            )
+            .await
+            .expect("read back");
+        let names: Vec<&str> = structure
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["kept"], "the first statement did not commit");
+        assert!(
+            structure
+                .columns
+                .iter()
+                .all(|column| column.name != "never_was"),
+            "the failing statement left something behind"
+        );
+
+        session
+            .execute("DROP TABLE `partial_test`;", 0)
+            .await
+            .expect("cleanup");
+    }
+
     #[tokio::test]
     #[ignore]
     async fn bound_values_are_stored_verbatim() {

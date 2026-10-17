@@ -86,6 +86,11 @@ export function useStructureChanges({
       discard();
       onApplied?.();
     } catch (failure) {
+      // MySQL commits DDL one statement at a time, so a failure can still have
+      // applied part of the batch. Reload either way: what the server says is
+      // the truth, and leaving a stale structure on screen is what makes a
+      // partial apply look like a phantom success — or like a total failure.
+      onApplied?.();
       toasts.error("Couldn't apply the changes", toUserDetail(failure));
     } finally {
       applying.value = false;
