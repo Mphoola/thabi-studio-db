@@ -2,12 +2,14 @@ import { copyText } from "../../lib/clipboard.js";
 import {
   ClipboardCopy,
   Columns3,
+  Network,
   RefreshCw,
   Repeat,
   Rows3,
 } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useExplorer } from "../../composables/useExplorer.js";
+import { useTabs } from "../../composables/useTabs.js";
 import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
@@ -18,7 +20,10 @@ export function useExplorerActions() {
   const explorer = useExplorer();
   const store = useConnectionProfiles();
   const hostKeys = useHostKeyTrust();
+  const workspace = useTabs();
   const toasts = useToasts();
+
+  const isMySql = () => store.selectedProfile.value?.driver === "mysql";
 
   function menuFor(node) {
     if (!node) return [];
@@ -45,6 +50,12 @@ export function useExplorerActions() {
         ? [{ id: "switch", label: "Switch to This Database", icon: Repeat }]
         : []),
       { id: "refresh", label: "Refresh", icon: RefreshCw, shortcut: "Mod+R" },
+      // A diagram needs somewhere to draw tables, so it belongs to a database
+      // or a schema. On MySQL the database is the schema, which is why the
+      // schema is left off there rather than guessed at.
+      ...(node.type === "schema" || (node.type === "database" && !isMySql())
+        ? [{ id: "diagram", label: "Show Diagram", icon: Network }]
+        : []),
       { separator: true },
       ...copy,
     ].filter((item) => node.type !== "group" || item.id !== "copy-name");
@@ -73,6 +84,14 @@ export function useExplorerActions() {
         return copy(qualifiedName(engine, node));
       case "refresh":
         return explorer.refresh(node);
+      case "diagram":
+        return workspace.openDiagram({
+          profileId: profile?.id,
+          connectionId: store.status.value?.connectionId,
+          database: node.database ?? store.status.value?.server?.database,
+          schema: node.type === "schema" ? node.name : (node.schema ?? null),
+          title: `${node.type === "schema" ? node.name : node.name} diagram`,
+        });
       case "switch":
         try {
           await hostKeys.run(() => store.connect(profile.id, node.database));

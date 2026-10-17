@@ -233,6 +233,15 @@ export function listObjects(id, database, schema = null) {
   return call("list_objects", { id, database, schema });
 }
 
+/**
+ * Everything the ER diagram draws for one schema.
+ *
+ * @returns {Promise<{ tables: Array<{ name: string, columns: Array<{ name: string, dataType: string, nullable: boolean, primaryKey: boolean }> }>, foreignKeys: Array<{ name: string, fromTable: string, fromColumns: string[], toTable: string, toColumns: string[] }> }>}
+ */
+export function schemaDiagram(id, database, schema = null) {
+  return call("schema_diagram", { id, database, schema });
+}
+
 export function describeObject(id, { database, schema, name, kind }) {
   return call("describe_object", { id, database, schema, name, kind });
 }
