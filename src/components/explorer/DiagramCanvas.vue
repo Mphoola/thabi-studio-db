@@ -16,6 +16,11 @@ const props = defineProps({
   lines: { type: Array, required: true },
   /** Trimmed tables, so a box knows its own rows. */
   tables: { type: Array, default: () => [] },
+  /** Tables whose full column list should be drawn, by name. */
+  expanded: { type: Set, default: () => new Set() },
+  /** Table being pointed at, and the one clicked. */
+  hovered: { type: String, default: null },
+  selected: { type: String, default: null },
   title: { type: String, required: true },
   zoom: { type: Number, required: true },
   offset: { type: Object, required: true },
@@ -31,6 +36,24 @@ const emit = defineEmits([
   "select",
   "expand",
 ]);
+
+/**
+ * Whether a line touches a table.
+ *
+ * Without this a hundred tables of crossing lines is a picture nobody can read:
+ * you find the table you want and still cannot see what it relates to.
+ */
+function related(line, name) {
+  if (!name) return false;
+  return line.fromTable === name || line.toTable === name;
+}
+
+/** Dimmed means "not this table, and not one of its keys". */
+function dimmed(table, line) {
+  const name = props.hovered || props.selected;
+  if (!name) return false;
+  return table !== name && !related(line, name);
+}
 
 const transform = computed(
   () => `translate(${props.offset.x}, ${props.offset.y}) scale(${props.zoom})`,
