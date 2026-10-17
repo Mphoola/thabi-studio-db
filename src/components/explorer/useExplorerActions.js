@@ -23,8 +23,6 @@ export function useExplorerActions() {
   const workspace = useTabs();
   const toasts = useToasts();
 
-  const isMySql = () => store.selectedProfile.value?.driver === "mysql";
-
   function menuFor(node) {
     if (!node) return [];
     const copy = [
@@ -50,10 +48,10 @@ export function useExplorerActions() {
         ? [{ id: "switch", label: "Switch to This Database", icon: Repeat }]
         : []),
       { id: "refresh", label: "Refresh", icon: RefreshCw, shortcut: "Mod+R" },
-      // A diagram needs somewhere to draw tables, so it belongs to a database
-      // or a schema. On MySQL the database is the schema, which is why the
-      // schema is left off there rather than guessed at.
-      ...(node.type === "schema" || (node.type === "database" && !isMySql())
+      // A diagram needs somewhere to draw tables. On MySQL the database *is*
+      // the schema, which is why this is offered on both rather than on
+      // whichever one happens to be called a schema.
+      ...(node.type === "schema" || node.type === "database"
         ? [{ id: "diagram", label: "Show Diagram", icon: Network }]
         : []),
       { separator: true },

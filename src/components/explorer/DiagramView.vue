@@ -173,7 +173,13 @@ onBeforeUnmount(view.panEnd);
         :icon="Network"
         title="Couldn’t draw the diagram"
       >
+        <!-- The server's own reason, not just "it failed". Repeating the
+             message without the detail has cost more time than it saved. -->
         <template #message>{{ failed }}</template>
+        <p class="mt-2 text-xs text-fg-subtle">
+          {{ tab.database }}{{ tab.schema ? `.${tab.schema}` : "" }} ·
+          {{ tab.title }}
+        </p>
       </EmptyState>
       <EmptyState
         v-else-if="loading && !tables.length"
