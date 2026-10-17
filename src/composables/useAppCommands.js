@@ -294,6 +294,31 @@ export function useAppCommands() {
       },
     },
     {
+      // A feature only reachable from a context menu is a feature nobody
+      // finds. The explorer keeps the menu item; this is how it is looked up.
+      id: "view.diagram",
+      title: "Show Schema Diagram",
+      group: "View",
+      shortcut: "Mod+Shift+G",
+      enabled: () => explorer.connected.value,
+      run: () => {
+        const status = connections.statusFor(explorer.profile.value?.id);
+        if (!status?.connectionId) {
+          toasts.error("Nothing to draw", "Connect to a database first.");
+          return;
+        }
+        layout.sidebarView.value = "explorer";
+        layout.sidebarOpen.value = true;
+        workspace.openDiagram({
+          profileId: explorer.profile.value?.id,
+          connectionId: status.connectionId,
+          database: status.server?.database,
+          schema: null,
+          title: `${status.server?.database ?? "Schema"} diagram`,
+        });
+      },
+    },
+    {
       id: "view.connections",
       title: "Show Connections",
       group: "View",
