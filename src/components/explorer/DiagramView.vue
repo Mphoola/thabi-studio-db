@@ -24,7 +24,7 @@ import EmptyState from "../common/EmptyState.vue";
 import IconButton from "../common/IconButton.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 import { useToasts } from "../../composables/useToasts.js";
-import { schemaDiagram } from "../../lib/tauri/commands.js";
+import { listDatabases, schemaDiagram } from "../../lib/tauri/commands.js";
 import { toUserDetail } from "../../lib/errors.js";
 import { buildGraph, plainGraph, positionsFrom } from "../../lib/erLayout.js";
 import { useDiagramZoom } from "../../composables/useDiagramZoom.js";
@@ -49,6 +49,8 @@ const foreignKeys = ref([]);
 const nodes = ref({});
 const lines = ref([]);
 const laidOut = ref(false);
+/** Why nothing came back, worked out rather than guessed at. */
+const emptyReason = ref("");
 
 const view = useDiagramZoom();
 const { host, zoom, offset, panning, extent } = view;
@@ -78,6 +80,8 @@ async function load() {
     );
     tables.value = diagram.tables ?? [];
     foreignKeys.value = diagram.foreignKeys ?? [];
+    emptyReason.value = "";
+    if (!tables.value.length) await explainEmpty();
     const graph = buildGraph(diagram);
     // Something correct on screen while elk works out where things go.
     const plain = plainGraph(graph);
@@ -89,6 +93,23 @@ async function load() {
     failed.value = toUserDetail(failure);
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * Zero tables is not an explanation: the usual cause is the wrong database
+ * rather than an empty one. So the panel asks the server whether the database
+ * it was pointed at exists, and says which of the two it is.
+ */
+async function explainEmpty() {
+  const asked = props.tab.database;
+  try {
+    const names = (await listDatabases(props.connectionId)) ?? [];
+    emptyReason.value = names.includes(asked)
+      ? `“${asked}” is on this connection, but has no tables visible to it.`
+      : `There is no database called “${asked}” on this connection. This tab was opened against “${names[0] ?? "nothing"}”.`;
+  } catch (failure) {
+    emptyReason.value = toUserDetail(failure);
   }
 }
 
@@ -189,9 +210,11 @@ onBeforeUnmount(view.panEnd);
       <EmptyState
         v-else-if="!loading && !tables.length"
         :icon="Table2"
-        title="No tables here"
+        title="Nothing to draw"
       >
-        <template #message>This schema has no tables to draw.</template>
+        <template #message>
+          {{ emptyReason || "No tables came back for this database." }}
+        </template>
       </EmptyState>
       <DiagramCanvas
         v-else
