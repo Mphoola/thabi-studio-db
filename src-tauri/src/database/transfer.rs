@@ -283,7 +283,7 @@ fn write_failed(error: std::io::Error) -> AppError {
 /// each row's selected cells to `visit`. Pages are read on the tab's session
 /// without being kept, so a long export doesn't push the tab's own results
 /// out. Returns how many rows were visited.
-async fn walk_table(
+pub(crate) async fn walk_table(
     tab: &QueryTabHandle,
     params: &ConnectParams,
     request: &TransferRequest,
@@ -498,7 +498,9 @@ fn field(value: &str, format: TransferFormat) -> String {
 
 /// A cell as a SQL literal, so the statements run on the same engine.
 /// Binary is written in full in each engine's byte-literal syntax.
-fn literal(cell: &Cell, engine: Engine) -> String {
+/// Also used by the SQL dump. A dump and a CSV of the same table must not
+/// disagree about how a value is written, so there is one escaper.
+pub(crate) fn literal(cell: &Cell, engine: Engine) -> String {
     match cell {
         Cell::Null => "NULL".to_owned(),
         Cell::Value(value) => quote::literal(engine, value),

@@ -315,6 +315,209 @@ async fn adds_and_drops_a_foreign_key(engine: Engine, db: &str, schema: &str) {
     }
 }
 
+/// Export a table, drop it, run the export back, and compare.
+///
+/// The only test that means anything for a backup. Everything else checks that
+/// a statement was *generated*; this checks that a file can recreate what it
+/// came from, on a server, with the values that break naive escaping.
+async fn export_round_trips(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::ddl::{ColumnSpec, TableSpec, create_table};
+    use thabi_studio_lib::database::dump::{structure_statements, write_table_rows};
+
+    let table = thabi_studio_lib::database::dump::table_of(engine, db, schema, "thabi_dump");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+
+    let spec = TableSpec {
+        columns: vec![
+            ColumnSpec {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                default: String::new(),
+                comment: String::new(),
+                primary_key: true,
+                unique: false,
+            },
+            ColumnSpec {
+                name: "label".into(),
+                // Each engine's own name: "text" is not a SQL Server type and
+                // an invented one is refused by all three.
+                data_type: match engine {
+                    Engine::SqlServer => "NVARCHAR(200)".into(),
+                    _ => "text".into(),
+                },
+                nullable: true,
+                default: String::new(),
+                comment: String::new(),
+                primary_key: false,
+                unique: false,
+            },
+        ],
+        unique_names: vec![],
+        primary_key_name: String::new(),
+        foreign_keys: vec![],
+    };
+    let create = create_table(engine, db, schema, "thabi_dump", &spec).expect("create");
+    session
+        .execute(&format!("{create};"), 0)
+        .await
+        .expect("create table");
+
+    // The values that break escaping: an apostrophe, a backslash, a newline, a
+    // Unicode character, an empty string and a NULL.
+    //
+    // The backslash is written per engine because no single literal stores the
+    // same value everywhere: MySQL treats it as an escape, so `back\\slash`
+    // stores one backslash there and two on the engines where it is not an
+    // escape. The dump is not what is being tested here — the input is.
+    let backslash = match engine {
+        Engine::MySql => "back\\\\slash",
+        _ => "back\\slash",
+    };
+    // SQL Server reads an unprefixed literal in the collation's code page, so
+    // anything outside it arrives as "?". The dump writes N'' — this is the
+    // setup that has to say so, not the export.
+    let n = if engine == Engine::SqlServer { "N" } else { "" };
+    session
+        .execute(
+            &format!(
+                "INSERT INTO {table} (id, label) VALUES \
+                 (1, {n}'plain'), (2, {n}'O''Hara'), (3, {n}'{backslash}'), \
+                 (4, {n}'line1\nline2'), (5, {n}'naïve ☕'), (6, {n}''), (7, NULL)"
+            ),
+            0,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?} refused the setup values: {e:?}"));
+
+    let described = session
+        .describe(
+            db,
+            schema,
+            "thabi_dump",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe source");
+
+    let mut file: Vec<u8> = Vec::new();
+    for statement in structure_statements(engine, db, schema, "thabi_dump", &described) {
+        file.extend_from_slice(statement.as_bytes());
+    }
+    let exported = write_table_rows(
+        &mut session,
+        db,
+        schema,
+        "thabi_dump",
+        &described,
+        None,
+        &mut file,
+    )
+    .await
+    .expect("export rows");
+    let script = String::from_utf8(file).expect("utf8 dump");
+    assert_eq!(exported, 7, "{engine:?} exported the wrong number of rows");
+    assert!(script.contains("INSERT INTO"), "no inserts were written");
+
+    // Drop it, and put it back from the file alone.
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop for restore");
+    for statement in split_statements(&script) {
+        session.execute(&statement, 0).await.unwrap_or_else(|e| {
+            panic!("{engine:?} refused its own export:\n{statement}\n{e:?}\n--- file ---\n{script}")
+        });
+    }
+
+    let restored = session
+        .describe(
+            db,
+            schema,
+            "thabi_dump",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe restored");
+    let read = session
+        .execute(&format!("SELECT id, label FROM {table} ORDER BY id"), 10)
+        .await
+        .expect("read back");
+    // The labels, compared as values. Comparing debug-formatted rows instead
+    // cannot tell an empty string from the two characters "''", which is one
+    // of the values this is here to check.
+    let labels: Vec<Option<String>> = read
+        .rows
+        .iter()
+        .map(|row| match &row[1] {
+            Cell::Value(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<Option<String>> = vec![
+        Some("plain".to_owned()),
+        Some("O'Hara".to_owned()),
+        Some("back\\slash".to_owned()),
+        Some("line1\nline2".to_owned()),
+        Some("naïve ☕".to_owned()),
+        Some(String::new()),
+        None,
+    ];
+    assert_eq!(
+        labels, expected,
+        "{engine:?} did not round-trip the values exactly"
+    );
+    assert_eq!(
+        restored.columns.len(),
+        described.columns.len(),
+        "{engine:?} changed the column count"
+    );
+
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
+/// Splits a dump back into statements, on semicolons outside string literals.
+///
+/// A real splitter, not `split(';')`: the values this is meant to carry
+/// contain semicolons, and a test that split naively would be testing a
+/// simpler thing than the one that matters.
+fn split_statements(script: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    let mut previous = '\0';
+    for character in script.chars() {
+        if character == '\'' && previous != '\\' {
+            in_string = !in_string;
+        }
+        if character == ';' && !in_string {
+            let statement = current.trim();
+            if !statement.is_empty() && !statement.starts_with("--") {
+                out.push(format!("{statement};"));
+            }
+            current.clear();
+            previous = character;
+            continue;
+        }
+        if !character.is_whitespace() || !current.trim().is_empty() {
+            current.push(character);
+        }
+        previous = character;
+    }
+    let tail = current.trim();
+    if !tail.is_empty() && !tail.starts_with("--") {
+        out.push(tail.to_owned());
+    }
+    out
+}
+
 /// The ER diagram's three queries, run against the server.
 ///
 /// Every one of these has been written from an assumption about an engine's
@@ -1128,6 +1331,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn designer_adds_and_drops_a_foreign_key() {
         adds_and_drops_a_foreign_key(E, "thabi_it", "public").await;
     }
@@ -1229,6 +1438,12 @@ mod mysql {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "thabi_it", "").await;
     }
 
     #[tokio::test]
@@ -1412,6 +1627,12 @@ mod sqlserver {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "master", "dbo").await;
     }
 
     #[tokio::test]

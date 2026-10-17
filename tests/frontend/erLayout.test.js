@@ -123,7 +123,13 @@ describe("the graph elk is asked to arrange", () => {
     expect(graph.edges).toEqual([]);
   });
 
-  it("arranges a hundred tables through elk", async () => {
+  // A generous ceiling, deliberately. This asserts that elk can place a
+  // hundred ported tables at all; asserting a tight time here measures the
+  // machine the test happens to run on — it failed at 6 s while a dev server
+  // and three databases were also running, and passed in under a second when
+  // they were not. How long the diagram takes to appear is a question for a
+  // measurement on a real window, not for a unit test.
+  it("arranges a hundred tables through elk", { timeout: 20_000 }, async () => {
     const ELK = (await import("elkjs/lib/elk.bundled.js")).default;
     const many = {
       tables: Array.from({ length: 100 }, (_, index) => ({

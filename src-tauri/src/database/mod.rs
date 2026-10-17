@@ -8,6 +8,7 @@
 
 pub mod ddl;
 pub mod diagram;
+pub mod dump;
 pub mod edit;
 pub mod error;
 pub mod filter;

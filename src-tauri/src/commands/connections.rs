@@ -1051,6 +1051,149 @@ pub async fn copy_table(
     Ok(String::from_utf8(text).unwrap_or_default())
 }
 
+/// Writes a schema, or chosen tables, to a `.sql` file the same engine can run.
+///
+/// A backup does not need an open query tab, so this runs off the connection's
+/// own session rather than a tab's.
+#[tauri::command]
+pub async fn export_sql(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    options: database::dump::DumpOptions,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<database::dump::DumpSummary, AppError> {
+    use database::dump::DumpSummary;
+
+    if !options.wants_anything() {
+        return Err(AppError::new(
+            "nothing_to_export",
+            "Choose structure, data, or both.",
+        ));
+    }
+    let schema = schema.unwrap_or_default();
+
+    // Everything the writer needs is read here, where the async runtime is
+    // available; only the file writing is moved off it.
+    let engine = with_session(&state, &id, async |session| {
+        Ok(session.server_info().engine)
+    })
+    .await?;
+    // Every structure is read before anything is written, so a table that
+    // cannot be described stops the export rather than leaving a hole in a
+    // file that looks complete.
+    let planned = with_session(&state, &id, async |session| {
+        database::dump::plan(session, &database, &schema, &options).await
+    })
+    .await?;
+    if planned.is_empty() {
+        return Err(AppError::new(
+            "nothing_to_export",
+            "There are no tables here to export.",
+        ));
+    }
+    let session = state.connections.session(&id).await?;
+    let handle = tokio::runtime::Handle::current();
+
+    // Writing a file is blocking work, so it runs off the async workers.
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        let file = std::fs::File::create(&path).map_err(|_| {
+            AppError::new(
+                "export_failed",
+                "That file couldn't be created. Check the folder and try again.",
+            )
+        })?;
+        let mut writer = database::dump::CountingWriter::new(std::io::BufWriter::new(file));
+        let banner = format!(
+            "{}{}{}\n",
+            database::dump::header(engine, &database, &schema, &generated_stamp()),
+            database::dump::contents_note(&options),
+            database::dump::fidelity_note(engine, &options).unwrap_or_default(),
+        );
+        writer.write_all(banner.as_bytes()).map_err(wump)?;
+
+        let mut rows = 0u64;
+        for (name, structure) in &planned {
+            if options.structure {
+                for statement in database::dump::structure_statements(
+                    engine, &database, &schema, name, structure,
+                ) {
+                    writer.write_all(statement.as_bytes()).map_err(wump)?;
+                }
+            }
+            if options.data {
+                let mut guard = handle.block_on(session.lock());
+                let live = guard.as_mut().ok_or_else(AppError::not_connected)?;
+                rows += handle.block_on(database::dump::write_table_rows(
+                    live,
+                    &database,
+                    &schema,
+                    name,
+                    structure,
+                    options.row_limit,
+                    &mut writer,
+                ))?;
+            }
+        }
+        writer.flush().map_err(wump)?;
+        Ok(DumpSummary {
+            tables: planned.len(),
+            rows,
+            bytes: writer.bytes(),
+        })
+    })
+    .await
+    .map_err(|_| AppError::background_task())?
+}
+
+/// A timestamp for the file's header, taken from the clock rather than the
+/// server, because a backup labelled only "on export" cannot be told from a
+/// weekly one.
+fn generated_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    // ISO 8601 in UTC, computed rather than formatted: a date library is a
+    // dependency for one comment line.
+    let (year, month, day) = civil_from_days((seconds / 86_400) as i64);
+    let time = seconds % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC",
+        time / 3600,
+        (time % 3600) / 60,
+        time % 60
+    )
+}
+
+/// Days since 1970 to a calendar date, by Howard Hinnant's algorithm.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// A write failure inside the blocking writer, where an io::Error has to become
+/// an AppError to travel back out.
+fn wump(cause: std::io::Error) -> AppError {
+    AppError::new("write_failed", "Couldn't write the file.").with_detail(Some(cause.to_string()))
+}
+
 /// Exports a table, streaming it straight to the chosen file.
 ///
 /// The extension decides the format, and the extension is added when it is
