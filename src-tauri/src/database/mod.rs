@@ -61,6 +61,16 @@ impl Engine {
             _ => Err(AppError::unsupported_driver()),
         }
     }
+
+    /// How a person names this engine, for messages that are read rather
+    /// than parsed. The serde names are for the wire and are not for this.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::MySql => "MySQL",
+            Self::Postgres => "PostgreSQL",
+            Self::SqlServer => "SQL Server",
+        }
+    }
 }
 
 /// How the connection is encrypted. Never changed silently: the user picks
