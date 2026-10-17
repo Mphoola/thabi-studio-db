@@ -110,6 +110,34 @@ export function toPlan(structure, edits) {
           },
         });
         break;
+      case "setPrimaryKey":
+        keys.push({
+          setPrimaryKey: {
+            name: one.name,
+            columns: one.columns.map(currentName),
+          },
+        });
+        break;
+      case "dropPrimaryKey":
+        keys.push({ dropPrimaryKey: { name: one.name } });
+        break;
+      case "addForeignKey":
+        keys.push({
+          addForeignKey: {
+            name: one.name,
+            // A key left naming the old column is DDL against a column that
+            // is no longer there, so renames reach the keys as well.
+            columns: one.columns.map(currentName),
+            references: one.references,
+            referencedColumns: one.referencedColumns,
+            onDelete: one.onDelete ?? "NO ACTION",
+            onUpdate: one.onUpdate ?? "NO ACTION",
+          },
+        });
+        break;
+      case "dropForeignKey":
+        keys.push({ dropForeignKey: { name: one.name } });
+        break;
       default:
         // An edit this build does not know about is dropped rather than sent:
         // showing SQL for something that will not run is worse than not
@@ -151,6 +179,14 @@ export function describeEdit(one) {
       return `Drop index ${one.name}`;
     case "addIndex":
       return `Add ${one.unique ? "unique index" : "index"} ${one.name} on ${one.columns.join(", ")}`;
+    case "setPrimaryKey":
+      return `Primary key on ${one.columns.join(", ")}`;
+    case "dropPrimaryKey":
+      return "Drop the primary key";
+    case "addForeignKey":
+      return `Foreign key ${one.columns.join(", ")} → ${one.references.join(".")}.${one.referencedColumns.join(", ")}`;
+    case "dropForeignKey":
+      return `Drop foreign key ${one.name}`;
     default:
       return one.kind;
   }

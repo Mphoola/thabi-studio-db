@@ -220,6 +220,101 @@ async fn decodes_bound_values_by_type(engine: Engine) {
  * read back through describe, which is the only way to know the statements are
  * the ones each engine accepts.
  */
+/// Adding and dropping a foreign key, the way the designer does it.
+///
+/// Read back through `describe`, so this is what a person would see afterwards
+/// rather than what the generator believed it wrote.
+async fn adds_and_drops_a_foreign_key(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::ddl::{KeyChange, TablePlan, table_script};
+    let mut session = open(engine).await;
+    for statement in [
+        "DROP TABLE IF EXISTS thabi_fk_child",
+        "DROP TABLE IF EXISTS thabi_fk_parent",
+        "CREATE TABLE thabi_fk_parent (id int PRIMARY KEY, name text)",
+        "CREATE TABLE thabi_fk_child (id int PRIMARY KEY, parent_id int)",
+    ] {
+        session.execute(statement, 0).await.expect("setup");
+    }
+
+    let add = TablePlan {
+        keys: vec![KeyChange::AddForeignKey(
+            thabi_studio_lib::database::ddl::ForeignKey {
+                name: "thabi_child_parent_fk".into(),
+                columns: vec!["parent_id".into()],
+                references: vec![schema.to_owned(), "thabi_fk_parent".into()],
+                referenced_columns: vec!["id".into()],
+                on_delete: "CASCADE".into(),
+                on_update: "NO ACTION".into(),
+            },
+        )],
+        ..TablePlan::default()
+    };
+    for statement in table_script(engine, db, schema, "thabi_fk_child", &add) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused adding the key:\n{statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi_fk_child",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after add");
+    let target = after
+        .columns
+        .iter()
+        .find(|one| one.name == "parent_id")
+        .and_then(|one| one.references.clone())
+        .unwrap_or_else(|| panic!("{engine:?} did not record the key on parent_id"));
+    assert_eq!(target.table, "thabi_fk_parent", "{engine:?}");
+    assert_eq!(target.column, "id", "{engine:?}");
+
+    let drop = TablePlan {
+        keys: vec![KeyChange::DropForeignKey {
+            name: "thabi_child_parent_fk".into(),
+        }],
+        ..TablePlan::default()
+    };
+    for statement in table_script(engine, db, schema, "thabi_fk_child", &drop) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused dropping the key:\n{statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi_fk_child",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after drop");
+    assert!(
+        after
+            .columns
+            .iter()
+            .find(|one| one.name == "parent_id")
+            .unwrap()
+            .references
+            .is_none(),
+        "{engine:?} still reports the dropped key"
+    );
+
+    for statement in [
+        "DROP TABLE IF EXISTS thabi_fk_child",
+        "DROP TABLE IF EXISTS thabi_fk_parent",
+    ] {
+        session.execute(statement, 0).await.expect("cleanup");
+    }
+}
+
 /// The ER diagram's three queries, run against the server.
 ///
 /// Every one of these has been written from an assumption about an engine's
@@ -1033,6 +1128,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn diagram_reads_the_schema() {
         diagram_reads_tables_columns_and_keys(
             E,
@@ -1128,6 +1229,12 @@ mod mysql {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "thabi_it", "").await;
     }
 
     #[tokio::test]
@@ -1305,6 +1412,12 @@ mod sqlserver {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "master", "dbo").await;
     }
 
     #[tokio::test]

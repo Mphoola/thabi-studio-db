@@ -294,3 +294,93 @@ describe("a plan says what is likely to be refused", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * Keys are a separate array in the plan because they are separate statements,
+ * and getting this wrong sends DDL that refers to a constraint by a name the
+ * server does not have.
+ */
+describe("keys and foreign keys", () => {
+  it("sets and drops the primary key", () => {
+    const plan = toPlan(structure, [
+      { kind: "setPrimaryKey", name: "orders_pkey", columns: ["id"] },
+    ]);
+    expect(plan.keys).toEqual([
+      { setPrimaryKey: { name: "orders_pkey", columns: ["id"] } },
+    ]);
+    expect(
+      toPlan(structure, [{ kind: "dropPrimaryKey", name: "orders_pkey" }]).keys,
+    ).toEqual([{ dropPrimaryKey: { name: "orders_pkey" } }]);
+  });
+
+  it("defaults the referential actions rather than sending an empty one", () => {
+    const plan = toPlan(structure, [
+      {
+        kind: "addForeignKey",
+        name: "child_parent_fk",
+        columns: ["parent_id"],
+        references: ["public", "parent"],
+        referencedColumns: ["id"],
+      },
+    ]);
+    // An empty ON DELETE is refused by all three engines.
+    expect(plan.keys[0].addForeignKey.onDelete).toBe("NO ACTION");
+    expect(plan.keys[0].addForeignKey.onUpdate).toBe("NO ACTION");
+  });
+
+  it("keeps the referential actions that were asked for", () => {
+    const plan = toPlan(structure, [
+      {
+        kind: "addForeignKey",
+        name: "child_parent_fk",
+        columns: ["parent_id"],
+        references: ["public", "parent"],
+        referencedColumns: ["id"],
+        onDelete: "CASCADE",
+        onUpdate: "RESTRICT",
+      },
+    ]);
+    expect(plan.keys[0].addForeignKey.onDelete).toBe("CASCADE");
+    expect(plan.keys[0].addForeignKey.onUpdate).toBe("RESTRICT");
+  });
+
+  /**
+   * A rename has to reach the keys too. A key left naming the old column is
+   * DDL against a column that is no longer there, which fails on the server
+   * rather than here.
+   */
+  it("follows a column rename into the keys", () => {
+    const plan = toPlan(structure, [
+      { kind: "renameColumn", from: "note", to: "notes" },
+      {
+        kind: "addForeignKey",
+        name: "child_notes_fk",
+        columns: ["note"],
+        references: ["public", "other"],
+        referencedColumns: ["id"],
+      },
+      { kind: "setPrimaryKey", name: "pkey", columns: ["note"] },
+    ]);
+    expect(
+      plan.keys.find((one) => one.addForeignKey).addForeignKey.columns,
+    ).toEqual(["notes"]);
+    expect(
+      plan.keys.find((one) => one.setPrimaryKey).setPrimaryKey.columns,
+    ).toEqual(["notes"]);
+  });
+
+  it("describes each key change in a sentence", () => {
+    expect(
+      describeEdit({
+        kind: "addForeignKey",
+        name: "fk",
+        columns: ["parent_id"],
+        references: ["public", "parent"],
+        referencedColumns: ["id"],
+      }),
+    ).toBe("Foreign key parent_id → public.parent.id");
+    expect(describeEdit({ kind: "dropPrimaryKey", name: "pkey" })).toBe(
+      "Drop the primary key",
+    );
+  });
+});
