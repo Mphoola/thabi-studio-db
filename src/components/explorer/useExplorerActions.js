@@ -83,11 +83,7 @@ export function useExplorerActions() {
       case "refresh":
         return explorer.refresh(node);
       case "diagram": {
-        // store exposes statusFor(), not status. Reading a name the store does
-        // not have throws on the first menu click, which is how this reached
-        // a release.
-        const live = store.statusFor(profile?.id);
-        if (!live?.connectionId) {
+        if (!store.isConnected(profile?.id)) {
           toasts.error("Nothing to draw", "Connect to a database first.");
           return;
         }
@@ -98,7 +94,6 @@ export function useExplorerActions() {
         }
         return workspace.openDiagram({
           profileId: profile?.id,
-          connectionId: live.connectionId,
           ...target,
         });
       }

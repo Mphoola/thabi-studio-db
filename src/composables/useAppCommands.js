@@ -338,7 +338,6 @@ export function useAppCommands() {
         layout.sidebarOpen.value = true;
         workspace.openDiagram({
           profileId: profile.id,
-          connectionId: status.connectionId,
           database,
           // MySQL: the database is the schema, and there is none to name.
           schema: null,

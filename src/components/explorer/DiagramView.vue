@@ -34,7 +34,10 @@ defineOptions({ name: "DiagramView" });
 
 const props = defineProps({
   tab: { type: Object, required: true },
-  connectionId: { type: String, default: null },
+  // The profile, not the connection: every object command is keyed by
+  // profile id, and a connection id finds no session and reads as
+  // "not connected" with no other symptom.
+  profileId: { type: String, default: null },
 });
 const emit = defineEmits(["open-table"]);
 
@@ -65,7 +68,7 @@ const trimmed = computed(() =>
 );
 
 async function load() {
-  if (!props.connectionId) {
+  if (!props.profileId) {
     failed.value = "This connection is not open.";
     return;
   }
@@ -74,7 +77,7 @@ async function load() {
   laidOut.value = false;
   try {
     const diagram = await schemaDiagram(
-      props.connectionId,
+      props.profileId,
       props.tab.database,
       props.tab.schema,
     );
@@ -104,7 +107,7 @@ async function load() {
 async function explainEmpty() {
   const asked = props.tab.database;
   try {
-    const names = (await listDatabases(props.connectionId)) ?? [];
+    const names = (await listDatabases(props.profileId)) ?? [];
     emptyReason.value = names.includes(asked)
       ? `“${asked}” is on this connection, but has no tables visible to it.`
       : `There is no database called “${asked}” on this connection. This tab was opened against “${names[0] ?? "nothing"}”.`;
@@ -149,7 +152,7 @@ function exportSvg() {
 
 defineExpose({ reload: load });
 
-watch(() => [props.tab.database, props.tab.schema, props.connectionId], load);
+watch(() => [props.tab.database, props.tab.schema, props.profileId], load);
 onMounted(load);
 onBeforeUnmount(view.panEnd);
 </script>

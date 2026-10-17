@@ -130,13 +130,12 @@ export function useTabs() {
    * the database, which is why it is a tab of its own rather than a view of
    * somebody else's tab.
    */
-  function openDiagram({ profileId, connectionId, database, schema, title }) {
+  function openDiagram({ profileId, database, schema, title }) {
     const tab = reactive({
       id: newId(),
       type: "diagram",
       title: title ?? `${database} diagram`,
       profileId,
-      connectionId,
       database,
       schema: schema ?? null,
     });

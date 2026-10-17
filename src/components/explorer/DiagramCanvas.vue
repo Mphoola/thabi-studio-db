@@ -33,8 +33,9 @@ const transform = computed(
   () => `translate(${props.offset.x}, ${props.offset.y}) scale(${props.zoom})`,
 );
 
-function rowsForNode(name) {
-  return rowsFor(props.tables, name).columns;
+/** Both halves, so the template cannot ask for one and get the other. */
+function rowsOf(name) {
+  return rowsFor(props.tables, name);
 }
 </script>
 
@@ -94,7 +95,7 @@ function rowsForNode(name) {
           {{ node.id }}
         </text>
         <g
-          v-for="(column, index) in rowsForNode(node.id)"
+          v-for="(column, index) in rowsOf(node.id).columns"
           :key="column.name"
           class="cursor-pointer"
           @click.stop="emit('open-table', node.id)"
@@ -117,12 +118,12 @@ function rowsForNode(name) {
           </text>
         </g>
         <text
-          v-if="rowsFor(node.id).hidden"
+          v-if="rowsOf(node.id).hidden"
           x="10"
           :y="node.height - 4"
           class="fill-fg-subtle text-[10px]"
         >
-          +{{ rowsFor(node.id).hidden }} more
+          +{{ rowsOf(node.id).hidden }} more
         </text>
       </g>
     </g>

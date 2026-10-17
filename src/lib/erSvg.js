@@ -9,9 +9,18 @@
 const HEADER = 30;
 const ROW = 20;
 
-/** Table columns as drawn, capped and with the rest counted. */
+/**
+ * Table columns as drawn, capped and with the rest counted.
+ *
+ * A caller that passes the wrong thing gets an empty box rather than a thrown
+ * error: a drawing helper should not be able to blank the whole panel, and
+ * `(tables ?? []).find` on a string throws with a message about `find` that
+ * says nothing about which argument was wrong.
+ */
 export function rowsFor(tables, name, limit = 14) {
-  const table = (tables ?? []).find((one) => one.name === name);
+  const table = (Array.isArray(tables) ? tables : []).find(
+    (one) => one?.name === name,
+  );
   if (!table) return { columns: [], hidden: 0 };
   return {
     columns: table.columns.slice(0, limit),

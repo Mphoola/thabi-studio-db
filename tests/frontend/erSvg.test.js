@@ -46,6 +46,21 @@ describe("a table's drawn rows", () => {
   it("is empty for a table it was not given", () => {
     expect(rowsFor(tables, "missing", 14)).toEqual({ columns: [], hidden: 0 });
   });
+
+  /**
+   * The wrong argument used to blank the whole panel with a message about
+   * `find` being undefined, which named neither the function nor the argument.
+   */
+  it("draws an empty box rather than throwing on the wrong argument", () => {
+    for (const wrong of [undefined, null, "users", 7, {}, [null]]) {
+      expect(() => rowsFor(wrong, "users", 14)).not.toThrow();
+      expect(rowsFor(wrong, "users", 14)).toEqual({ columns: [], hidden: 0 });
+    }
+  });
+
+  it("ignores a null entry in the list", () => {
+    expect(rowsFor([null, ...tables], "users", 14).columns).toHaveLength(2);
+  });
 });
 
 describe("escaping", () => {

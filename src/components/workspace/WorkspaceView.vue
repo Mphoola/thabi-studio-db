@@ -54,7 +54,7 @@ function openTableFromDiagram(tab, name) {
         <DiagramView
           v-else-if="tab.type === 'diagram' && active?.id === tab.id"
           :tab="tab"
-          :connection-id="tab.connectionId"
+          :profile-id="tab.profileId"
           class="min-h-0 flex-1"
           @open-table="openTableFromDiagram(tab, $event)"
         />
