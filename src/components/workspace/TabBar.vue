@@ -1,18 +1,12 @@
 <script setup>
-import { Eye, Plus, SquareTerminal, Table2, X } from "lucide-vue-next";
+import { Plus, X } from "lucide-vue-next";
 import { runCommand } from "../../composables/useCommands.js";
 import { useTabs } from "../../composables/useTabs.js";
+import { tabIcon, tabTitle } from "../../lib/tabPresentation.js";
 import IconButton from "../common/IconButton.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 
 const { tabs, activeId, close, isDirty } = useTabs();
-
-const iconFor = (tab) =>
-  tab.type === "query"
-    ? SquareTerminal
-    : tab.node.kind === "table"
-      ? Table2
-      : Eye;
 
 function onKeydown(event, index) {
   const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
@@ -52,14 +46,14 @@ function onKeydown(event, index) {
       >
         <SpinnerIcon v-if="tab.running" :size="11" label="Running" />
         <component
-          :is="iconFor(tab)"
+          :is="tabIcon(tab)"
           v-else
           :size="13"
           :stroke-width="1.75"
           class="shrink-0 text-fg-subtle"
           aria-hidden="true"
         />
-        <span class="truncate">{{ tab.title }}</span>
+        <span class="truncate">{{ tabTitle(tab) }}</span>
         <span
           v-if="isDirty(tab)"
           class="size-1.5 shrink-0 rounded-full bg-fg-muted group-hover:hidden"
@@ -69,7 +63,7 @@ function onKeydown(event, index) {
           type="button"
           class="flex size-4 shrink-0 items-center justify-center rounded-sm text-fg-subtle opacity-0 group-hover:opacity-100 hover:bg-surface-active hover:text-fg focus-visible:opacity-100"
           :class="activeId === tab.id && !isDirty(tab) && 'opacity-100'"
-          :aria-label="`Close ${tab.title}`"
+          :aria-label="`Close ${tabTitle(tab)}`"
           @click.stop="close(tab.id)"
         >
           <X :size="11" :stroke-width="2" />
