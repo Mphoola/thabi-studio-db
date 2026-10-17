@@ -8,6 +8,11 @@
  */
 import { computed } from "vue";
 import { HEADER_HEIGHT, ROW_HEIGHT } from "../../lib/erLayout.js";
+import {
+  lineIsDimmed,
+  lineIsLit,
+  tableIsDimmed,
+} from "../../lib/erHighlight.js";
 import { rowsFor } from "../../lib/erSvg.js";
 
 const props = defineProps({
@@ -37,23 +42,8 @@ const emit = defineEmits([
   "expand",
 ]);
 
-/**
- * Whether a line touches a table.
- *
- * Without this a hundred tables of crossing lines is a picture nobody can read:
- * you find the table you want and still cannot see what it relates to.
- */
-function related(line, name) {
-  if (!name) return false;
-  return line.fromTable === name || line.toTable === name;
-}
-
-/** Dimmed means "not this table, and not one of its keys". */
-function dimmed(table, line) {
-  const name = props.hovered || props.selected;
-  if (!name) return false;
-  return table !== name && !related(line, name);
-}
+/** Who the drawing is about: whatever is pointed at, or whatever was picked. */
+const focus = computed(() => props.hovered || props.selected);
 
 const transform = computed(
   () => `translate(${props.offset.x}, ${props.offset.y}) scale(${props.zoom})`,
@@ -124,14 +114,14 @@ function rowsOf(name) {
         :y1="line.from.y"
         :x2="line.to.x"
         :y2="line.to.y"
-        :stroke-width="related(line, hovered || selected) ? 2 : 1.25"
+        :stroke-width="lineIsLit(line, focus) ? 2 : 1.25"
         :marker-end="
-          related(line, hovered || selected)
-            ? 'url(#fk-arrow-lit)'
-            : 'url(#fk-arrow)'
+          lineIsLit(line, focus) ? 'url(#fk-arrow-lit)' : 'url(#fk-arrow)'
         "
         :class="
-          dimmed(null, line) ? 'stroke-line opacity-30' : 'stroke-line-strong'
+          lineIsDimmed(line, focus)
+            ? 'stroke-line opacity-30'
+            : 'stroke-line-strong'
         "
       />
       <g
@@ -139,7 +129,7 @@ function rowsOf(name) {
         :key="node.id"
         :transform="`translate(${node.x}, ${node.y})`"
         class="cursor-pointer"
-        :class="dimmed(node.id, null) ? 'opacity-35' : ''"
+        :class="tableIsDimmed(node.id, focus) ? 'opacity-35' : ''"
         @pointerenter="emit('hover', node.id)"
         @pointerleave="emit('hover', null)"
         @click.stop="emit('select', node.id)"

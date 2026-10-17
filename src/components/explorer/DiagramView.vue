@@ -140,6 +140,35 @@ async function arrange(graph) {
   view.fit();
 }
 
+/** Puts a table in the middle of the window, big enough to read. */
+function focusTable(name) {
+  const node = nodes.value[name];
+  const box = host.value?.getBoundingClientRect();
+  if (!node || !box) return;
+  selected.value = name;
+  // Focusing something small and leaving it small is not focusing it.
+  zoom.value = Math.min(1, Math.max(0.4, zoom.value));
+  offset.value = {
+    x: box.width / 2 - (node.x + node.width / 2) * zoom.value,
+    y: box.height / 2 - (node.y + node.height / 2) * zoom.value,
+  };
+}
+
+/**
+ * Shows every column of a table, and rearranges, because the box changes
+ * height and the lines attached to it would otherwise point at the wrong rows.
+ */
+function toggleExpand(name) {
+  const next = new Set(expanded.value);
+  if (next.has(name)) next.delete(name);
+  else next.add(name);
+  expanded.value = next;
+  if (elk)
+    arrange(
+      buildGraph({ tables: tables.value, foreignKeys: foreignKeys.value }),
+    );
+}
+
 function exportSvg() {
   if (!extent.value.width) return;
   downloadSvg(

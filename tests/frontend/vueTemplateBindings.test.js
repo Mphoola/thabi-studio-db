@@ -26,6 +26,9 @@ const scriptBindings = (script) => {
     add(block);
   for (const [, name] of script.matchAll(/\bconst\s+([\w$]+)\s*=/g))
     names.add(name);
+  // `const { zoom, offset } = view` declares those names too.
+  for (const [, block] of script.matchAll(/\bconst\s*\{([^}]*)\}\s*=/g))
+    add(block);
   for (const [, name] of script.matchAll(/\blet\s+([\w$]+)\s*=/g))
     names.add(name);
   for (const [, name] of script.matchAll(/\bfunction\s+([\w$]+)/g))
@@ -49,12 +52,13 @@ const scriptBindings = (script) => {
 const calledHelpers = (template) => {
   const names = new Set();
   const aliases = new Set();
-  for (const [, ...parts] of template.matchAll(/v-for="([^"]*)"/g)) {
-    for (const part of parts) {
-      for (const [, name] of part.matchAll(/\b(?:in|of)\s+\(?([\w$]+)/g))
-        aliases.add(name);
-      for (const [, name] of part.matchAll(/(?:[(,]\s*([\w$]+)\s*(?:,|\)))/g))
-        aliases.add(name);
+  // Everything the loop binds: `(column, index) in rows` binds two names, and
+  // `:key="index"` on the same element refers to one of them.
+  for (const [, part] of template.matchAll(/v-for="([^"]*)"/g)) {
+    const [, binding] = part.match(/^(.*?)\s+(?:in|of)\s/) ?? [null, ""];
+    for (const name of binding.replace(/[()]/g, ",").split(",")) {
+      const trimmed = name.trim();
+      if (/^[A-Za-z][\w$]*$/.test(trimmed)) aliases.add(trimmed);
     }
   }
 
@@ -75,6 +79,18 @@ const calledHelpers = (template) => {
 
   for (const [, name] of code.matchAll(
     /(?:^|[\s(={}?:!|])([a-z][\w$]*)\s*\(/g,
+  )) {
+    names.add(name);
+  }
+
+  // Bare references: `@select="focusTable"` passes a handler by name, and a
+  // name that is not declared throws on the first click rather than on the
+  // first render — which is how focusTable went missing without a warning.
+  // Only a value that is *just* a name: scanning every identifier in an
+  // expression also reads object keys and the English in slots, which is how
+  // a check like this talks itself out of being trusted.
+  for (const [, name] of template.matchAll(
+    /(?:@|v-on:|:|v-bind:)[\w.-]+="([a-z][\w$]*)"/g,
   )) {
     names.add(name);
   }
@@ -108,11 +124,20 @@ describe("the canvas declares what its template asks for", () => {
   const script = source.slice(0, source.indexOf("</script>"));
   const declared = scriptBindings(script);
 
-  // The four that were named in the template and never added to the file.
+  // The names that were used in the template and never added to the file:
+  // related and dimmed (now in lib/erHighlight.js), and rowsOf.
   it("declares the helpers the highlight is built from", () => {
-    for (const name of ["related", "dimmed", "rowsOf"]) {
+    for (const name of ["rowsOf", "focus"]) {
       expect(declared.has(name), `${name} is used but not declared`).toBe(true);
     }
+  });
+
+  it("takes the highlight from a module that is tested", () => {
+    // The dimming lives in lib/erHighlight.js precisely so that a null passed
+    // where a line was expected is caught by a test rather than by a click.
+    expect(read("DiagramCanvas.vue")).toMatch(/erHighlight\.js/);
+    expect(declared.has("related")).toBe(false);
+    expect(declared.has("dimmed")).toBe(false);
   });
 
   it("declares the props the highlight reads", () => {
