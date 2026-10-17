@@ -206,6 +206,21 @@ pub async fn list_objects(
     .await
 }
 
+/// Everything the ER diagram draws for one schema.
+///
+/// Read-only by construction: it returns data, and there is no command that
+/// draws a diagram back.
+#[tauri::command]
+pub async fn schema_diagram(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<database::diagram::Diagram, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| s.diagram(&database, &schema).await).await
+}
+
 #[tauri::command]
 pub async fn describe_object(
     id: String,

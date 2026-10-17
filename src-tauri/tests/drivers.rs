@@ -220,6 +220,78 @@ async fn decodes_bound_values_by_type(engine: Engine) {
  * read back through describe, which is the only way to know the statements are
  * the ones each engine accepts.
  */
+/// The ER diagram's three queries, run against the server.
+///
+/// Every one of these has been written from an assumption about an engine's
+/// catalog at some point and been wrong; they are cheap to run and the answer
+/// comes from the server, so there is no reason to reason about them instead.
+#[allow(clippy::too_many_arguments)]
+async fn diagram_reads_tables_columns_and_keys(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    setup: &[&str],
+) {
+    let mut session = open(engine).await;
+    for statement in setup {
+        session.execute(statement, 0).await.expect("setup");
+    }
+
+    // Through the same method the command calls, so the test covers the real
+    // path rather than the pieces it is built from.
+    let found = session.diagram(database, schema).await.expect("diagram");
+
+    let country = found
+        .tables
+        .iter()
+        .find(|table| table.name == "thabi_country")
+        .unwrap_or_else(|| {
+            panic!(
+                "{engine:?} did not return the table: {:?}",
+                found.tables.iter().map(|t| &t.name).collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(country.columns.len(), 2, "{engine:?}");
+    assert!(
+        country.columns.iter().any(|c| c.name == "name"),
+        "{engine:?}"
+    );
+
+    let id = country
+        .columns
+        .iter()
+        .find(|c| c.name == "id")
+        .expect("id column");
+    assert!(id.primary_key, "{engine:?} did not mark the primary key");
+    assert!(!id.nullable, "{engine:?} marked a NOT NULL column nullable");
+
+    let child = found
+        .tables
+        .iter()
+        .find(|table| table.name == "thabi_child")
+        .unwrap_or_else(|| panic!("{engine:?} did not return the child table"));
+    assert!(
+        !child
+            .columns
+            .iter()
+            .any(|c| c.primary_key && c.name == "country_id"),
+        "{engine:?} marked a foreign key column as primary"
+    );
+
+    // The line between them, which is the whole reason for the diagram.
+    let edge = found
+        .foreign_keys
+        .iter()
+        .find(|key| key.from_table == "thabi_child" && key.to_table == "thabi_country")
+        .unwrap_or_else(|| panic!("{engine:?} returned no edge: {:?}", found.foreign_keys));
+    assert_eq!(edge.from_columns, ["country_id"], "{engine:?}");
+    assert_eq!(edge.to_columns, ["id"], "{engine:?}");
+
+    for statement in setup.iter().filter(|s| s.starts_with("DROP TABLE")) {
+        session.execute(statement, 0).await.expect("cleanup");
+    }
+}
+
 async fn applies_generated_ddl(engine: Engine) {
     use thabi_studio_lib::database::ddl::{
         Change, ColumnSpec, IndexAction, IndexSpec, KeyChange, TableAction, TablePlan, TableSpec,
@@ -961,6 +1033,23 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn diagram_reads_the_schema() {
+        diagram_reads_tables_columns_and_keys(
+            E,
+            "thabi_it",
+            "public",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name text)",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, country_id int REFERENCES thabi_country(id))",
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn values() {
         reads_values_without_loss(
             E,
@@ -1039,6 +1128,23 @@ mod mysql {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn diagram_reads_the_schema() {
+        diagram_reads_tables_columns_and_keys(
+            E,
+            "thabi_it",
+            "",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name text)",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, country_id int, FOREIGN KEY (country_id) REFERENCES thabi_country(id))",
+            ],
+        )
+        .await;
     }
 
     /// The premise behind the MySQL half-applied message, checked against the

@@ -118,6 +118,7 @@ pub fn run() {
             commands::connections::list_databases,
             commands::connections::list_schemas,
             commands::connections::list_objects,
+            commands::connections::schema_diagram,
             commands::connections::describe_object,
             commands::connections::open_object_data,
             commands::connections::fetch_table_page,
