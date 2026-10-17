@@ -131,6 +131,11 @@ export function positionsFrom(elkGraph) {
     if (!from || !to) continue;
     lines.push({
       id: edge.id,
+      // Which tables it joins, so hovering one can light its keys and dim the
+      // rest. A line is a list of points otherwise, and a list of points cannot
+      // answer "what does this table relate to".
+      fromTable: from.node.id,
+      toTable: to.node.id,
       from: {
         x: from.node.x + from.port.x + from.port.width / 2,
         y: from.node.y + from.port.y + from.port.height / 2,

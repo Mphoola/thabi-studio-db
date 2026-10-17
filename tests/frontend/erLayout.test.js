@@ -202,6 +202,9 @@ describe("reading elk's answer back", () => {
     // Port x is relative to its own table, so the table's position is added.
     expect(lines[0].from).toEqual({ x: 234, y: 64 });
     expect(lines[0].to).toEqual({ x: 404, y: 64 });
+    // Needed to highlight a table's keys on hover.
+    expect(lines[0].fromTable).toBe("orders");
+    expect(lines[0].toTable).toBe("customers");
   });
 
   it("drops an edge whose port came back missing", () => {

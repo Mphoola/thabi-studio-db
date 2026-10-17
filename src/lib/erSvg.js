@@ -102,3 +102,19 @@ export function buildSvg(placed, tables) {
 export function fileNameFor(title) {
   return `${String(title ?? "diagram").replace(/[^\w.-]+/g, "-")}.svg`;
 }
+
+/**
+ * Hands an SVG to the user as a file.
+ *
+ * The object URL is revoked immediately: on some platforms a download that has
+ * not started yet can be cancelled by a revoked URL, and the leak is otherwise
+ * a blob per export for the life of the window.
+ */
+export function downloadSvg(svg, filename) {
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}

@@ -27,6 +27,9 @@ const emit = defineEmits([
   "pan-move",
   "pan-end",
   "zoom-wheel",
+  "hover",
+  "select",
+  "expand",
 ]);
 
 const transform = computed(
@@ -52,6 +55,45 @@ function rowsOf(name) {
     @wheel="emit('zoom-wheel', $event)"
   >
     <g :transform="transform">
+      <defs>
+        <!-- Without an arrowhead a line does not say which end points at
+             which table, which is the question every line is asked. -->
+        <marker
+          id="fk-arrow"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L8,4 L0,8 z" class="fill-line-strong" />
+        </marker>
+        <marker
+          id="fk-arrow-lit"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M0,0 L8,4 L0,8 z" class="fill-accent" />
+        </marker>
+        <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="1" class="fill-line" />
+        </pattern>
+      </defs>
+
+      <!-- A dot grid, so panning reads as movement rather than as nothing. -->
+      <rect
+        x="-20000"
+        y="-20000"
+        width="40000"
+        height="40000"
+        fill="url(#grid)"
+      />
+
       <line
         v-for="line in lines"
         :key="line.id"
@@ -59,20 +101,36 @@ function rowsOf(name) {
         :y1="line.from.y"
         :x2="line.to.x"
         :y2="line.to.y"
-        class="stroke-line-strong"
-        stroke-width="1.5"
+        :stroke-width="related(line, hovered || selected) ? 2 : 1.25"
+        :marker-end="
+          related(line, hovered || selected)
+            ? 'url(#fk-arrow-lit)'
+            : 'url(#fk-arrow)'
+        "
+        :class="
+          dimmed(null, line) ? 'stroke-line opacity-30' : 'stroke-line-strong'
+        "
       />
       <g
         v-for="node in Object.values(nodes)"
         :key="node.id"
         :transform="`translate(${node.x}, ${node.y})`"
+        class="cursor-pointer"
+        :class="dimmed(node.id, null) ? 'opacity-35' : ''"
+        @pointerenter="emit('hover', node.id)"
+        @pointerleave="emit('hover', null)"
+        @click.stop="emit('select', node.id)"
       >
         <rect
           :width="node.width"
           :height="node.height"
           rx="6"
-          class="fill-surface stroke-line"
-          stroke-width="1"
+          :stroke-width="node.id === selected ? 2 : 1"
+          :class="
+            node.id === selected
+              ? 'fill-surface stroke-accent'
+              : 'fill-surface stroke-line'
+          "
         />
         <rect
           :width="node.width"
@@ -121,9 +179,14 @@ function rowsOf(name) {
           v-if="rowsOf(node.id).hidden"
           x="10"
           :y="node.height - 4"
-          class="fill-fg-subtle text-[10px]"
+          class="fill-fg-subtle text-[10px] underline decoration-dotted"
+          @click.stop="emit('expand', node.id)"
         >
-          +{{ rowsOf(node.id).hidden }} more
+          {{
+            expanded.has(node.id)
+              ? "show fewer"
+              : `+${rowsOf(node.id).hidden} more`
+          }}
         </text>
       </g>
     </g>

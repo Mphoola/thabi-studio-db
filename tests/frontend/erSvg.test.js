@@ -120,3 +120,33 @@ describe("the exported file", () => {
     expect(fileNameFor(null)).toBe("diagram.svg");
   });
 });
+
+describe("a wide table is a box, unless someone asks otherwise", () => {
+  const wide = {
+    name: "wide",
+    columns: Array.from({ length: 40 }, (_, index) => ({
+      name: `c${index}`,
+      dataType: "text",
+    })),
+  };
+
+  it("caps at the default and counts the rest", () => {
+    expect(rowsFor([wide], "wide").columns).toHaveLength(14);
+  });
+
+  /**
+   * A cap with no way past it hides columns for good, which is worse than a
+   * tall box: nobody can tell the columns are there at all.
+   */
+  it("shows every column when there is no cap", () => {
+    expect(rowsFor([wide], "wide", Infinity).columns).toHaveLength(40);
+    expect(rowsFor([wide], "wide", Infinity).hidden).toBe(0);
+  });
+
+  it("still counts them when a cap is given", () => {
+    expect(rowsFor([wide], "wide", 5)).toEqual({
+      columns: wide.columns.slice(0, 5),
+      hidden: 35,
+    });
+  });
+});
