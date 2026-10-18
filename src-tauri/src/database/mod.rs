@@ -6,6 +6,9 @@
 //! statements run on the same server session, and cancelling a query needs
 //! to know which backend is running it.
 
+pub mod ddl;
+pub mod diagram;
+pub mod dump;
 pub mod edit;
 pub mod error;
 pub mod filter;
@@ -58,6 +61,16 @@ impl Engine {
             "postgres" => Ok(Self::Postgres),
             "sqlserver" => Ok(Self::SqlServer),
             _ => Err(AppError::unsupported_driver()),
+        }
+    }
+
+    /// How a person names this engine, for messages that are read rather
+    /// than parsed. The serde names are for the wire and are not for this.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::MySql => "MySQL",
+            Self::Postgres => "PostgreSQL",
+            Self::SqlServer => "SQL Server",
         }
     }
 }
@@ -413,6 +426,27 @@ impl Session {
         };
         let rows = dispatch!(self, s => s.query_text(&sql, params).await)?;
         Ok(metadata::completion_rows(rows))
+    }
+
+    /// Tables, columns and foreign keys for the ER diagram.
+    ///
+    /// Three queries rather than one joined one: a foreign key repeats every
+    /// column row once per key column, and a schema of wide tables turns that
+    /// into thousands of rows to discard.
+    pub async fn diagram(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<diagram::Diagram, AppError> {
+        let engine = self.server_info().engine;
+        let owner = diagram::owner_of(engine, database, schema);
+        let columns =
+            dispatch!(self, s => s.query_text(&diagram::columns_sql(engine), &[owner]).await)?;
+        let keys =
+            dispatch!(self, s => s.query_text(&diagram::primary_keys_sql(engine), &[owner]).await)?;
+        let links =
+            dispatch!(self, s => s.query_text(&diagram::foreign_keys_sql(engine), &[owner]).await)?;
+        Ok(diagram::build(columns, keys, links))
     }
 
     /// Single-column foreign keys elsewhere that point at a table.

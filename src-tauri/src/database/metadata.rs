@@ -117,6 +117,12 @@ pub struct ObjectStructure {
     /// `None` when the engine has no indexes for this kind of object
     /// (views), as opposed to an empty list.
     pub indexes: Option<Vec<IndexInfo>>,
+    /// MySQL's own `CREATE TABLE`, when the engine will say it.
+    ///
+    /// Nothing else has an equivalent, and for a dump this is the difference
+    /// between the server's words and our reconstruction of them.
+    #[serde(default)]
+    pub show_create: Option<String>,
 }
 
 /// A single-column foreign key in another table that points at this one.

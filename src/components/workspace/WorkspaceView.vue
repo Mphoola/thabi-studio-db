@@ -5,13 +5,31 @@ import { runCommand } from "../../composables/useCommands.js";
 import BaseButton from "../common/BaseButton.vue";
 import EmptyState from "../common/EmptyState.vue";
 import KbdShortcut from "../common/KbdShortcut.vue";
+import DiagramView from "../explorer/DiagramView.vue";
 import ObjectView from "../explorer/ObjectView.vue";
 import QueryTabView from "./QueryTabView.vue";
 import TabBar from "./TabBar.vue";
 
-const { tabs, active, activeId, splitPanes } = useTabs();
+const { tabs, active, activeId, splitPanes, openObject } = useTabs();
 const visible = (tab) =>
   active.value?.id === tab.id || Boolean(splitPanes.value?.includes(tab.id));
+
+/** Clicking a table in the diagram opens that table, as one click. */
+function openTableFromDiagram(tab, name) {
+  openObject(
+    {
+      key: `object:db:${tab.database}\u0000${name}`,
+      type: "object",
+      label: name,
+      name,
+      kind: "table",
+      database: tab.database,
+      schema: tab.schema,
+    },
+    "structure",
+    { profileId: tab.profileId },
+  );
+}
 </script>
 
 <template>
@@ -32,6 +50,13 @@ const visible = (tab) =>
           :class="splitPanes && activeId !== tab.id && 'opacity-90'"
           :style="splitPanes ? { order: splitPanes.indexOf(tab.id) } : null"
           @focusin="activeId = tab.id"
+        />
+        <DiagramView
+          v-else-if="tab.type === 'diagram' && active?.id === tab.id"
+          :tab="tab"
+          :profile-id="tab.profileId"
+          class="min-h-0 flex-1"
+          @open-table="openTableFromDiagram(tab, $event)"
         />
         <ObjectView
           v-else-if="active?.id === tab.id"

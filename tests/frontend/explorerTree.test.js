@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   databaseNode,
+  diagramTargetFor,
   objectGroups,
   qualifiedName,
   quoteIdent,
@@ -63,5 +64,48 @@ describe("quoting", () => {
     expect(qualifiedName("mysql", { ...node, schema: null })).toBe(
       "`shop`.`Order Details`",
     );
+  });
+});
+
+/**
+ * Where a diagram should be drawn.
+ *
+ * The nodes are named by `label` and carry no `name` at all, which is easy to
+ * assume and draws a diagram of "undefined" rather than failing.
+ */
+describe("a diagram's target", () => {
+  it("uses a database node's own database", () => {
+    expect(diagramTargetFor(databaseNode("hr"))).toEqual({
+      database: "hr",
+      schema: null,
+      title: "hr diagram",
+    });
+  });
+
+  it("uses a schema node's schema, not its database", () => {
+    expect(diagramTargetFor(schemaNode("shop", "public"))).toEqual({
+      database: "shop",
+      schema: "public",
+      title: "public diagram",
+    });
+  });
+
+  it("names a schema node by its label, which is where the name lives", () => {
+    const node = schemaNode("shop", "sales");
+    expect(node.name).toBeUndefined();
+    expect(diagramTargetFor(node).schema).toBe("sales");
+    expect(diagramTargetFor(node).database).toBe("shop");
+  });
+
+  it("says no rather than half-filling, so the caller can explain", () => {
+    // A tab opened with no database is a blank panel and no explanation.
+    expect(diagramTargetFor(databaseNode(undefined))).toBeNull();
+    expect(diagramTargetFor({ type: "database" })).toBeNull();
+  });
+
+  it("draws nothing for a node that is not a database or a schema", () => {
+    expect(diagramTargetFor(null)).toBeNull();
+    expect(diagramTargetFor({ type: "object", name: "orders" })).toBeNull();
+    expect(diagramTargetFor({ type: "group" })).toBeNull();
   });
 });

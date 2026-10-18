@@ -125,6 +125,25 @@ export function useTabs() {
     show(tab);
   }
 
+  /**
+   * Opens the ER diagram for a schema. Read-only: nothing here can change
+   * the database, which is why it is a tab of its own rather than a view of
+   * somebody else's tab.
+   */
+  function openDiagram({ profileId, database, schema, title }) {
+    const tab = reactive({
+      id: newId(),
+      type: "diagram",
+      title: title ?? `${database} diagram`,
+      profileId,
+      database,
+      schema: schema ?? null,
+    });
+    tabs.value.push(tab);
+    show(tab);
+    return tab;
+  }
+
   const hasStagedEdits = (tab) =>
     Boolean(
       tab.edits &&
@@ -215,6 +234,7 @@ export function useTabs() {
     newQuery,
     openSaved,
     openObject,
+    openDiagram,
     close,
     isDirty,
   };

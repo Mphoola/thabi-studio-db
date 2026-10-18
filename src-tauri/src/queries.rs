@@ -465,7 +465,10 @@ impl QueryTab {
                         return Err((true, not_one_row(index, statements.len(), count)));
                     }
                     Err(error) => {
-                        return Err((true, change_failed(index, statements.len(), error)));
+                        return Err((
+                            true,
+                            change_failed(index, statements.len(), statements, engine, error),
+                        ));
                     }
                 }
             }
@@ -547,13 +550,56 @@ fn not_one_row(index: usize, total: usize, count: Option<u64>) -> AppError {
     )
 }
 
-fn change_failed(index: usize, total: usize, mut error: AppError) -> AppError {
-    error.message = format!(
-        "Change {} of {total} failed, so nothing was saved. {}",
-        index + 1,
-        error.message
-    );
+/// Whether a statement is DDL, which commits on its own in MySQL.
+///
+/// `START TRANSACTION` and `ROLLBACK` are issued for every engine, but MySQL
+/// commits implicitly around DDL: the rollback genuinely does nothing, and an
+/// error saying otherwise is worse than the error it replaced, because it
+/// invites a retry that fails on work already done.
+fn is_ddl(statement: &str) -> bool {
+    let head = statement.split_whitespace().next().unwrap_or("");
+    let head = head.to_ascii_uppercase();
+    [
+        "ALTER", "CREATE", "DROP", "TRUNCATE", "RENAME", "COMMENT", "GRANT", "REVOKE",
+    ]
+    .iter()
+    .any(|word| head.starts_with(word))
+}
+
+fn change_failed(
+    index: usize,
+    total: usize,
+    statements: &[String],
+    engine: Engine,
+    mut error: AppError,
+) -> AppError {
+    // Anything before this one may already be committed, so say which.
+    let earlier = index.min(statements.len());
+    error.message = if engine == Engine::MySql && statements.iter().any(|s| is_ddl(s)) {
+        format!(
+            "Statement {index} of {total} failed. MySQL commits DDL one statement at a time, \
+             so the {} before it may already be applied — check the table before running this \
+             again, or a retry will fail on work already done. {}",
+            number_word(earlier),
+            error.message
+        )
+    } else {
+        format!(
+            "Change {} of {total} failed, so nothing was saved. {}",
+            index + 1,
+            error.message
+        )
+    };
     error
+}
+
+/// "none", "one", "2", ... — for counting statements that may have committed.
+fn number_word(count: usize) -> String {
+    match count {
+        0 => "none".to_owned(),
+        1 => "one".to_owned(),
+        n => n.to_string(),
+    }
 }
 
 /// The database named by a `USE name` statement, without quotes.
@@ -588,5 +634,86 @@ mod tests {
         assert_eq!(use_target("USE [Sales Ü]"), Some("Sales Ü".into()));
         assert_eq!(use_target("SELECT 1"), None);
         assert_eq!(use_target("user_defined()"), None);
+    }
+}
+
+#[cfg(test)]
+mod ddl_failure_tests {
+    use super::{change_failed, is_ddl};
+    use crate::database::Engine;
+    use crate::errors::AppError;
+
+    fn engine_error() -> AppError {
+        AppError::new(
+            "query_failed",
+            "Unknown column 'status' in 'attendances'".to_owned(),
+        )
+    }
+
+    #[test]
+    fn recognises_ddl_from_the_first_word() {
+        assert!(is_ddl("ALTER TABLE `a` MODIFY COLUMN `b` INT"));
+        assert!(is_ddl("  create table x (id int)"));
+        assert!(is_ddl("TRUNCATE TABLE `a`"));
+        assert!(!is_ddl("UPDATE `a` SET `b` = 1"));
+        assert!(!is_ddl("SELECT 1"));
+    }
+
+    /// The whole point: MySQL committed the earlier statements anyway, so
+    /// telling the user nothing was saved sends them into a retry that fails
+    /// on work that is already done.
+    #[test]
+    fn mysql_ddl_says_the_earlier_statements_may_be_applied() {
+        let statements = vec![
+            "ALTER TABLE `t` CHANGE COLUMN `a` `b` INT NOT NULL".to_owned(),
+            "ALTER TABLE `t` MODIFY COLUMN `b` TEXT".to_owned(),
+        ];
+        let error = change_failed(1, 2, &statements, Engine::MySql, engine_error());
+        assert!(
+            error.message.contains("one statement at a time"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("Statement 1 of 2"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains("already"), "{}", error.message);
+        // The reason the server gave must survive.
+        assert!(
+            error.message.contains("Unknown column"),
+            "{}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("nothing was saved"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn mysql_row_edits_are_still_all_or_nothing() {
+        // DML inside a transaction really does roll back, so the old wording
+        // stays true and changing it would be its own lie.
+        let statements = vec!["UPDATE `a` SET `b` = 1".to_owned()];
+        let error = change_failed(1, 2, &statements, Engine::MySql, engine_error());
+        assert!(
+            error.message.contains("nothing was saved"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn postgres_ddl_rolls_back_and_may_say_so() {
+        let statements = vec!["ALTER TABLE a ADD COLUMN b int".to_owned()];
+        let error = change_failed(0, 2, &statements, Engine::Postgres, engine_error());
+        assert!(
+            error.message.contains("nothing was saved"),
+            "{}",
+            error.message
+        );
     }
 }

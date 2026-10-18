@@ -1,23 +1,40 @@
 import { copyText } from "../../lib/clipboard.js";
+import { ref } from "vue";
 import {
   ClipboardCopy,
   Columns3,
+  FileCode2,
+  Network,
   RefreshCw,
   Repeat,
   Rows3,
 } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useExplorer } from "../../composables/useExplorer.js";
+import { useTabs } from "../../composables/useTabs.js";
 import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
-import { qualifiedName } from "../../lib/explorerTree.js";
+import { diagramTargetFor, qualifiedName } from "../../lib/explorerTree.js";
+
+/**
+ * What the backup dialog is for, and whether it is open.
+ *
+ * At module scope, not inside the composable, because the menu that opens it
+ * and the panel that renders it call this separately. Refs made per call are
+ * two different pieces of state: the menu set one, the dialog watched the
+ * other, and nothing on screen happened at all.
+ */
+const exportTarget = ref(null);
+const exportOpen = ref(false);
 
 /** Context-menu items and actions for explorer nodes. */
 export function useExplorerActions() {
   const explorer = useExplorer();
   const store = useConnectionProfiles();
   const hostKeys = useHostKeyTrust();
+  const workspace = useTabs();
+  const profile = store.selectedProfile;
   const toasts = useToasts();
 
   function menuFor(node) {
@@ -33,6 +50,8 @@ export function useExplorerActions() {
         { id: "open-data", label: "Open Data", icon: Rows3 },
         { id: "open-structure", label: "Show Structure", icon: Columns3 },
         { separator: true },
+        { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
+        { separator: true },
         ...copy,
       ];
     const current = explorer.status.value?.server?.database;
@@ -45,6 +64,15 @@ export function useExplorerActions() {
         ? [{ id: "switch", label: "Switch to This Database", icon: Repeat }]
         : []),
       { id: "refresh", label: "Refresh", icon: RefreshCw, shortcut: "Mod+R" },
+      // A diagram needs somewhere to draw tables. On MySQL the database *is*
+      // the schema, which is why this is offered on both rather than on
+      // whichever one happens to be called a schema.
+      ...(node.type === "schema" || node.type === "database"
+        ? [
+            { id: "diagram", label: "Show Diagram", icon: Network },
+            { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
+          ]
+        : []),
       { separator: true },
       ...copy,
     ].filter((item) => node.type !== "group" || item.id !== "copy-name");
@@ -60,8 +88,7 @@ export function useExplorerActions() {
   }
 
   async function run(id, node) {
-    const engine = store.selectedProfile.value?.driver;
-    const profile = store.selectedProfile.value;
+    const engine = profile.value?.driver;
     switch (id) {
       case "open-data":
         return explorer.open(node, "data");
@@ -73,9 +100,29 @@ export function useExplorerActions() {
         return copy(qualifiedName(engine, node));
       case "refresh":
         return explorer.refresh(node);
+      case "export-sql":
+        // A table exports just itself; a database or schema exports all of it.
+        return emitExport(node);
+      case "diagram": {
+        if (!store.isConnected(profile.value?.id)) {
+          toasts.error("Nothing to draw", "Connect to a database first.");
+          return;
+        }
+        const target = diagramTargetFor(node);
+        if (!target) {
+          toasts.error("Nothing to draw", "Pick a database or a schema first.");
+          return;
+        }
+        return workspace.openDiagram({
+          profileId: profile.value?.id,
+          ...target,
+        });
+      }
       case "switch":
         try {
-          await hostKeys.run(() => store.connect(profile.id, node.database));
+          await hostKeys.run(() =>
+            store.connect(profile.value.id, node.database),
+          );
         } catch (error) {
           toasts.error(
             `Couldn’t switch to “${node.database}”`,
@@ -86,5 +133,36 @@ export function useExplorerActions() {
     }
   }
 
-  return { menuFor, run };
+  /**
+   * Where the export dialog opens, for one table or for a whole schema.
+   *
+   * The dialog needs the connection's profile id, which is what commands are
+   * keyed by, and the driver so it can say whether the structure in the file
+   * is the server's own words or a rebuild.
+   */
+  function emitExport(node) {
+    const live = store.statusFor(profile.value?.id);
+    if (!live?.connectionId) {
+      toasts.error("Nothing to export", "Connect to a database first.");
+      return;
+    }
+    const one = node.type === "object";
+    exportTarget.value = {
+      profileId: profile.value.id,
+      database: one
+        ? node.database
+        : (node.database ?? live.server?.database ?? node.name),
+      schema: one
+        ? (node.schema ?? null)
+        : node.type === "schema"
+          ? node.name
+          : (node.schema ?? null),
+      engine: profile.value?.driver ?? "",
+      tables: one ? [node.name] : [],
+      available: [],
+    };
+    exportOpen.value = true;
+  }
+
+  return { menuFor, run, target: exportTarget, open: exportOpen };
 }

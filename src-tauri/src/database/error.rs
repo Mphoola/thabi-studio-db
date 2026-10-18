@@ -105,14 +105,41 @@ pub fn from_io(kind: io::ErrorKind, message: &str, ctx: Context<'_>) -> AppError
     }
 }
 
+/// The server accepted the connection and closed it without speaking.
+///
+/// The driver reads a greeting as soon as it connects, so this is the earliest
+/// possible failure: whatever closed it did so before saying which server it
+/// was. There is no evidence here about *why*, so this says what is worth
+/// checking rather than picking one cause and presenting it as the answer.
+///
+/// Listed, most common first: the server is out of connection slots and drops
+/// new arrivals; the port belongs to a different kind of database, whose
+/// handshake ours cannot read; the server requires encryption; or it restarted
+/// mid-connect. Naming the port and engine is the part that actually helps,
+/// because the usual cause is a profile pointing somewhere unintended.
 fn closed_by_server(ctx: Context<'_>) -> AppError {
-    let hint = match ctx.tls {
-        TlsMode::Off => " The server may require encryption; try a TLS setting other than Off.",
-        _ => " Check that this port belongs to the right kind of database.",
-    };
+    let mut causes: Vec<String> = Vec::new();
+    causes.push("the server may have no connection slots left".to_owned());
+    causes.push(format!(
+        "port {} may belong to a different kind of database than {}",
+        ctx.port,
+        ctx.engine.label()
+    ));
+    if ctx.tls == TlsMode::Off {
+        causes.push(
+            "the server may require encryption — try a TLS setting other than Off".to_owned(),
+        );
+    }
+    causes.push("the server may have restarted".to_owned());
     AppError::new(
         "connection_closed",
-        format!("The server closed the connection.{hint}"),
+        format!(
+            "{} closed the connection to {}:{} before it identified itself. Worth checking: {}.",
+            ctx.engine.label(),
+            ctx.host,
+            ctx.port,
+            causes.join("; ")
+        ),
     )
 }
 
@@ -343,11 +370,51 @@ mod tests {
     }
 
     #[test]
-    fn closed_connection_with_tls_off_hints_at_encryption() {
+    /// With TLS off, encryption is still worth raising — but as one cause
+    /// among several, not as the answer.
+    fn closed_connection_with_tls_off_still_mentions_encryption() {
         let mut context = ctx();
         context.tls = TlsMode::Off;
         let error = from_io(io::ErrorKind::ConnectionReset, "reset", context);
         assert_eq!(error.kind, "connection_closed");
-        assert!(error.message.contains("encryption"));
+        assert!(error.message.contains("encryption"), "{}", error.message);
+    }
+
+    /// A guessed cause costs more than no cause: it sends people to one place
+    /// and away from the others. So the message must not single out TLS when
+    /// TLS was never the problem, and must name where it actually connected.
+    #[test]
+    fn closed_connection_does_not_blame_tls_when_tls_was_on() {
+        let mut context = ctx();
+        context.tls = TlsMode::EncryptOnly;
+        let error = from_io(io::ErrorKind::ConnectionReset, "reset", context);
+        assert!(
+            !error.message.contains("encryption"),
+            "blamed encryption without evidence: {}",
+            error.message
+        );
+        assert!(error.message.contains(context.host), "{}", error.message);
+    }
+
+    #[test]
+    fn closed_connection_names_the_port_and_engine() {
+        let context = ctx();
+        let error = from_io(io::ErrorKind::UnexpectedEof, "eof", context);
+        assert!(
+            error.message.contains(&context.port.to_string()),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains(context.engine.label()),
+            "{}",
+            error.message
+        );
+        // The likeliest cause on a local machine goes first.
+        assert!(
+            error.message.contains("connection slots"),
+            "{}",
+            error.message
+        );
     }
 }

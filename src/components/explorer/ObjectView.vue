@@ -10,6 +10,7 @@ import { columnLayoutRef } from "../../composables/useColumns.js";
 import { tableSource } from "../../lib/gridSources.js";
 import { pagerProps, tablePageSize } from "../../lib/tablePaging.js";
 import AddRowDialog from "./AddRowDialog.vue";
+import CreateTableDialog from "./CreateTableDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
 import EditChangesBar from "./EditChangesBar.vue";
 import FilterBar from "./FilterBar.vue";
@@ -18,6 +19,8 @@ import ObjectLoadState from "./ObjectLoadState.vue";
 import { useTableEditing } from "./useTableEditing.js";
 import { useTableFilters } from "./useTableFilters.js";
 import { useTableLinks } from "./useTableLinks.js";
+import StructureEditor from "./StructureEditor.vue";
+import TableActions from "./TableActions.vue";
 import StructureView from "./StructureView.vue";
 
 /** A table or view opened from the explorer: read-only data or structure. */
@@ -71,6 +74,15 @@ const links = useTableLinks({
   columnInfo: editing.columnInfo,
 });
 const addingRow = ref(false);
+const creatingTable = ref(false);
+/**
+ * Whether the structure may be changed here. A view has no structure to
+ * design, and a read-only connection takes no writes at all — offering an
+ * editor that would be refused at the server would be worse than not offering.
+ */
+const canEditStructure = computed(
+  () => profile.value?.safeMode !== "read-only",
+);
 // Save (Mod+S) in this tab applies the staged edits.
 props.tab.applyEdits = editing.apply;
 
@@ -168,7 +180,18 @@ const goToPage = (index) => gridView.value?.goToPage(index);
       @add-row="addingRow = true"
       @toggle-filters="tableFilters.toggle"
       @reload="load()"
-    />
+    >
+      <TableActions
+        v-if="node.kind === 'table' && tab === 'data' && canEditStructure"
+        :tab="props.tab"
+        :profile-id="profileId ?? ''"
+        :database="node.database ?? ''"
+        :schema="node.schema ?? ''"
+        :table="node.name"
+        :disabled="current.status === 'loading'"
+        @changed="load()"
+      />
+    </ObjectHeader>
     <FilterBar
       v-if="tableFilters.show.value && columns.length"
       v-model:filters="filters"
@@ -219,11 +242,36 @@ const goToPage = (index) => gridView.value?.goToPage(index);
         @go="goToPage"
       />
     </template>
+    <!-- A view has nothing to design, and a read-only connection can change
+         nothing, so those keep the read-only structure view. -->
+    <StructureEditor
+      v-else-if="node.kind === 'table' && canEditStructure"
+      class="min-h-0 flex-1"
+      :tab="props.tab"
+      :structure="current.value"
+      :profile-id="profileId ?? ''"
+      :database="node.database ?? ''"
+      :schema="node.schema ?? ''"
+      :title="node.name"
+      @applied="load('structure')"
+    />
     <StructureView
       v-else
       class="min-h-0 flex-1"
       :structure="current.value"
       :kind="node.kind"
+    />
+    <CreateTableDialog
+      v-model:open="creatingTable"
+      :profile-id="props.tab.profileId ?? ''"
+      :tab-id="props.tab.id"
+      :database="node.database ?? ''"
+      :schema="node.schema ?? ''"
+      :engine="
+        connections.profiles.value.find((p) => p.id === props.tab.profileId)
+          ?.driver ?? 'postgres'
+      "
+      @created="load('structure')"
     />
     <AddRowDialog
       v-model:open="addingRow"

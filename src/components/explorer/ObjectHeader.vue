@@ -45,6 +45,9 @@ const location = computed(() =>
       :options="views"
       label="Object view"
     />
+    <!-- Whatever the caller puts here sits before the buttons, so a table's
+         actions end up beside the view switch. -->
+    <slot />
     <IconButton
       v-if="view === 'data' && canAddRow"
       :icon="Plus"

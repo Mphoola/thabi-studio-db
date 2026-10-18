@@ -326,9 +326,32 @@ impl DatabaseSession for MySqlSession {
         } else {
             None
         };
+        // The server's own CREATE TABLE, for a dump. The statement is one row
+        // of two columns: the header, then the statement.
+        let shown = self
+            .query_text(
+                &format!(
+                    "SHOW CREATE TABLE {}",
+                    quote::table(Engine::MySql, database, "", name)
+                ),
+                &[],
+            )
+            .await
+            .ok()
+            .and_then(|rows| {
+                rows.into_iter().next().and_then(|mut row| {
+                    row.resize(2, None);
+                    let mut cells = row.into_iter();
+                    match (cells.next(), cells.next()) {
+                        (Some(_), Some(Some(create))) => Some(create),
+                        _ => None,
+                    }
+                })
+            });
         Ok(ObjectStructure {
             columns: metadata::column_rows(columns),
             indexes,
+            show_create: shown,
         })
     }
 

@@ -294,6 +294,58 @@ export function useAppCommands() {
       },
     },
     {
+      // A feature only reachable from a context menu is a feature nobody
+      // finds. The explorer keeps the menu item; this is how it is looked up.
+      id: "view.diagram",
+      title: "Show Schema Diagram",
+      group: "View",
+      shortcut: "Mod+Shift+G",
+      enabled: () => explorer.connected.value,
+      run: () => {
+        const profile = explorer.profile.value;
+        const status = connections.statusFor(profile?.id);
+        if (!status?.connectionId) {
+          toasts.error("Nothing to draw", "Connect to a database first.");
+          return;
+        }
+        // The session's own database, then the one saved on the profile. A
+        // connection can be live without either — SQL Server opens on master,
+        // and a profile with no database opens on whatever it lands in — and
+        // asking for a diagram with no database names is what produced an
+        // empty panel rather than an explanation.
+        const database =
+          status.server?.database || profile?.databaseName || null;
+        if (!database) {
+          toasts.error(
+            "Which database?",
+            "This connection is not in one. Pick a database in the explorer, or right-click it and choose Show Diagram.",
+          );
+          return;
+        }
+        // MySQL's database is its schema, so there is nothing to find. On the
+        // other two the schema is a separate name, and a profile does not
+        // carry one — so rather than guess "public" and draw somebody else's
+        // schema, this says where to click instead.
+        const isMySql = profile?.driver === "mysql";
+        if (!isMySql) {
+          toasts.error(
+            "Which schema?",
+            "This engine has schemas inside databases. Right-click the schema and choose Show Diagram.",
+          );
+          return;
+        }
+        layout.sidebarView.value = "explorer";
+        layout.sidebarOpen.value = true;
+        workspace.openDiagram({
+          profileId: profile.id,
+          database,
+          // MySQL: the database is the schema, and there is none to name.
+          schema: null,
+          title: `${database} diagram`,
+        });
+      },
+    },
+    {
       id: "view.connections",
       title: "Show Connections",
       group: "View",

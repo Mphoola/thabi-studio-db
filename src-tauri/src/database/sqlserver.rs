@@ -316,6 +316,9 @@ impl DatabaseSession for SqlServerSession {
         Ok(ObjectStructure {
             columns: metadata::column_rows(columns),
             indexes: Some(metadata::index_rows(rows)),
+            // SQL Server will not state its CREATE TABLE, so a dump rebuilds it
+            // from what is here rather than from the server's own words.
+            show_create: None,
         })
     }
 

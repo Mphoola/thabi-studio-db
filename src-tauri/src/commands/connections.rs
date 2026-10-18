@@ -9,7 +9,7 @@ use crate::{
     state::AppState,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 /// Default rows fetched per statement; the user can raise it in Settings.
 const DEFAULT_MAX_ROWS: usize = 10_000;
@@ -204,6 +204,21 @@ pub async fn list_objects(
         s.list_objects(&database, &schema).await
     })
     .await
+}
+
+/// Everything the ER diagram draws for one schema.
+///
+/// Read-only by construction: it returns data, and there is no command that
+/// draws a diagram back.
+#[tauri::command]
+pub async fn schema_diagram(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<database::diagram::Diagram, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| s.diagram(&database, &schema).await).await
 }
 
 #[tauri::command]
@@ -1036,6 +1051,191 @@ pub async fn copy_table(
     Ok(String::from_utf8(text).unwrap_or_default())
 }
 
+/// Writes a schema, or chosen tables, to a `.sql` file the same engine can run.
+///
+/// A backup does not need an open query tab, so this runs off the connection's
+/// own session rather than a tab's. Progress is emitted as it goes — a dump of
+/// a real database is minutes, and a button that does nothing visible for two
+/// of them looks broken.
+#[tauri::command]
+pub async fn export_sql(
+    app: tauri::AppHandle,
+    id: String,
+    database: String,
+    schema: Option<String>,
+    options: database::dump::DumpOptions,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<database::dump::DumpSummary, AppError> {
+    use database::dump::DumpSummary;
+
+    if !options.wants_anything() {
+        return Err(AppError::new(
+            "nothing_to_export",
+            "Choose structure, data, or both.",
+        ));
+    }
+    let schema = schema.unwrap_or_default();
+
+    let engine = with_session(&state, &id, async |session| {
+        Ok(session.server_info().engine)
+    })
+    .await?;
+    // Every structure is read before anything is written, so a table that
+    // cannot be described stops the export rather than leaving a hole in a
+    // file that looks complete.
+    let planned = with_session(&state, &id, async |session| {
+        database::dump::plan(session, &database, &schema, &options).await
+    })
+    .await?;
+    if planned.is_empty() {
+        return Err(AppError::new(
+            "nothing_to_export",
+            "There are no tables here to export.",
+        ));
+    }
+    let session = state.connections.session(&id).await?;
+    let handle = tokio::runtime::Handle::current();
+    let cancel = state.start_export(&id);
+    let total = planned.len();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+        let file = std::fs::File::create(&path).map_err(|_| {
+            AppError::new(
+                "export_failed",
+                "That file couldn't be created. Check the folder and try again.",
+            )
+        })?;
+        let mut writer = database::dump::CountingWriter::new(std::io::BufWriter::new(file));
+        let banner = format!(
+            "{}{}{}\n",
+            database::dump::header(engine, &database, &schema, &generated_stamp()),
+            database::dump::contents_note(&options),
+            database::dump::fidelity_note(engine, &options).unwrap_or_default(),
+        );
+        writer.write_all(banner.as_bytes()).map_err(wump)?;
+
+        let mut rows = 0u64;
+        let mut read = 0usize;
+        for (name, structure) in &planned {
+            read += 1;
+            // Cloned per call rather than moved, so the closure is FnMut and
+            // can be called once per page for as long as the table takes.
+            let table = name.clone();
+            let app = &app;
+            let mut announce = |rows: u64| {
+                let _ = app.emit(
+                    "sql-export-progress",
+                    database::dump::DumpProgress {
+                        table: table.clone(),
+                        tables: total,
+                        rows,
+                    },
+                );
+            };
+            announce(0);
+            if options.structure {
+                for statement in database::dump::structure_statements(
+                    engine, &database, &schema, name, structure,
+                ) {
+                    writer.write_all(statement.as_bytes()).map_err(wump)?;
+                }
+            }
+            if options.data {
+                // The lock is taken and released around one table at a time
+                // rather than held for the whole dump, so a query on the same
+                // connection is not blocked behind an export.
+                let mut guard = handle.block_on(session.lock());
+                let live = guard.as_mut().ok_or_else(AppError::not_connected)?;
+                let target = database::ddl::TableTarget {
+                    database: database.clone(),
+                    schema: if schema.is_empty() {
+                        None
+                    } else {
+                        Some(schema.clone())
+                    },
+                    name: name.clone(),
+                };
+                let mut run =
+                    database::dump::WriteRun::new(options.row_limit, cancel.clone(), &mut announce);
+                rows += handle.block_on(database::dump::write_table_rows(
+                    live,
+                    &target,
+                    structure,
+                    &mut run,
+                    &mut writer,
+                ))?;
+            }
+        }
+        writer.flush().map_err(wump)?;
+        let _ = read;
+        Ok(DumpSummary {
+            tables: total,
+            rows,
+            bytes: writer.bytes(),
+        })
+    })
+    .await;
+
+    // Cleared whichever way it ended. A flag left behind makes the Stop button
+    // claim there is something to stop on the next export, when there is not.
+    state.finish_export(&id);
+    result.map_err(|_| AppError::background_task())?
+}
+
+/// Stops a running dump. False when nothing is running.
+#[tauri::command]
+pub fn cancel_sql_export(id: String, state: State<'_, AppState>) -> bool {
+    state.cancel_export(&id)
+}
+
+/// A timestamp for the file's header, taken from the clock rather than the
+/// server, because a backup labelled only "on export" cannot be told from a
+/// weekly one.
+fn generated_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or(0);
+    // ISO 8601 in UTC, computed rather than formatted: a date library is a
+    // dependency for one comment line.
+    let (year, month, day) = civil_from_days((seconds / 86_400) as i64);
+    let time = seconds % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02} UTC",
+        time / 3600,
+        (time % 3600) / 60,
+        time % 60
+    )
+}
+
+/// Days since 1970 to a calendar date, by Howard Hinnant's algorithm.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// A write failure inside the blocking writer, where an io::Error has to become
+/// an AppError to travel back out.
+fn wump(cause: std::io::Error) -> AppError {
+    AppError::new("write_failed", "Couldn't write the file.").with_detail(Some(cause.to_string()))
+}
+
 /// Exports a table, streaming it straight to the chosen file.
 ///
 /// The extension decides the format, and the extension is added when it is
@@ -1115,4 +1315,126 @@ fn results_extension(path: &str, format: database::transfer::TransferFormat) -> 
     } else {
         path.with_extension(wanted)
     }
+}
+
+/// The DDL for a table's staged changes, and how they will be applied.
+///
+/// Pure text: nothing runs and no connection is touched, so the review dialog
+/// has something to show before anything is sent.
+#[tauri::command]
+pub async fn preview_table_ddl(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    plan: database::ddl::TablePlan,
+    state: State<'_, AppState>,
+) -> Result<database::ddl::DdlPreview, AppError> {
+    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    Ok(database::ddl::preview(
+        params.engine,
+        &target.database,
+        target.schema.as_deref().unwrap_or_default(),
+        &target.name,
+        &plan,
+    ))
+}
+
+/// Applies a table's staged changes.
+///
+/// The script is built by the same call the preview used, so the text that was
+/// read is the text that runs.
+#[tauri::command]
+pub async fn apply_table_ddl(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    plan: database::ddl::TablePlan,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = database::ddl::table_script(
+        params.engine,
+        &target.database,
+        target.schema.as_deref().unwrap_or_default(),
+        &target.name,
+        &plan,
+    );
+    tab.apply(&params, Some(target.database.clone()), &script)
+        .await
+}
+
+/// The statements for a whole-table action, reading the structure a copy is
+/// made from. Both commands come through here, so the SQL shown is the SQL
+/// that runs.
+async fn action_script_for(
+    tab: &crate::queries::QueryTab,
+    params: &database::ConnectParams,
+    engine: database::Engine,
+    target: &database::ddl::TableTarget,
+    action: &database::ddl::TableAction,
+) -> Result<Vec<String>, AppError> {
+    let schema = target.schema.as_deref().unwrap_or_default();
+    let needs_structure = matches!(
+        action,
+        database::ddl::TableAction::DuplicateStructure { .. }
+            | database::ddl::TableAction::DuplicateWithData { .. }
+    );
+    let structure = if needs_structure {
+        let found = tab
+            .with_session(params, Some(target.database.clone()), async |session| {
+                session
+                    .describe(
+                        &target.database,
+                        schema,
+                        &target.name,
+                        database::ObjectKind::Table,
+                    )
+                    .await
+            })
+            .await?;
+        Some(database::ddl::spec_from_structure(&found))
+    } else {
+        None
+    };
+    database::ddl::action_script(
+        engine,
+        &target.database,
+        schema,
+        &target.name,
+        action,
+        structure.as_ref(),
+    )
+    .map_err(|message| AppError::new("invalid", message))
+}
+
+/// The SQL for a whole-table action, before it runs.
+///
+/// The same two-step as a staged change: read the SQL, then run it. An action
+/// that skipped the first step would be the one here that cannot be taken back.
+#[tauri::command]
+pub async fn preview_table_action(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    action: database::ddl::TableAction,
+    state: State<'_, AppState>,
+) -> Result<database::ddl::DdlPreview, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
+    Ok(database::ddl::preview_of(params.engine, script))
+}
+
+/// Runs a whole-table action: the same script the preview showed.
+#[tauri::command]
+pub async fn apply_table_action(
+    id: String,
+    tab_id: String,
+    target: database::ddl::TableTarget,
+    action: database::ddl::TableAction,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
+    tab.apply(&params, Some(target.database.clone()), &script)
+        .await
 }

@@ -941,10 +941,9 @@ Tasks:
   `ALTER` where the engine supports it, through the review dialog.
 - **Show CREATE** for any table or view (copy to clipboard or open in a
   tab), and **generate SELECT/INSERT/UPDATE/DELETE templates** from a table.
-- **ER diagram (read-only):** for a schema or selected tables, draw tables
-  with columns and foreign key lines, auto-laid out (evaluate a small
-  layout library such as `elkjs`), zoom/pan, export as SVG/PNG, click to
-  open a table.
+- **ER diagram (read-only):** done — for a schema, tables with columns and
+  foreign key lines, laid out with elkjs (`0035`), zoom/pan, export as SVG,
+  click to open a table. PNG export is not done; SVG is.
 - **Database and schema actions:** create/drop database (MySQL,
   PostgreSQL, SQL Server) and schema (PostgreSQL, SQL Server), with
   confirmation by name.
@@ -961,7 +960,14 @@ definition.
   matches the preview on all three engines.
 - No destructive object action runs without naming the object in the
   confirmation.
-- The ER diagram renders a 100-table schema smoothly.
+- The ER diagram renders a 100-table schema smoothly. Met: a test lays out
+  100 twelve-column tables and 99 edges through elk and checks every node
+  comes back placed.
+
+**Still open in this phase** (recorded rather than hidden): indexes, primary
+keys and foreign keys in the designer; routines, triggers and other objects
+in the explorer; Show CREATE and the SELECT/INSERT/UPDATE/DELETE templates;
+database and schema actions; PNG export of the diagram.
 
 ---
 
@@ -1307,7 +1313,7 @@ Update this section as work progresses.
   - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
   - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
   - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)
-- [ ] Phase 14 — Schema and object management
+- [ ] Phase 14 — Schema and object management (branch `phase-14-schema-management`) — DDL generation per engine (CREATE TABLE, ALTER TABLE for columns, indexes and keys, rename, drop, truncate), quoted per engine and tested with awkward identifiers. Staged changes become one ordered script; preview and apply come from the same call, and the preview carries the engine's own failure behaviour. Every generated statement is applied to MySQL, PostgreSQL and SQL Server and read back through describe. The Create Table wizard, the review dialog and the structure designer (stage column and index changes, review the SQL, apply) are done; the destructive table actions and their confirm-by-name are next.
 - [ ] Phase 15 — Import, export, backup and administration
 
 **Final principle:** Build the smallest genuinely reliable database client first. A polished connection flow, accurate query results, safe credential handling, and dependable remote access are more valuable than many incomplete features.

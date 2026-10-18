@@ -214,6 +214,956 @@ async fn decodes_bound_values_by_type(engine: Engine) {
     }
 }
 
+/**
+ * The designer generates DDL as text, and the unit tests can only check the
+ * text. This runs it: every generated statement is applied to a real server and
+ * read back through describe, which is the only way to know the statements are
+ * the ones each engine accepts.
+ */
+/// Adding and dropping a foreign key, the way the designer does it.
+///
+/// Read back through `describe`, so this is what a person would see afterwards
+/// rather than what the generator believed it wrote.
+async fn adds_and_drops_a_foreign_key(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::ddl::{KeyChange, TablePlan, table_script};
+    let mut session = open(engine).await;
+    for statement in [
+        "DROP TABLE IF EXISTS thabi_fk_child",
+        "DROP TABLE IF EXISTS thabi_fk_parent",
+        "CREATE TABLE thabi_fk_parent (id int PRIMARY KEY, name text)",
+        "CREATE TABLE thabi_fk_child (id int PRIMARY KEY, parent_id int)",
+    ] {
+        session.execute(statement, 0).await.expect("setup");
+    }
+
+    let add = TablePlan {
+        keys: vec![KeyChange::AddForeignKey(
+            thabi_studio_lib::database::ddl::ForeignKey {
+                name: "thabi_child_parent_fk".into(),
+                columns: vec!["parent_id".into()],
+                references: vec![schema.to_owned(), "thabi_fk_parent".into()],
+                referenced_columns: vec!["id".into()],
+                on_delete: "CASCADE".into(),
+                on_update: "NO ACTION".into(),
+            },
+        )],
+        ..TablePlan::default()
+    };
+    for statement in table_script(engine, db, schema, "thabi_fk_child", &add) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused adding the key:\n{statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi_fk_child",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after add");
+    let target = after
+        .columns
+        .iter()
+        .find(|one| one.name == "parent_id")
+        .and_then(|one| one.references.clone())
+        .unwrap_or_else(|| panic!("{engine:?} did not record the key on parent_id"));
+    assert_eq!(target.table, "thabi_fk_parent", "{engine:?}");
+    assert_eq!(target.column, "id", "{engine:?}");
+
+    let drop = TablePlan {
+        keys: vec![KeyChange::DropForeignKey {
+            name: "thabi_child_parent_fk".into(),
+        }],
+        ..TablePlan::default()
+    };
+    for statement in table_script(engine, db, schema, "thabi_fk_child", &drop) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused dropping the key:\n{statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi_fk_child",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after drop");
+    assert!(
+        after
+            .columns
+            .iter()
+            .find(|one| one.name == "parent_id")
+            .unwrap()
+            .references
+            .is_none(),
+        "{engine:?} still reports the dropped key"
+    );
+
+    for statement in [
+        "DROP TABLE IF EXISTS thabi_fk_child",
+        "DROP TABLE IF EXISTS thabi_fk_parent",
+    ] {
+        session.execute(statement, 0).await.expect("cleanup");
+    }
+}
+
+/// Export a table, drop it, run the export back, and compare.
+///
+/// The only test that means anything for a backup. Everything else checks that
+/// a statement was *generated*; this checks that a file can recreate what it
+/// came from, on a server, with the values that break naive escaping.
+async fn export_round_trips(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::ddl::{ColumnSpec, TableSpec, create_table};
+    use thabi_studio_lib::database::dump::{structure_statements, write_table_rows};
+
+    let table = thabi_studio_lib::database::dump::table_of(engine, db, schema, "thabi_dump");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+
+    let spec = TableSpec {
+        columns: vec![
+            ColumnSpec {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                default: String::new(),
+                comment: String::new(),
+                primary_key: true,
+                unique: false,
+            },
+            ColumnSpec {
+                name: "label".into(),
+                // Each engine's own name: "text" is not a SQL Server type and
+                // an invented one is refused by all three.
+                data_type: match engine {
+                    Engine::SqlServer => "NVARCHAR(200)".into(),
+                    _ => "text".into(),
+                },
+                nullable: true,
+                default: String::new(),
+                comment: String::new(),
+                primary_key: false,
+                unique: false,
+            },
+        ],
+        unique_names: vec![],
+        primary_key_name: String::new(),
+        foreign_keys: vec![],
+    };
+    let create = create_table(engine, db, schema, "thabi_dump", &spec).expect("create");
+    session
+        .execute(&format!("{create};"), 0)
+        .await
+        .expect("create table");
+
+    // The values that break escaping: an apostrophe, a backslash, a newline, a
+    // Unicode character, an empty string and a NULL.
+    //
+    // The backslash is written per engine because no single literal stores the
+    // same value everywhere: MySQL treats it as an escape, so `back\\slash`
+    // stores one backslash there and two on the engines where it is not an
+    // escape. The dump is not what is being tested here — the input is.
+    let backslash = match engine {
+        Engine::MySql => "back\\\\slash",
+        _ => "back\\slash",
+    };
+    // SQL Server reads an unprefixed literal in the collation's code page, so
+    // anything outside it arrives as "?". The dump writes N'' — this is the
+    // setup that has to say so, not the export.
+    let n = if engine == Engine::SqlServer { "N" } else { "" };
+    session
+        .execute(
+            &format!(
+                "INSERT INTO {table} (id, label) VALUES \
+                 (1, {n}'plain'), (2, {n}'O''Hara'), (3, {n}'{backslash}'), \
+                 (4, {n}'line1\nline2'), (5, {n}'naïve ☕'), (6, {n}''), (7, NULL)"
+            ),
+            0,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?} refused the setup values: {e:?}"));
+
+    let described = session
+        .describe(
+            db,
+            schema,
+            "thabi_dump",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe source");
+
+    let mut file: Vec<u8> = Vec::new();
+    for statement in structure_statements(engine, db, schema, "thabi_dump", &described) {
+        file.extend_from_slice(statement.as_bytes());
+    }
+    let mut silence = |_: u64| {};
+    let mut run = write_run(None, &mut silence);
+    let exported = write_table_rows(
+        &mut session,
+        &target_for(engine, db, schema, "thabi_dump"),
+        &described,
+        &mut run,
+        &mut file,
+    )
+    .await
+    .expect("export rows");
+    let script = String::from_utf8(file).expect("utf8 dump");
+    assert_eq!(exported, 7, "{engine:?} exported the wrong number of rows");
+    assert!(script.contains("INSERT INTO"), "no inserts were written");
+
+    // Drop it, and put it back from the file alone.
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop for restore");
+    for statement in split_statements(&script) {
+        session.execute(&statement, 0).await.unwrap_or_else(|e| {
+            panic!("{engine:?} refused its own export:\n{statement}\n{e:?}\n--- file ---\n{script}")
+        });
+    }
+
+    let restored = session
+        .describe(
+            db,
+            schema,
+            "thabi_dump",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe restored");
+    let read = session
+        .execute(&format!("SELECT id, label FROM {table} ORDER BY id"), 10)
+        .await
+        .expect("read back");
+    // The labels, compared as values. Comparing debug-formatted rows instead
+    // cannot tell an empty string from the two characters "''", which is one
+    // of the values this is here to check.
+    let labels: Vec<Option<String>> = read
+        .rows
+        .iter()
+        .map(|row| match &row[1] {
+            Cell::Value(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<Option<String>> = vec![
+        Some("plain".to_owned()),
+        Some("O'Hara".to_owned()),
+        Some("back\\slash".to_owned()),
+        Some("line1\nline2".to_owned()),
+        Some("naïve ☕".to_owned()),
+        Some(String::new()),
+        None,
+    ];
+    assert_eq!(
+        labels, expected,
+        "{engine:?} did not round-trip the values exactly"
+    );
+    assert_eq!(
+        restored.columns.len(),
+        described.columns.len(),
+        "{engine:?} changed the column count"
+    );
+
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
+/// Writes a real dump to /tmp so a person can read it.
+///
+/// The round-trip test proves the file works. This proves it looks like
+/// something: a dump that is valid and unreadable is still a bad backup.
+async fn export_writes_a_readable_file(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::dump::{
+        DumpOptions, contents_note, header, plan, structure_statements, write_table_rows,
+    };
+
+    let table = thabi_studio_lib::database::dump::table_of(engine, db, schema, "thabi_dump");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+    let create = match engine {
+        Engine::MySql => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label varchar(50) NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+        Engine::Postgres => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label text NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+        Engine::SqlServer => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label nvarchar(50) NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+    };
+    session.execute(create, 0).await.expect("create");
+    session
+        .execute(
+            &format!(
+                "INSERT INTO {table} (id, label, amount) VALUES (1, 'Ada', 10.50), (2, 'O''Hara', 0)"
+            ),
+            0,
+        )
+        .await
+        .expect("insert");
+
+    let options = DumpOptions {
+        structure: true,
+        data: true,
+        ..Default::default()
+    };
+    let planned = plan(&mut session, db, schema, &options).await;
+
+    let mut file: Vec<u8> = Vec::new();
+    use std::io::Write;
+    file.write_all(header(engine, db, schema, "2026-10-17 09:00").as_bytes())
+        .expect("header");
+    file.write_all(contents_note(&options).as_bytes())
+        .expect("note");
+    file.write_all(b"\n").expect("newline");
+    for (name, structure) in &planned.expect("plan") {
+        for statement in structure_statements(engine, db, schema, name, structure) {
+            file.write_all(statement.as_bytes()).expect("statement");
+        }
+        let mut silence = |_: u64| {};
+        let mut run = write_run(None, &mut silence);
+        write_table_rows(
+            &mut session,
+            &target_for(engine, db, schema, name),
+            structure,
+            &mut run,
+            &mut file,
+        )
+        .await
+        .expect("rows");
+    }
+
+    let path = format!(
+        "/tmp/thabi-dump-{}.sql",
+        format!("{engine:?}").to_lowercase()
+    );
+    std::fs::write(&path, &file).expect("write dump");
+    let _ = file.len();
+    println!("DUMP WRITTEN: {path}");
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
+/// A cancelled dump stops between pages and says so.
+///
+/// The flag is the whole of the cancel path, so what is worth proving is that
+/// it is read *during* a write rather than after it. This table takes several
+/// pages, so a flag set up front has to stop part way.
+async fn export_can_be_stopped(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::dump::{WriteRun, table_of, write_table_rows};
+
+    let table = table_of(engine, db, schema, "thabi_stop");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+    session
+        .execute("CREATE TABLE thabi_stop (id int PRIMARY KEY)", 0)
+        .await
+        .expect("create");
+    // In batches, because SQL Server refuses more than a thousand row values
+    // in one statement — which is the same limit the dump respects.
+    for start in (1..=1200).step_by(500) {
+        let batch = (start..(start + 500).min(1201))
+            .map(|id| format!("({id})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        session
+            .execute(&format!("INSERT INTO {table} (id) VALUES {batch}"), 0)
+            .await
+            .expect("insert");
+    }
+
+    let described = session
+        .describe(
+            db,
+            schema,
+            "thabi_stop",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe");
+
+    let target = target_for(engine, db, schema, "thabi_stop");
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut silence = |_: u64| {};
+    let mut run = WriteRun::new(None, cancel, &mut silence);
+    let mut file: Vec<u8> = Vec::new();
+    let error = write_table_rows(&mut session, &target, &described, &mut run, &mut file)
+        .await
+        .expect_err("a cancelled export must not finish quietly");
+
+    assert_eq!(error.kind, "export_cancelled", "{error:?}");
+    // The message has to say the file is incomplete, or it is found later and
+    // mistaken for a backup.
+    assert!(
+        error.message.to_lowercase().contains("incomplete"),
+        "{error:?}"
+    );
+
+    // An export that was not cancelled writes everything.
+    let clear = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut silence = |_: u64| {};
+    let mut run = WriteRun::new(None, clear, &mut silence);
+    let mut whole: Vec<u8> = Vec::new();
+    let written = write_table_rows(&mut session, &target, &described, &mut run, &mut whole)
+        .await
+        .expect("uncancelled export");
+    assert_eq!(written, 1200, "{engine:?} wrote the wrong number of rows");
+
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
+fn target_for(
+    _engine: Engine,
+    database: &str,
+    schema: &str,
+    name: &str,
+) -> thabi_studio_lib::database::ddl::TableTarget {
+    thabi_studio_lib::database::ddl::TableTarget {
+        database: database.to_owned(),
+        schema: (!schema.is_empty()).then(|| schema.to_owned()),
+        name: name.to_owned(),
+    }
+}
+
+/// A run that is never cancelled and reports nowhere.
+fn write_run<'a>(
+    limit: Option<u64>,
+    progress: &'a mut dyn FnMut(u64),
+) -> thabi_studio_lib::database::dump::WriteRun<'a> {
+    thabi_studio_lib::database::dump::WriteRun::new(
+        limit,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        progress,
+    )
+}
+
+/// Splits a dump back into statements, on semicolons outside string literals.
+///
+/// A real splitter, not `split(';')`: the values this is meant to carry
+/// contain semicolons, and a test that split naively would be testing a
+/// simpler thing than the one that matters.
+fn split_statements(script: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    let mut previous = '\0';
+    for character in script.chars() {
+        if character == '\'' && previous != '\\' {
+            in_string = !in_string;
+        }
+        if character == ';' && !in_string {
+            let statement = current.trim();
+            if !statement.is_empty() && !statement.starts_with("--") {
+                out.push(format!("{statement};"));
+            }
+            current.clear();
+            previous = character;
+            continue;
+        }
+        if !character.is_whitespace() || !current.trim().is_empty() {
+            current.push(character);
+        }
+        previous = character;
+    }
+    let tail = current.trim();
+    if !tail.is_empty() && !tail.starts_with("--") {
+        out.push(tail.to_owned());
+    }
+    out
+}
+
+/// The ER diagram's three queries, run against the server.
+///
+/// Every one of these has been written from an assumption about an engine's
+/// catalog at some point and been wrong; they are cheap to run and the answer
+/// comes from the server, so there is no reason to reason about them instead.
+#[allow(clippy::too_many_arguments)]
+async fn diagram_reads_tables_columns_and_keys(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    setup: &[&str],
+) {
+    let mut session = open(engine).await;
+    for statement in setup {
+        session.execute(statement, 0).await.expect("setup");
+    }
+
+    // Through the same method the command calls, so the test covers the real
+    // path rather than the pieces it is built from.
+    let found = session.diagram(database, schema).await.expect("diagram");
+
+    let country = found
+        .tables
+        .iter()
+        .find(|table| table.name == "thabi_country")
+        .unwrap_or_else(|| {
+            panic!(
+                "{engine:?} did not return the table: {:?}",
+                found.tables.iter().map(|t| &t.name).collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(country.columns.len(), 2, "{engine:?}");
+    assert!(
+        country.columns.iter().any(|c| c.name == "name"),
+        "{engine:?}"
+    );
+
+    let id = country
+        .columns
+        .iter()
+        .find(|c| c.name == "id")
+        .expect("id column");
+    assert!(id.primary_key, "{engine:?} did not mark the primary key");
+    assert!(!id.nullable, "{engine:?} marked a NOT NULL column nullable");
+
+    let child = found
+        .tables
+        .iter()
+        .find(|table| table.name == "thabi_child")
+        .unwrap_or_else(|| panic!("{engine:?} did not return the child table"));
+    assert!(
+        !child
+            .columns
+            .iter()
+            .any(|c| c.primary_key && c.name == "country_id"),
+        "{engine:?} marked a foreign key column as primary"
+    );
+
+    // The line between them, which is the whole reason for the diagram.
+    let edge = found
+        .foreign_keys
+        .iter()
+        .find(|key| key.from_table == "thabi_child" && key.to_table == "thabi_country")
+        .unwrap_or_else(|| panic!("{engine:?} returned no edge: {:?}", found.foreign_keys));
+    assert_eq!(edge.from_columns, ["country_id"], "{engine:?}");
+    assert_eq!(edge.to_columns, ["id"], "{engine:?}");
+
+    for statement in setup.iter().filter(|s| s.starts_with("DROP TABLE")) {
+        session.execute(statement, 0).await.expect("cleanup");
+    }
+}
+
+async fn applies_generated_ddl(engine: Engine) {
+    use thabi_studio_lib::database::ddl::{
+        Change, ColumnSpec, IndexAction, IndexSpec, KeyChange, TableAction, TablePlan, TableSpec,
+        action_script, create_table, drop_table, table_script,
+    };
+    let mut session = open(engine).await;
+    // Each session is already connected to its database: the SQL Server
+    // container only has master, and PostgreSQL has no USE at all.
+    let (db, schema) = match engine {
+        Engine::MySql => ("thabi_it", ""),
+        Engine::Postgres => ("thabi_it", "public"),
+        Engine::SqlServer => ("master", "dbo"),
+    };
+    session
+        .execute(&drop_table(engine, db, schema, "thabi ddl", true), 1)
+        .await
+        .unwrap_or_else(|e| panic!("drop leftovers from a previous run: {e:?}"));
+    // MySQL names check constraints across the whole schema rather than per
+    // table, so a leftover copy of the renamed table would collide with the
+    // one this run is about to make.
+    for leftover in ["thabi_actions", "thabi_actions_copy"] {
+        session
+            .execute(&drop_table(engine, db, schema, leftover, true), 1)
+            .await
+            .expect("drop leftovers");
+    }
+
+    // A table with an awkward name, so quoting is exercised for real.
+    let spec = TableSpec {
+        columns: vec![
+            ColumnSpec {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                primary_key: true,
+                ..Default::default()
+            },
+            ColumnSpec {
+                name: "status".into(),
+                data_type: "VARCHAR(20)".into(),
+                nullable: false,
+                default: "'new'".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let created = create_table(engine, db, schema, "thabi ddl", &spec).expect("create table");
+    session
+        .execute(&created, 1)
+        .await
+        .expect("generated CREATE TABLE");
+
+    let structure = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after create");
+    let names: Vec<&str> = structure.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "status"], "{engine:?} made a different table");
+    let id = structure.columns.iter().find(|c| c.name == "id").unwrap();
+    assert!(id.primary_key.is_some(), "{engine:?} lost the primary key");
+    let status = structure
+        .columns
+        .iter()
+        .find(|c| c.name == "status")
+        .unwrap();
+    assert!(
+        !status.nullable,
+        "{engine:?} made a nullable column not null"
+    );
+
+    // A plan touching a column, a key and an index, generated and applied.
+    let plan = TablePlan {
+        create: None,
+        columns: vec![
+            Change::AddColumn(ColumnSpec {
+                name: "note".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                ..Default::default()
+            }),
+            Change::SetNullable {
+                name: "status".into(),
+                nullable: true,
+                data_type: "VARCHAR(20)".into(),
+            },
+            // A retype, which is the one that was refused on MySQL: it spells
+            // a restated column MODIFY, not ALTER COLUMN.
+            Change::SetType {
+                name: "note".into(),
+                data_type: match engine {
+                    Engine::MySql => "VARCHAR(120)".into(),
+                    Engine::Postgres => "VARCHAR(120)".into(),
+                    Engine::SqlServer => "NVARCHAR(120)".into(),
+                },
+            },
+        ],
+        keys: vec![KeyChange::AddCheck {
+            name: "status_not_blank".into(),
+            expression: "status <> ''".into(),
+        }],
+        indexes: vec![IndexAction::Create(IndexSpec {
+            name: "thabi_ddl_status_idx".into(),
+            columns: vec!["status".into()],
+            unique: true,
+        })],
+    };
+    let script = table_script(engine, db, schema, "thabi ddl", &plan);
+    assert!(!script.is_empty());
+    for statement in &script {
+        session
+            .execute(statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+
+    let after = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after alter");
+    let names: Vec<&str> = after.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["id", "status", "note"],
+        "{engine:?} alter did not take"
+    );
+    let status = after.columns.iter().find(|c| c.name == "status").unwrap();
+    assert!(
+        status.nullable,
+        "{engine:?} did not make the column nullable"
+    );
+    let indexes = after.indexes.expect("indexes for a table");
+    assert!(
+        indexes
+            .iter()
+            .any(|i| i.name == "thabi_ddl_status_idx" && i.unique),
+        "{engine:?} did not create the unique index: {indexes:?}"
+    );
+
+    // The path the Create Table wizard uses: a create plan previewed and then
+    // applied, which is one statement rather than a list of alters.
+    let wizard = TablePlan {
+        create: Some(TableSpec {
+            columns: vec![
+                ColumnSpec {
+                    name: "id".into(),
+                    data_type: "INTEGER".into(),
+                    nullable: false,
+                    primary_key: true,
+                    ..Default::default()
+                },
+                ColumnSpec {
+                    name: "label".into(),
+                    data_type: match engine {
+                        Engine::SqlServer => "NVARCHAR(MAX)".into(),
+                        _ => "TEXT".into(),
+                    },
+                    nullable: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let shown =
+        thabi_studio_lib::database::ddl::preview(engine, db, schema, "thabi wizard", &wizard);
+    assert!(shown.note.contains("transaction") || shown.note.contains("commits"));
+    for statement in &shown.statements {
+        assert!(
+            statement.starts_with("CREATE TABLE"),
+            "{engine:?}: {statement}"
+        );
+        session
+            .execute(statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused the wizard's SQL {statement}\n{e:?}"));
+    }
+    let made = session
+        .describe(
+            db,
+            schema,
+            "thabi wizard",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe the wizard's table");
+    let names: Vec<&str> = made.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "label"], "{engine:?} made a different table");
+    session
+        .execute(&drop_table(engine, db, schema, "thabi wizard", true), 1)
+        .await
+        .expect("drop the wizard's table");
+
+    // The designer's own shape: change an existing column and add one, which
+    // is what the Structure tab stages.
+    let staged = TablePlan {
+        create: None,
+        columns: vec![
+            Change::SetNullable {
+                name: "status".into(),
+                nullable: true,
+                data_type: "VARCHAR(20)".into(),
+            },
+            Change::AddColumn(ColumnSpec {
+                // A name the earlier plan did not already add.
+                name: "designer_note".into(),
+                data_type: "TEXT".into(),
+                nullable: true,
+                ..Default::default()
+            }),
+        ],
+        keys: vec![],
+        indexes: vec![],
+    };
+    for statement in table_script(engine, db, schema, "thabi ddl", &staged) {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let changed = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after the staged changes");
+    let names: Vec<&str> = changed.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["id", "status", "note", "designer_note"],
+        "{engine:?}: {names:?}"
+    );
+    assert!(
+        changed
+            .columns
+            .iter()
+            .find(|c| c.name == "status")
+            .unwrap()
+            .nullable,
+        "{engine:?} did not make the column nullable"
+    );
+    let retyped = changed
+        .columns
+        .iter()
+        .find(|c| c.name == "note")
+        .unwrap()
+        .data_type
+        .to_lowercase();
+    assert!(
+        retyped.contains("120"),
+        "{engine:?} did not change the column's type: {retyped}"
+    );
+
+    // Rows first, so a copy with data has something to copy.
+    for id in 1..=3 {
+        session
+            .execute(
+                &format!(
+                    // Distinct: an earlier step made a unique index on status.
+                    "INSERT INTO {} (id, status) VALUES ({id}, 'new{id}')",
+                    thabi_studio_lib::database::quote::table(engine, db, schema, "thabi ddl")
+                ),
+                1,
+            )
+            .await
+            .expect("insert rows to copy");
+    }
+
+    // The whole-table actions, run the way the menu runs them: generate, then
+    // apply. Duplicate with data is the one with something to get wrong.
+    let rename_to = "thabi_actions";
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        "thabi ddl",
+        &TableAction::Rename {
+            to: rename_to.into(),
+        },
+        None,
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let renamed = session
+        .describe(
+            db,
+            schema,
+            rename_to,
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?}: rename did not take: {e:?}"));
+    assert_eq!(renamed.columns.len(), changed.columns.len());
+
+    let spec = thabi_studio_lib::database::ddl::spec_from_structure(&renamed);
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        rename_to,
+        &TableAction::DuplicateWithData {
+            to: "thabi_actions_copy".into(),
+        },
+        Some(&spec),
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let copy = session
+        .describe(
+            db,
+            schema,
+            "thabi_actions_copy",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{engine:?}: copy did not take: {e:?}"));
+    assert_eq!(copy.columns.len(), renamed.columns.len());
+    let rows = session
+        .execute(
+            &format!(
+                "SELECT COUNT(*) FROM {}",
+                thabi_studio_lib::database::quote::table(engine, db, schema, "thabi_actions_copy")
+            ),
+            1,
+        )
+        .await
+        .expect("count the copy");
+    assert_eq!(
+        rows.rows[0][0],
+        thabi_studio_lib::database::Cell::Value("3".into()),
+        "{engine:?}: the copy has the wrong rows"
+    );
+
+    // Emptying keeps the structure, which is the difference from dropping.
+    for statement in action_script(
+        engine,
+        db,
+        schema,
+        rename_to,
+        &TableAction::Truncate {
+            restart_identity: false,
+        },
+        None,
+    )
+    .unwrap()
+    {
+        session
+            .execute(&statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?}: {e:?}"));
+    }
+    let after = session
+        .describe(
+            db,
+            schema,
+            rename_to,
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after truncate");
+    assert_eq!(
+        after.columns.len(),
+        renamed.columns.len(),
+        "{engine:?}: truncate changed the structure"
+    );
+
+    // A table with no key and no columns is refused before it reaches a server.
+    assert!(create_table(engine, db, schema, "empty", &TableSpec::default()).is_err());
+}
+
 async fn binds_values_verbatim(engine: Engine, supports_binding: bool) {
     use thabi_studio_lib::database::values::Param;
     let mut session = open(engine).await;
@@ -481,6 +1431,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn explain_analyze_changes_nothing() {
         let mut session = open(E).await;
         session
@@ -551,6 +1507,47 @@ mod postgres {
     #[ignore]
     async fn connects() {
         connects_and_reports_version(E, "PostgreSQL 16").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn diagram_reads_the_schema() {
+        diagram_reads_tables_columns_and_keys(
+            E,
+            "thabi_it",
+            "public",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name text)",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, country_id int REFERENCES thabi_country(id))",
+            ],
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -628,6 +1625,108 @@ mod postgres {
 mod mysql {
     use super::*;
     const E: Engine = Engine::MySql;
+
+    #[tokio::test]
+    #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "thabi_it", "").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "thabi_it", "").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "thabi_it", "").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "thabi_it", "").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn diagram_reads_the_schema() {
+        diagram_reads_tables_columns_and_keys(
+            E,
+            "thabi_it",
+            "",
+            &[
+                "DROP TABLE IF EXISTS thabi_child",
+                "DROP TABLE IF EXISTS thabi_country",
+                "CREATE TABLE thabi_country (id int PRIMARY KEY, name text)",
+                "CREATE TABLE thabi_child (id int PRIMARY KEY, country_id int, FOREIGN KEY (country_id) REFERENCES thabi_country(id))",
+            ],
+        )
+        .await;
+    }
+
+    /// The premise behind the MySQL half-applied message, checked against the
+    /// server rather than reasoned about: a DDL batch that fails on its second
+    /// statement leaves the first one committed. This has been assumed four
+    /// times in this file and is wrong every time it is reasoned about.
+    #[tokio::test]
+    #[ignore]
+    async fn a_failed_ddl_batch_keeps_the_statements_that_ran() {
+        let mut session = open(E).await;
+        session
+            .execute("CREATE TABLE `partial_test` (`keepme` INT NOT NULL);", 0)
+            .await
+            .expect("create");
+
+        // First statement is fine. Second names a column that does not exist.
+        let batch = "ALTER TABLE `partial_test` CHANGE COLUMN `keepme` `kept` INT NOT NULL;\n\
+                     ALTER TABLE `partial_test` MODIFY COLUMN `never_was` TEXT;";
+        let failure = session.execute(batch, 0).await.expect_err("must fail");
+        let detail = failure.detail.clone().unwrap_or_default();
+        assert!(
+            detail.to_lowercase().contains("unknown column")
+                || detail.to_lowercase().contains("doesn't exist"),
+            "unexpected reason: {detail}"
+        );
+
+        // The point: the rename above is already committed, so the table is
+        // half changed even though the batch as a whole failed.
+        let structure = session
+            .describe(
+                "thabi_it",
+                "",
+                "partial_test",
+                thabi_studio_lib::database::ObjectKind::Table,
+            )
+            .await
+            .expect("read back");
+        let names: Vec<&str> = structure
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["kept"], "the first statement did not commit");
+        assert!(
+            structure
+                .columns
+                .iter()
+                .all(|column| column.name != "never_was"),
+            "the failing statement left something behind"
+        );
+
+        session
+            .execute("DROP TABLE `partial_test`;", 0)
+            .await
+            .expect("cleanup");
+    }
 
     #[tokio::test]
     #[ignore]
@@ -727,6 +1826,36 @@ mod mysql {
 mod sqlserver {
     use super::*;
     const E: Engine = Engine::SqlServer;
+
+    #[tokio::test]
+    #[ignore]
+    async fn generated_ddl_applies_and_reads_back() {
+        applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "master", "dbo").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "master", "dbo").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_round_trips() {
+        export_round_trips(E, "master", "dbo").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn designer_adds_and_drops_a_foreign_key() {
+        adds_and_drops_a_foreign_key(E, "master", "dbo").await;
+    }
 
     #[tokio::test]
     #[ignore]

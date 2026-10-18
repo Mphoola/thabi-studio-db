@@ -233,6 +233,15 @@ export function listObjects(id, database, schema = null) {
   return call("list_objects", { id, database, schema });
 }
 
+/**
+ * Everything the ER diagram draws for one schema.
+ *
+ * @returns {Promise<{ tables: Array<{ name: string, columns: Array<{ name: string, dataType: string, nullable: boolean, primaryKey: boolean }> }>, foreignKeys: Array<{ name: string, fromTable: string, fromColumns: string[], toTable: string, toColumns: string[] }> }>}
+ */
+export function schemaDiagram(id, database, schema = null) {
+  return call("schema_diagram", { id, database, schema });
+}
+
 export function describeObject(id, { database, schema, name, kind }) {
   return call("describe_object", { id, database, schema, name, kind });
 }
@@ -309,6 +318,29 @@ export function openObjectData(
   });
 }
 
+/**
+ * The DDL for a table's staged changes, and what happens if one of them fails.
+ * Runs nothing: the review dialog shows this before anything is sent.
+ */
+export function previewTableDdl(id, tabId, target, plan) {
+  return call("preview_table_ddl", { id, tabId, target, plan });
+}
+
+/** Applies a table's staged changes. The script is the one previewed. */
+export function applyTableDdl(id, tabId, target, plan) {
+  return call("apply_table_ddl", { id, tabId, target, plan });
+}
+
+/** The SQL for a whole-table action, before it runs. */
+export function previewTableAction(id, tabId, target, action) {
+  return call("preview_table_action", { id, tabId, target, action });
+}
+
+/** Runs a whole-table action: the same script the preview showed. */
+export function applyTableAction(id, tabId, target, action) {
+  return call("apply_table_action", { id, tabId, target, action });
+}
+
 /** One page of a table at `offset`, sorted on the server. */
 export function fetchTablePage(
   id,
@@ -366,6 +398,23 @@ export function copyTable(
     format,
     maxRows,
   });
+}
+
+/**
+ * Writes a schema, or chosen tables, to a `.sql` file the same engine can run.
+ *
+ * `options`: { structure, data, tables: string[], rowLimit?: number }. An
+ * empty `tables` means every table in the schema.
+ *
+ * @returns {Promise<{ tables: number, rows: number, bytes: number }>}
+ */
+export function exportSql(id, { database, schema, options, path }) {
+  return call("export_sql", { id, database, schema, options, path });
+}
+
+/** Stops a running SQL dump. False when nothing is running. */
+export function cancelSqlExport(id) {
+  return call("cancel_sql_export", { id });
 }
 
 /** Exports a table to a file, streaming from the server. */

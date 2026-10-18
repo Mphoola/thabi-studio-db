@@ -474,6 +474,9 @@ impl DatabaseSession for PgSession {
         Ok(ObjectStructure {
             columns: metadata::column_rows(columns),
             indexes,
+            // Neither engine will state its CREATE TABLE; a dump rebuilds it
+            // from what is here, which is faithful for what is here.
+            show_create: None,
         })
     }
 
