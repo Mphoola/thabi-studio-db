@@ -106,10 +106,13 @@ async function start() {
     failed.value = "Choose structure, data, or both.";
     return;
   }
-  const path = await pickSqlDestination(
-    `${props.database}-${new Date().toISOString().slice(0, 10)}`,
-  );
-  if (!path) return;
+  // The path shown on the panel, not a new question. Opening a picker here
+  // asked where the file should go *after* the panel had already answered it.
+  const path = destination.value;
+  if (!path) {
+    failed.value = "Choose where to save the backup first.";
+    return;
+  }
 
   running.value = true;
   failed.value = "";
