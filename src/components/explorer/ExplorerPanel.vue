@@ -63,7 +63,11 @@ async function loadExportTables() {
   }
   try {
     const objects = await listObjects(
-      status.value.connectionId,
+      // The profile, not the connection: every object command is keyed by
+      // profile id, and a connection id finds no session — which came back as
+      // an empty list rather than as an error, so the backup panel said "0
+      // tables" about a database full of them.
+      store.selectedProfile.value?.id,
       target.database,
       target.schema || null,
     );

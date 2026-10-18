@@ -17,10 +17,59 @@ import { fileURLToPath } from "node:url";
 const read = (relative) =>
   readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
 
-/** Files whose only job is to call commands with an id. */
+/** Command wrappers whose arguments are checked. */
+const COMMANDS = [
+  "call",
+  "listObjects",
+  "listDatabases",
+  "listSchemas",
+  "describeObject",
+  "openObjectData",
+  "exportSql",
+  "exportTable",
+  "exportCsv",
+  "schemaDiagram",
+  "previewTableDdl",
+  "applyTableDdl",
+];
+
+/** The argument list of every command call in a source file. */
+function commandCalls(source) {
+  const found = [];
+  for (const name of COMMANDS) {
+    let from = 0;
+    for (;;) {
+      const at = source.indexOf(`${name}(`, from);
+      if (at < 0) break;
+      from = at + name.length;
+      let depth = 0;
+      for (let index = at + name.length; index < source.length; index += 1) {
+        if (source[index] === "(") depth += 1;
+        if (source[index] === ")") {
+          depth -= 1;
+          if (depth === 0) {
+            found.push(source.slice(at + name.length, index));
+            break;
+          }
+        }
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Files that call commands with an id.
+ *
+ * Every one of them, not the ones this fault has happened in. ExplorerPanel
+ * passes a connection id to list_objects while the backup dialog beside it
+ * passes a profile id, and the result was a panel that said "0 tables" about a
+ * database full of them.
+ */
 const CALLERS = [
   "../../src/components/explorer/DiagramView.vue",
   "../../src/components/explorer/ObjectView.vue",
+  "../../src/components/explorer/ExplorerPanel.vue",
 ];
 
 /** The diagram's tab, and the two places that open one. */
@@ -46,12 +95,18 @@ const openDiagramCall = (source) => {
 };
 
 describe("commands are called with a profile id", () => {
-  it("the files that call commands never mention a connection id", () => {
-    // Blunt on purpose. These two exist to call commands with an id and have
-    // no other reason to know what a connection id is. An earlier version of
-    // this test tried to match the call site with a regex, missed a bare
-    // `props.connectionId`, and passed with the bug still in place.
-    const offenders = CALLERS.filter((file) => /connectionId/.test(read(file)));
+  it("never passes a connection id as a command's id", () => {
+    // Not "never mentions connectionId": reading status.connectionId to ask
+    // whether a connection is live is correct and several files do it. What
+    // must never happen is that value reaching a command's id argument, which
+    // finds no session and reads as an empty result rather than an error.
+    const offenders = [];
+    for (const file of CALLERS) {
+      for (const call of commandCalls(read(file))) {
+        if (/connectionId/.test(call))
+          offenders.push(`${file}: ${call.slice(0, 60)}`);
+      }
+    }
     expect(offenders).toEqual([]);
   });
 

@@ -564,6 +564,80 @@ async fn export_writes_a_readable_file(engine: Engine, db: &str, schema: &str) {
         .ok();
 }
 
+/// A cancelled dump stops between pages and says so.
+///
+/// The flag is the whole of the cancel path, so what is worth proving is that
+/// it is read *during* a write rather than after it. This table takes several
+/// pages, so a flag set up front has to stop part way.
+async fn export_can_be_stopped(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::dump::{WriteRun, table_of, write_table_rows};
+
+    let table = table_of(engine, db, schema, "thabi_stop");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+    session
+        .execute("CREATE TABLE thabi_stop (id int PRIMARY KEY)", 0)
+        .await
+        .expect("create");
+    // In batches, because SQL Server refuses more than a thousand row values
+    // in one statement — which is the same limit the dump respects.
+    for start in (1..=1200).step_by(500) {
+        let batch = (start..(start + 500).min(1201))
+            .map(|id| format!("({id})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        session
+            .execute(&format!("INSERT INTO {table} (id) VALUES {batch}"), 0)
+            .await
+            .expect("insert");
+    }
+
+    let described = session
+        .describe(
+            db,
+            schema,
+            "thabi_stop",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe");
+
+    let target = target_for(engine, db, schema, "thabi_stop");
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut silence = |_: u64| {};
+    let mut run = WriteRun::new(None, cancel, &mut silence);
+    let mut file: Vec<u8> = Vec::new();
+    let error = write_table_rows(&mut session, &target, &described, &mut run, &mut file)
+        .await
+        .expect_err("a cancelled export must not finish quietly");
+
+    assert_eq!(error.kind, "export_cancelled", "{error:?}");
+    // The message has to say the file is incomplete, or it is found later and
+    // mistaken for a backup.
+    assert!(
+        error.message.to_lowercase().contains("incomplete"),
+        "{error:?}"
+    );
+
+    // An export that was not cancelled writes everything.
+    let clear = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut silence = |_: u64| {};
+    let mut run = WriteRun::new(None, clear, &mut silence);
+    let mut whole: Vec<u8> = Vec::new();
+    let written = write_table_rows(&mut session, &target, &described, &mut run, &mut whole)
+        .await
+        .expect("uncancelled export");
+    assert_eq!(written, 1200, "{engine:?} wrote the wrong number of rows");
+
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
 fn target_for(
     _engine: Engine,
     database: &str,
@@ -1443,6 +1517,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn sql_export_round_trips() {
         export_round_trips(E, "thabi_it", "public").await;
     }
@@ -1556,6 +1636,12 @@ mod mysql {
     #[ignore]
     async fn sql_export_writes_a_readable_file() {
         export_writes_a_readable_file(E, "thabi_it", "").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "thabi_it", "").await;
     }
 
     #[tokio::test]
@@ -1751,6 +1837,12 @@ mod sqlserver {
     #[ignore]
     async fn sql_export_writes_a_readable_file() {
         export_writes_a_readable_file(E, "master", "dbo").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_can_be_stopped() {
+        export_can_be_stopped(E, "master", "dbo").await;
     }
 
     #[tokio::test]

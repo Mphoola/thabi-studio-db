@@ -1176,11 +1176,12 @@ pub async fn export_sql(
             bytes: writer.bytes(),
         })
     })
-    .await
-    .map_err(|_| AppError::background_task())?;
+    .await;
 
+    // Cleared whichever way it ended. A flag left behind makes the Stop button
+    // claim there is something to stop on the next export, when there is not.
     state.finish_export(&id);
-    result
+    result.map_err(|_| AppError::background_task())?
 }
 
 /// Stops a running dump. False when nothing is running.
