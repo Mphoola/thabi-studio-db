@@ -412,6 +412,11 @@ export function exportSql(id, { database, schema, options, path }) {
   return call("export_sql", { id, database, schema, options, path });
 }
 
+/** Stops a running SQL dump. False when nothing is running. */
+export function cancelSqlExport(id) {
+  return call("cancel_sql_export", { id });
+}
+
 /** Exports a table to a file, streaming from the server. */
 export function exportTable(
   id,

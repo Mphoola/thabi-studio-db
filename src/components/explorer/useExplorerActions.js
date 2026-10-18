@@ -1,7 +1,9 @@
 import { copyText } from "../../lib/clipboard.js";
+import { ref } from "vue";
 import {
   ClipboardCopy,
   Columns3,
+  FileCode2,
   Network,
   RefreshCw,
   Repeat,
@@ -21,6 +23,11 @@ export function useExplorerActions() {
   const store = useConnectionProfiles();
   const hostKeys = useHostKeyTrust();
   const workspace = useTabs();
+  const profile = store.selectedProfile;
+  // What the export dialog is for, and whether it is open. Refs rather than
+  // arguments so a menu item can open a dialog it does not render.
+  const target = ref(null);
+  const open = ref(false);
   const toasts = useToasts();
 
   function menuFor(node) {
@@ -35,6 +42,8 @@ export function useExplorerActions() {
       return [
         { id: "open-data", label: "Open Data", icon: Rows3 },
         { id: "open-structure", label: "Show Structure", icon: Columns3 },
+        { separator: true },
+        { id: "export-sql", label: "Export as SQL…", icon: FileCode2 },
         { separator: true },
         ...copy,
       ];
@@ -52,7 +61,10 @@ export function useExplorerActions() {
       // the schema, which is why this is offered on both rather than on
       // whichever one happens to be called a schema.
       ...(node.type === "schema" || node.type === "database"
-        ? [{ id: "diagram", label: "Show Diagram", icon: Network }]
+        ? [
+            { id: "diagram", label: "Show Diagram", icon: Network },
+            { id: "export-sql", label: "Export as SQL…", icon: FileCode2 },
+          ]
         : []),
       { separator: true },
       ...copy,
@@ -69,8 +81,7 @@ export function useExplorerActions() {
   }
 
   async function run(id, node) {
-    const engine = store.selectedProfile.value?.driver;
-    const profile = store.selectedProfile.value;
+    const engine = profile.value?.driver;
     switch (id) {
       case "open-data":
         return explorer.open(node, "data");
@@ -82,8 +93,11 @@ export function useExplorerActions() {
         return copy(qualifiedName(engine, node));
       case "refresh":
         return explorer.refresh(node);
+      case "export-sql":
+        // A table exports just itself; a database or schema exports all of it.
+        return emitExport(node);
       case "diagram": {
-        if (!store.isConnected(profile?.id)) {
+        if (!store.isConnected(profile.value?.id)) {
           toasts.error("Nothing to draw", "Connect to a database first.");
           return;
         }
@@ -93,13 +107,15 @@ export function useExplorerActions() {
           return;
         }
         return workspace.openDiagram({
-          profileId: profile?.id,
+          profileId: profile.value?.id,
           ...target,
         });
       }
       case "switch":
         try {
-          await hostKeys.run(() => store.connect(profile.id, node.database));
+          await hostKeys.run(() =>
+            store.connect(profile.value.id, node.database),
+          );
         } catch (error) {
           toasts.error(
             `Couldn’t switch to “${node.database}”`,
@@ -110,5 +126,36 @@ export function useExplorerActions() {
     }
   }
 
-  return { menuFor, run };
+  /**
+   * Where the export dialog opens, for one table or for a whole schema.
+   *
+   * The dialog needs the connection's profile id, which is what commands are
+   * keyed by, and the driver so it can say whether the structure in the file
+   * is the server's own words or a rebuild.
+   */
+  function emitExport(node) {
+    const live = store.statusFor(profile.value?.id);
+    if (!live?.connectionId) {
+      toasts.error("Nothing to export", "Connect to a database first.");
+      return;
+    }
+    const one = node.type === "object";
+    target.value = {
+      profileId: profile.value.id,
+      database: one
+        ? node.database
+        : (node.database ?? live.server?.database ?? node.name),
+      schema: one
+        ? (node.schema ?? null)
+        : node.type === "schema"
+          ? node.name
+          : (node.schema ?? null),
+      engine: profile.value?.driver ?? "",
+      tables: one ? [node.name] : [],
+      available: [],
+    };
+    open.value = true;
+  }
+
+  return { menuFor, run, target, open };
 }

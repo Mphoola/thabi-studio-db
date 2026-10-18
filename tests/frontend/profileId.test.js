@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -23,11 +24,26 @@ const CALLERS = [
 ];
 
 /** The diagram's tab, and the two places that open one. */
-const openDiagram = (source) =>
-  source.slice(
-    source.indexOf("openDiagram"),
-    source.indexOf("openDiagram") + 1200,
-  );
+/**
+ * The argument object passed to openDiagram, and nothing wider.
+ *
+ * A fixed-length slice grew to include the next function, which reads the
+ * connection id to ask whether a connection is live — allowed, and nothing to
+ * do with what is sent as a command id.
+ */
+const openDiagramCall = (source) => {
+  const at = source.indexOf("openDiagram({");
+  assert.ok(at >= 0, "openDiagram is not called with an object");
+  let depth = 0;
+  for (let index = at; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(at, index + 1);
+    }
+  }
+  return source.slice(at, at + 400);
+};
 
 describe("commands are called with a profile id", () => {
   it("the files that call commands never mention a connection id", () => {
@@ -51,8 +67,8 @@ describe("commands are called with a profile id", () => {
       "../../src/composables/useAppCommands.js",
     ]) {
       const source = read(file);
-      if (!source.includes("openDiagram")) continue;
-      expect(openDiagram(source), file).not.toMatch(/connectionId/);
+      if (!source.includes("openDiagram({")) continue;
+      expect(openDiagramCall(source), file).not.toMatch(/connectionId/);
     }
   });
 

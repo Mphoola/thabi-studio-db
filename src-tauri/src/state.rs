@@ -3,6 +3,7 @@ use crate::connections::ConnectionService;
 use crate::credentials::{CredentialStore, OsCredentialStore};
 use crate::errors::AppError;
 use rusqlite::Connection;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct AppState {
@@ -10,6 +11,9 @@ pub struct AppState {
     pub credentials: Arc<dyn CredentialStore>,
     pub connections: ConnectionService,
     pub app_lock: AppLock,
+    /// One flag per connection running a dump, so an export of a real database
+    /// — which is minutes, not seconds — can be stopped.
+    pub exports: Arc<Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl AppState {
@@ -19,6 +23,7 @@ impl AppState {
             credentials: Arc::new(OsCredentialStore),
             connections: ConnectionService::default(),
             app_lock: AppLock::default(),
+            exports: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -38,5 +43,36 @@ impl AppState {
         })
         .await
         .map_err(|_| AppError::background_task())?
+    }
+}
+
+impl AppState {
+    /// A cancel flag for a dump on this connection, replacing any run before.
+    pub fn start_export(&self, connection: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        if let Ok(mut exports) = self.exports.lock() {
+            exports.insert(connection.to_owned(), flag.clone());
+        }
+        flag
+    }
+
+    /// Asks a running dump to stop. False when nothing is running, which is
+    /// what the button says when it is pressed with nothing to stop.
+    pub fn cancel_export(&self, connection: &str) -> bool {
+        self.exports
+            .lock()
+            .ok()
+            .and_then(|exports| exports.get(connection).cloned())
+            .map(|flag| {
+                flag.store(true, Ordering::SeqCst);
+                true
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn finish_export(&self, connection: &str) {
+        if let Ok(mut exports) = self.exports.lock() {
+            exports.remove(connection);
+        }
     }
 }

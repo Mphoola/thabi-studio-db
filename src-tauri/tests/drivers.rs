@@ -408,13 +408,13 @@ async fn export_round_trips(engine: Engine, db: &str, schema: &str) {
     for statement in structure_statements(engine, db, schema, "thabi_dump", &described) {
         file.extend_from_slice(statement.as_bytes());
     }
+    let mut silence = |_: u64| {};
+    let mut run = write_run(None, &mut silence);
     let exported = write_table_rows(
         &mut session,
-        db,
-        schema,
-        "thabi_dump",
+        &target_for(engine, db, schema, "thabi_dump"),
         &described,
-        None,
+        &mut run,
         &mut file,
     )
     .await
@@ -538,9 +538,17 @@ async fn export_writes_a_readable_file(engine: Engine, db: &str, schema: &str) {
         for statement in structure_statements(engine, db, schema, name, structure) {
             file.write_all(statement.as_bytes()).expect("statement");
         }
-        write_table_rows(&mut session, db, schema, name, structure, None, &mut file)
-            .await
-            .expect("rows");
+        let mut silence = |_: u64| {};
+        let mut run = write_run(None, &mut silence);
+        write_table_rows(
+            &mut session,
+            &target_for(engine, db, schema, name),
+            structure,
+            &mut run,
+            &mut file,
+        )
+        .await
+        .expect("rows");
     }
 
     let path = format!(
@@ -554,6 +562,31 @@ async fn export_writes_a_readable_file(engine: Engine, db: &str, schema: &str) {
         .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
         .await
         .ok();
+}
+
+fn target_for(
+    _engine: Engine,
+    database: &str,
+    schema: &str,
+    name: &str,
+) -> thabi_studio_lib::database::ddl::TableTarget {
+    thabi_studio_lib::database::ddl::TableTarget {
+        database: database.to_owned(),
+        schema: (!schema.is_empty()).then(|| schema.to_owned()),
+        name: name.to_owned(),
+    }
+}
+
+/// A run that is never cancelled and reports nowhere.
+fn write_run<'a>(
+    limit: Option<u64>,
+    progress: &'a mut dyn FnMut(u64),
+) -> thabi_studio_lib::database::dump::WriteRun<'a> {
+    thabi_studio_lib::database::dump::WriteRun::new(
+        limit,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        progress,
+    )
 }
 
 /// Splits a dump back into statements, on semicolons outside string literals.

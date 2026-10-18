@@ -50,6 +50,17 @@ impl DumpOptions {
     }
 }
 
+/// What the window is told while a dump runs.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DumpProgress {
+    pub table: String,
+    pub tables: usize,
+    /// Rows written for this table so far, not in total: the row count of a
+    /// whole database is an expensive question and not one worth asking.
+    pub rows: u64,
+}
+
 /// What happened, for the summary the user is shown.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -447,14 +458,18 @@ fn order_for_restore(tables: Vec<(String, ObjectStructure)>) -> Vec<(String, Obj
 /// fails on the largest table in the database is not a backup.
 pub async fn write_table_rows(
     session: &mut super::Session,
-    database: &str,
-    schema: &str,
-    name: &str,
+    target: &super::ddl::TableTarget,
     structure: &ObjectStructure,
-    limit: Option<u64>,
+    run: &mut WriteRun<'_>,
     out: &mut impl Write,
 ) -> Result<u64, AppError> {
     use super::paging::page_sql;
+
+    let (database, schema, name) = (&target.database, &target.schema, &target.name);
+    let limit = run.limit;
+    let cancel = &run.cancel;
+    let progress = &mut run.progress;
+    let schema = schema.as_deref().unwrap_or_default();
 
     let engine = session.server_info().engine;
     let columns: Vec<String> = structure
@@ -513,6 +528,15 @@ pub async fn write_table_rows(
         }
         let fetched = result.rows.len();
         offset += fetched;
+        progress(offset as u64);
+        // Checked between pages, so cancelling stops within one page rather
+        // than after the whole table. A dump of a real database is minutes.
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(AppError::new(
+                "export_cancelled",
+                "The export was stopped. The file is incomplete.",
+            ));
+        }
         if fetched < want {
             break;
         }
@@ -529,6 +553,34 @@ pub async fn write_table_rows(
 /// Rows read per page. Small on purpose: a page is held in memory while it is
 /// turned into a statement, and the batch that becomes a file is on top.
 const PAGE: usize = 500;
+
+/// How one run of a dump should behave while it goes.
+///
+/// Grouped rather than passed as separate arguments because there are already
+/// nine of them, and a call site that has to be read across a screen is one
+/// where a mistake is easy and hard to see.
+pub struct WriteRun<'a> {
+    /// Row cap, for a sample rather than a whole table.
+    pub limit: Option<u64>,
+    /// Set to stop between pages.
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Called with rows written so far, once per page.
+    pub progress: &'a mut dyn FnMut(u64),
+}
+
+impl<'a> WriteRun<'a> {
+    pub fn new(
+        limit: Option<u64>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        progress: &'a mut dyn FnMut(u64),
+    ) -> Self {
+        Self {
+            limit,
+            cancel,
+            progress,
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "dump/tests.rs"]

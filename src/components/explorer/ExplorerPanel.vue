@@ -3,6 +3,9 @@ import { computed, onMounted, ref, watch } from "vue";
 import { ListTree, RefreshCw, Table2, Unplug } from "lucide-vue-next";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { useExplorer } from "../../composables/useExplorer.js";
+import { useExplorerActions } from "./useExplorerActions.js";
+import SqlExportDialog from "./SqlExportDialog.vue";
+import { listObjects } from "../../lib/tauri/commands.js";
 import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
@@ -15,6 +18,7 @@ import ExplorerTree from "./ExplorerTree.vue";
 import CreateTableDialog from "./CreateTableDialog.vue";
 
 const explorer = useExplorer();
+const exportActions = useExplorerActions();
 const connections = useConnectionProfiles();
 const creatingTable = ref(false);
 
@@ -42,6 +46,45 @@ const toasts = useToasts();
 const { profile, status, connected, rootState } = explorer;
 
 // Load databases whenever a connection becomes available.
+/** Table names in whatever the export dialog is pointed at, for its list. */
+const exportTables = ref([]);
+
+async function loadExportTables() {
+  const target = exportActions.target.value;
+  if (!target) {
+    exportTables.value = [];
+    return;
+  }
+  // A single table does not need a list; asking for one would list the whole
+  // schema to show one checkbox.
+  if (target.tables.length) {
+    exportTables.value = target.tables;
+    return;
+  }
+  try {
+    const objects = await listObjects(
+      status.value.connectionId,
+      target.database,
+      target.schema || null,
+    );
+    exportTables.value = objects
+      .filter((one) => one.kind === "table")
+      .map((one) => one.name);
+  } catch {
+    // No list is not a reason to refuse the export; an empty schema has no
+    // tables to choose between either.
+    exportTables.value = [];
+  }
+}
+
+// Re-read the list whenever the dialog opens for somewhere new.
+watch(
+  () => exportActions.open.value,
+  (isOpen) => {
+    if (isOpen) loadExportTables();
+  },
+);
+
 watch(
   () => [connected.value, status.value?.connectionId],
   () => {
@@ -157,6 +200,18 @@ async function connect() {
         </InlineAlert>
       </div>
       <ExplorerTree v-else class="min-h-0 flex-1" />
+
+      <SqlExportDialog
+        v-if="exportActions.target.value"
+        v-model:open="exportActions.open.value"
+        :profile-id="exportActions.target.value.profileId"
+        :database="exportActions.target.value.database"
+        :schema="exportActions.target.value.schema ?? ''"
+        :engine="exportActions.target.value.engine"
+        :tables="exportActions.target.value.tables"
+        :available="exportTables"
+        @done="loadExportTables()"
+      />
     </template>
   </div>
 </template>

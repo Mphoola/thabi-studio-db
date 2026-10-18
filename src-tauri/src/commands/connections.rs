@@ -9,7 +9,7 @@ use crate::{
     state::AppState,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 /// Default rows fetched per statement; the user can raise it in Settings.
 const DEFAULT_MAX_ROWS: usize = 10_000;
@@ -1054,9 +1054,12 @@ pub async fn copy_table(
 /// Writes a schema, or chosen tables, to a `.sql` file the same engine can run.
 ///
 /// A backup does not need an open query tab, so this runs off the connection's
-/// own session rather than a tab's.
+/// own session rather than a tab's. Progress is emitted as it goes — a dump of
+/// a real database is minutes, and a button that does nothing visible for two
+/// of them looks broken.
 #[tauri::command]
 pub async fn export_sql(
+    app: tauri::AppHandle,
     id: String,
     database: String,
     schema: Option<String>,
@@ -1074,8 +1077,6 @@ pub async fn export_sql(
     }
     let schema = schema.unwrap_or_default();
 
-    // Everything the writer needs is read here, where the async runtime is
-    // available; only the file writing is moved off it.
     let engine = with_session(&state, &id, async |session| {
         Ok(session.server_info().engine)
     })
@@ -1095,9 +1096,10 @@ pub async fn export_sql(
     }
     let session = state.connections.session(&id).await?;
     let handle = tokio::runtime::Handle::current();
+    let cancel = state.start_export(&id);
+    let total = planned.len();
 
-    // Writing a file is blocking work, so it runs off the async workers.
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         use std::io::Write;
         let file = std::fs::File::create(&path).map_err(|_| {
             AppError::new(
@@ -1115,7 +1117,24 @@ pub async fn export_sql(
         writer.write_all(banner.as_bytes()).map_err(wump)?;
 
         let mut rows = 0u64;
+        let mut read = 0usize;
         for (name, structure) in &planned {
+            read += 1;
+            // Cloned per call rather than moved, so the closure is FnMut and
+            // can be called once per page for as long as the table takes.
+            let table = name.clone();
+            let app = &app;
+            let mut announce = |rows: u64| {
+                let _ = app.emit(
+                    "sql-export-progress",
+                    database::dump::DumpProgress {
+                        table: table.clone(),
+                        tables: total,
+                        rows,
+                    },
+                );
+            };
+            announce(0);
             if options.structure {
                 for statement in database::dump::structure_statements(
                     engine, &database, &schema, name, structure,
@@ -1124,28 +1143,50 @@ pub async fn export_sql(
                 }
             }
             if options.data {
+                // The lock is taken and released around one table at a time
+                // rather than held for the whole dump, so a query on the same
+                // connection is not blocked behind an export.
                 let mut guard = handle.block_on(session.lock());
                 let live = guard.as_mut().ok_or_else(AppError::not_connected)?;
+                let target = database::ddl::TableTarget {
+                    database: database.clone(),
+                    schema: if schema.is_empty() {
+                        None
+                    } else {
+                        Some(schema.clone())
+                    },
+                    name: name.clone(),
+                };
+                let mut run =
+                    database::dump::WriteRun::new(options.row_limit, cancel.clone(), &mut announce);
                 rows += handle.block_on(database::dump::write_table_rows(
                     live,
-                    &database,
-                    &schema,
-                    name,
+                    &target,
                     structure,
-                    options.row_limit,
+                    &mut run,
                     &mut writer,
                 ))?;
             }
         }
         writer.flush().map_err(wump)?;
+        let _ = read;
         Ok(DumpSummary {
-            tables: planned.len(),
+            tables: total,
             rows,
             bytes: writer.bytes(),
         })
     })
     .await
-    .map_err(|_| AppError::background_task())?
+    .map_err(|_| AppError::background_task())?;
+
+    state.finish_export(&id);
+    result
+}
+
+/// Stops a running dump. False when nothing is running.
+#[tauri::command]
+pub fn cancel_sql_export(id: String, state: State<'_, AppState>) -> bool {
+    state.cancel_export(&id)
 }
 
 /// A timestamp for the file's header, taken from the clock rather than the

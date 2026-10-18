@@ -133,3 +133,13 @@ export async function pickRecoveryCodesDestination() {
   });
   return typeof path === "string" ? path : null;
 }
+
+/** Native save dialog for a SQL dump. Resolves to a path or null. */
+export async function pickSqlDestination(defaultName) {
+  const path = await save({
+    title: "Export SQL",
+    defaultPath: `${defaultName.replace(/[\\/:*?"<>|]/g, "_")}.sql`,
+    filters: [{ name: "SQL", extensions: ["sql"] }],
+  });
+  return typeof path === "string" ? path : null;
+}

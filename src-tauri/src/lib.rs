@@ -124,6 +124,7 @@ pub fn run() {
             commands::connections::fetch_table_page,
             commands::connections::count_table_rows,
             commands::connections::copy_table,
+            commands::connections::cancel_sql_export,
             commands::connections::export_sql,
             commands::connections::export_table,
             commands::connections::preview_row_changes,
