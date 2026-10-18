@@ -400,6 +400,18 @@ export function copyTable(
   });
 }
 
+/**
+ * Writes a schema, or chosen tables, to a `.sql` file the same engine can run.
+ *
+ * `options`: { structure, data, tables: string[], rowLimit?: number }. An
+ * empty `tables` means every table in the schema.
+ *
+ * @returns {Promise<{ tables: number, rows: number, bytes: number }>}
+ */
+export function exportSql(id, { database, schema, options, path }) {
+  return call("export_sql", { id, database, schema, options, path });
+}
+
 /** Exports a table to a file, streaming from the server. */
 export function exportTable(
   id,

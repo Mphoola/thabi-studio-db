@@ -483,6 +483,79 @@ async fn export_round_trips(engine: Engine, db: &str, schema: &str) {
         .ok();
 }
 
+/// Writes a real dump to /tmp so a person can read it.
+///
+/// The round-trip test proves the file works. This proves it looks like
+/// something: a dump that is valid and unreadable is still a bad backup.
+async fn export_writes_a_readable_file(engine: Engine, db: &str, schema: &str) {
+    use thabi_studio_lib::database::dump::{
+        DumpOptions, contents_note, header, plan, structure_statements, write_table_rows,
+    };
+
+    let table = thabi_studio_lib::database::dump::table_of(engine, db, schema, "thabi_dump");
+    let mut session = open(engine).await;
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .expect("drop");
+    let create = match engine {
+        Engine::MySql => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label varchar(50) NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+        Engine::Postgres => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label text NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+        Engine::SqlServer => {
+            "CREATE TABLE thabi_dump (id int PRIMARY KEY, label nvarchar(50) NULL, amount decimal(10,2) NOT NULL DEFAULT 0)"
+        }
+    };
+    session.execute(create, 0).await.expect("create");
+    session
+        .execute(
+            &format!(
+                "INSERT INTO {table} (id, label, amount) VALUES (1, 'Ada', 10.50), (2, 'O''Hara', 0)"
+            ),
+            0,
+        )
+        .await
+        .expect("insert");
+
+    let options = DumpOptions {
+        structure: true,
+        data: true,
+        ..Default::default()
+    };
+    let planned = plan(&mut session, db, schema, &options).await;
+
+    let mut file: Vec<u8> = Vec::new();
+    use std::io::Write;
+    file.write_all(header(engine, db, schema, "2026-10-17 09:00").as_bytes())
+        .expect("header");
+    file.write_all(contents_note(&options).as_bytes())
+        .expect("note");
+    file.write_all(b"\n").expect("newline");
+    for (name, structure) in &planned.expect("plan") {
+        for statement in structure_statements(engine, db, schema, name, structure) {
+            file.write_all(statement.as_bytes()).expect("statement");
+        }
+        write_table_rows(&mut session, db, schema, name, structure, None, &mut file)
+            .await
+            .expect("rows");
+    }
+
+    let path = format!(
+        "/tmp/thabi-dump-{}.sql",
+        format!("{engine:?}").to_lowercase()
+    );
+    std::fs::write(&path, &file).expect("write dump");
+    let _ = file.len();
+    println!("DUMP WRITTEN: {path}");
+    session
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), 0)
+        .await
+        .ok();
+}
+
 /// Splits a dump back into statements, on semicolons outside string literals.
 ///
 /// A real splitter, not `split(';')`: the values this is meant to carry
@@ -1331,6 +1404,12 @@ mod postgres {
 
     #[tokio::test]
     #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "thabi_it", "public").await;
+    }
+
+    #[tokio::test]
+    #[ignore]
     async fn sql_export_round_trips() {
         export_round_trips(E, "thabi_it", "public").await;
     }
@@ -1438,6 +1517,12 @@ mod mysql {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "thabi_it", "").await;
     }
 
     #[tokio::test]
@@ -1627,6 +1712,12 @@ mod sqlserver {
     #[ignore]
     async fn generated_ddl_applies_and_reads_back() {
         applies_generated_ddl(E).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sql_export_writes_a_readable_file() {
+        export_writes_a_readable_file(E, "master", "dbo").await;
     }
 
     #[tokio::test]

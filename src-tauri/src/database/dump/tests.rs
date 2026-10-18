@@ -4,9 +4,8 @@
 //! part of what it does.
 
 use super::*;
+use crate::database::metadata::{ColumnInfo, ColumnRef, IndexInfo};
 use crate::database::values::Cell;
-
-use crate::database::metadata::IndexInfo;
 
 fn structure() -> ObjectStructure {
     ObjectStructure {
@@ -233,4 +232,96 @@ fn counts_what_it_wrote() {
     writer.write_all(b"world").expect("write");
     assert_eq!(writer.bytes(), 11);
     assert_eq!(writer.into_inner(), b"hello world");
+}
+
+fn table_named(name: &str) -> (String, ObjectStructure) {
+    (
+        name.to_owned(),
+        ObjectStructure {
+            columns: vec![ColumnInfo {
+                name: "id".into(),
+                data_type: "INTEGER".into(),
+                nullable: false,
+                default: None,
+                primary_key: Some(1),
+                enum_values: None,
+                references: None,
+            }],
+            indexes: None,
+            show_create: None,
+        },
+    )
+}
+
+fn referencing(name: &str, target: &str) -> (String, ObjectStructure) {
+    let (mut table_name, mut structure) = table_named(name);
+    structure.columns.push(ColumnInfo {
+        name: format!("{}_id", target),
+        data_type: "INTEGER".into(),
+        nullable: true,
+        default: None,
+        primary_key: None,
+        enum_values: None,
+        references: Some(ColumnRef {
+            schema: "public".into(),
+            table: target.into(),
+            column: "id".into(),
+        }),
+    });
+    table_name.truncate(table_name.len());
+    (table_name, structure)
+}
+
+/// Alphabetical order put `orders` before the `customers` it referenced,
+/// and the file failed on its first foreign key. Printing a real dump is
+/// what showed it.
+#[test]
+fn a_referenced_table_is_created_before_the_one_that_references_it() {
+    let ordered = order_for_restore(vec![
+        referencing("orders", "customers"),
+        table_named("customers"),
+    ]);
+    let names: Vec<&str> = ordered.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["customers", "orders"]);
+}
+
+#[test]
+fn chains_are_created_from_the_far_end_back() {
+    let ordered = order_for_restore(vec![
+        referencing("c", "b"),
+        referencing("b", "a"),
+        table_named("a"),
+    ]);
+    let names: Vec<&str> = ordered.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["a", "b", "c"]);
+}
+
+/// The database allowed the cycle, so the dump cannot invent an order for
+/// it. It must not loop, and it must not drop a table.
+#[test]
+fn tables_that_reference_each_other_still_all_appear() {
+    let ordered = order_for_restore(vec![referencing("a", "b"), referencing("b", "a")]);
+    assert_eq!(ordered.len(), 2);
+}
+
+#[test]
+fn a_schema_with_no_keys_keeps_its_order() {
+    let ordered = order_for_restore(vec![table_named("zebra"), table_named("apple")]);
+    let names: Vec<&str> = ordered.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["zebra", "apple"]);
+}
+
+/// `create_table` already ends in a semicolon; adding another left `);;`
+/// in every file.
+#[test]
+fn statements_end_in_exactly_one_semicolon() {
+    let statements =
+        structure_statements(Engine::Postgres, "shop", "public", "orders", &structure());
+    for statement in &statements {
+        let trimmed = statement.trim_end();
+        assert!(!trimmed.ends_with(";;"), "double semicolon: {statement:?}");
+        if trimmed.contains("CREATE") || trimmed.contains("INDEX") {
+            assert!(trimmed.ends_with(';'), "no semicolon: {statement:?}");
+        }
+    }
 }

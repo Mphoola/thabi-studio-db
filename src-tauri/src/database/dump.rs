@@ -223,6 +223,16 @@ pub fn table_of(engine: Engine, database: &str, schema: &str, name: &str) -> Str
     quote::table(engine, database, schema, name)
 }
 
+/// A statement ending in exactly one semicolon.
+///
+/// The generators do not agree: `create_table` leaves one off and
+/// `create_index` leaves one on, so a file had `);;` in some places and
+/// nothing at all in others. A file that is read by people as well as by
+/// servers should not have that in it either way.
+fn one_statement(sql: &str) -> String {
+    format!("{};", sql.trim_end().trim_end_matches(';'))
+}
+
 /// A `DROP TABLE IF EXISTS` before the create, so a restore into a populated
 /// database replaces rather than collides.
 pub fn drop_table(table: &str) -> String {
@@ -255,7 +265,7 @@ pub fn structure_statements(
     let spec = spec_for_dump(name, described);
     match super::ddl::create_table(engine, database, schema, name, &spec) {
         Ok(created) => {
-            out.push(format!("{created};\n"));
+            out.push(format!("{}\n", one_statement(&created)));
             for index in described.indexes.iter().flatten() {
                 // The primary key is written inside CREATE TABLE, so writing it
                 // again would be a second, differently named constraint.
@@ -268,8 +278,10 @@ pub fn structure_statements(
                     unique: index.unique,
                 };
                 out.push(format!(
-                    "{};\n",
-                    super::ddl::create_index(engine, database, schema, name, &spec)
+                    "{}\n",
+                    one_statement(&super::ddl::create_index(
+                        engine, database, schema, name, &spec
+                    ))
                 ));
             }
         }
@@ -338,6 +350,9 @@ pub async fn plan(
         .unwrap_or_default();
     let wanted: Vec<String> = listed
         .iter()
+        // Views are not tables: DROP TABLE IF EXISTS and CREATE VIEW together
+        // make a file that cannot run.
+        .filter(|object| object.kind == super::ObjectKind::Table)
         .map(|object| object.name.clone())
         .filter(|name| options.tables.is_empty() || options.tables.contains(name))
         .collect();
@@ -348,13 +363,13 @@ pub async fn plan(
         ));
     }
 
-    let mut out = Vec::new();
+    let mut read = Vec::new();
     for name in wanted {
         match session
             .describe(database, schema, &name, super::ObjectKind::Table)
             .await
         {
-            Ok(structure) => out.push((name, structure)),
+            Ok(structure) => read.push((name, structure)),
             Err(reason) => {
                 // One unreadable table is not a reason to write a backup that
                 // is missing it without saying so.
@@ -367,7 +382,53 @@ pub async fn plan(
         }
     }
     let _ = engine;
-    Ok(out)
+    Ok(order_for_restore(read))
+}
+
+/// Tables in an order a restore can actually run.
+///
+/// Alphabetical order puts `orders` before the `customers` it references, and
+/// the file then fails on its first foreign key. Referenced tables come first.
+/// Two tables that reference each other have no such order — the database
+/// allowed it, so the dump cannot invent one — and those keep the order they
+/// were listed in rather than looping forever.
+fn order_for_restore(tables: Vec<(String, ObjectStructure)>) -> Vec<(String, ObjectStructure)> {
+    let names: Vec<String> = tables.iter().map(|(name, _)| name.clone()).collect();
+    let needs: Vec<Vec<usize>> = tables
+        .iter()
+        .map(|(_, structure)| {
+            structure
+                .columns
+                .iter()
+                .filter_map(|column| column.references.as_ref())
+                .filter_map(|reference| names.iter().position(|n| *n == reference.table))
+                .collect()
+        })
+        .collect();
+
+    let mut done: Vec<usize> = Vec::new();
+    let mut order: Vec<usize> = Vec::new();
+    while order.len() < tables.len() {
+        let before = order.len();
+        for (index, required) in needs.iter().enumerate() {
+            if done.contains(&index) {
+                continue;
+            }
+            if required.iter().all(|target| done.contains(target)) {
+                order.push(index);
+                done.push(index);
+            }
+        }
+        if order.len() == before {
+            // A cycle: nothing became placeable this sweep.
+            order.extend((0..tables.len()).filter(|index| !done.contains(index)));
+            break;
+        }
+    }
+    order
+        .into_iter()
+        .map(|index| tables[index].clone())
+        .collect()
 }
 
 /// Writes one table's rows as INSERT statements, streaming them.
