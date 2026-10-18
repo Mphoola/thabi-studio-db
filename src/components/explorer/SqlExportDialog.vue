@@ -13,14 +13,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { FileCode2 } from "lucide-vue-next";
 import BaseButton from "../common/BaseButton.vue";
 import BaseDialog from "../common/BaseDialog.vue";
-import CheckboxInput from "../common/CheckboxInput.vue";
+import BackupForm from "./BackupForm.vue";
 import ExportProgress from "./ExportProgress.vue";
-import ExportTablePicker from "./ExportTablePicker.vue";
 import InlineAlert from "../common/InlineAlert.vue";
-import TextInput from "../common/TextInput.vue";
 import { useToasts } from "../../composables/useToasts.js";
 import { cancelSqlExport, exportSql } from "../../lib/tauri/commands.js";
-import { pickSqlDestination } from "../../lib/tauri/files.js";
+import {
+  defaultBackupPath,
+  pickSqlDestination,
+} from "../../lib/tauri/files.js";
 import { toUserDetail } from "../../lib/errors.js";
 
 const props = defineProps({
@@ -45,11 +46,20 @@ const limit = ref("");
 const running = ref(false);
 const progress = ref(null);
 const failed = ref("");
+/** Where the file will be written, shown before anything starts. */
+const destination = ref("");
+/** "all 12 tables and their rows", said back before it starts. */
+const chosenLabel = computed(() => {
+  const tables = picked.value.length
+    ? picked.value.length
+    : props.available.length;
+  const noun = tables === 1 ? "table" : "tables";
+  if (structure.value && data.value)
+    return `all ${tables} ${noun} and their rows`;
+  if (data.value) return `the rows of ${tables} ${noun}`;
+  return `the structure of ${tables} ${noun}`;
+});
 
-/** MySQL will state its own CREATE TABLE; the other two cannot. */
-const rebuilt = computed(
-  () => props.engine === "postgres" || props.engine === "sqlserver",
-);
 const limitRows = computed(() => {
   const value = Number.parseInt(limit.value, 10);
   return Number.isFinite(value) && value > 0 ? value : null;
@@ -57,7 +67,7 @@ const limitRows = computed(() => {
 
 watch(
   () => props.open,
-  (isOpen) => {
+  async (isOpen) => {
     if (!isOpen) return;
     structure.value = true;
     data.value = true;
@@ -65,6 +75,10 @@ watch(
     failed.value = "";
     progress.value = null;
     picked.value = [...(props.tables.length ? props.tables : [])];
+    // Shown, not asked for: the question "where will this go" should be
+    // answered on screen rather than by a file picker that appears after the
+    // decision has already been made.
+    destination.value = await defaultBackupPath(props.database);
   },
 );
 
@@ -79,6 +93,12 @@ function all() {
 }
 function none() {
   picked.value = [];
+}
+
+/** Where the backup goes. Changing it does not start anything. */
+async function choose() {
+  const picked = await pickSqlDestination(destination.value);
+  if (picked) destination.value = picked;
 }
 
 async function start() {
@@ -165,11 +185,17 @@ onBeforeUnmount(() => {
 <template>
   <BaseDialog
     v-model:open="open"
-    title="Export as SQL"
+    title="Create Backup"
     size="lg"
     @close="emit('close')"
   >
     <div class="space-y-4">
+      <!-- Confirms what was asked for, in the terms it was asked in. -->
+      <p v-if="!running && !failed" class="text-xs text-fg-subtle">
+        {{ database }}{{ schema ? ` / ${schema}` : "" }} — {{ chosenLabel }}
+        will be written to the folder above.
+      </p>
+
       <InlineAlert v-if="failed" tone="danger">
         {{ failed }}
         <p class="mt-1 text-xs opacity-80">
@@ -177,55 +203,25 @@ onBeforeUnmount(() => {
         </p>
       </InlineAlert>
 
-      <template v-if="!running">
-        <section>
-          <h3 class="mb-1.5 text-xs font-semibold text-fg-muted">Contents</h3>
-          <div class="flex gap-4">
-            <CheckboxInput v-model="structure" label="Table structure" />
-            <CheckboxInput v-model="data" label="Rows" />
-          </div>
-          <p v-if="rebuilt" class="mt-1.5 text-xs text-fg-subtle">
-            {{ engine === "postgres" ? "PostgreSQL" : "SQL Server" }} cannot
-            print its own <code>CREATE TABLE</code>, so the structure here is
-            rebuilt from the catalog. Columns, types, keys, indexes and
-            single-column foreign keys are included; check constraints, triggers
-            and partitions are not. Use
-            <code>{{ engine === "postgres" ? "pg_dump" : "sqlpackage" }}</code>
-            for those.
-          </p>
-          <p v-else class="mt-1.5 text-xs text-fg-subtle">
-            The structure is the server's own <code>CREATE TABLE</code>, so it
-            is exact.
-          </p>
-        </section>
-
-        <ExportTablePicker
-          v-if="available.length > 1"
-          :available="available"
-          :picked="picked"
-          @toggle="toggle"
-          @all="all"
-          @none="none"
-        />
-
-        <section>
-          <TextInput
-            v-model="limit"
-            label="Row limit, per table (optional)"
-            placeholder="all rows"
-            inputmode="numeric"
-          />
-          <p class="mt-1 text-xs text-fg-subtle">
-            Leave this empty. A limit makes the file a sample, not a backup.
-          </p>
-        </section>
-
-        <InlineAlert tone="warning">
-          Every table in the file is preceded by
-          <code>DROP TABLE IF EXISTS</code>. Running this file over a database
-          that already has these tables replaces them.
-        </InlineAlert>
-      </template>
+      <BackupForm
+        v-if="!running"
+        :destination="destination"
+        :database="database"
+        :schema="schema"
+        :engine="engine"
+        :structure="structure"
+        :rows="data"
+        :limit="limit"
+        :available="available"
+        :picked="picked"
+        @change-destination="choose"
+        @update:structure="structure = $event"
+        @update:rows="data = $event"
+        @update:limit="limit = $event"
+        @toggle-table="toggle"
+        @all-tables="all"
+        @no-tables="none"
+      />
 
       <ExportProgress
         v-else
@@ -240,7 +236,7 @@ onBeforeUnmount(() => {
         <BaseButton variant="ghost" @click="open = false">Cancel</BaseButton>
         <BaseButton variant="primary" @click="start">
           <FileCode2 :size="14" :stroke-width="1.75" aria-hidden="true" />
-          Export…
+          Create Backup
         </BaseButton>
       </template>
     </template>

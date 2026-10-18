@@ -43,7 +43,7 @@ export function useExplorerActions() {
         { id: "open-data", label: "Open Data", icon: Rows3 },
         { id: "open-structure", label: "Show Structure", icon: Columns3 },
         { separator: true },
-        { id: "export-sql", label: "Export as SQL…", icon: FileCode2 },
+        { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
         { separator: true },
         ...copy,
       ];
@@ -63,7 +63,7 @@ export function useExplorerActions() {
       ...(node.type === "schema" || node.type === "database"
         ? [
             { id: "diagram", label: "Show Diagram", icon: Network },
-            { id: "export-sql", label: "Export as SQL…", icon: FileCode2 },
+            { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
           ]
         : []),
       { separator: true },

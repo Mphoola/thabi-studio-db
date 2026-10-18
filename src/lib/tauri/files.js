@@ -143,3 +143,19 @@ export async function pickSqlDestination(defaultName) {
   });
   return typeof path === "string" ? path : null;
 }
+
+/**
+ * Where a backup goes when nobody has chosen anywhere else.
+ *
+ * A folder of its own, named for the app, dated by day: backups written to a
+ * Downloads folder get lost among downloads, and backups written into the
+ * database's own directory are the first thing a cleanup removes.
+ *
+ * The caller shows this before anything is written, so the path is never a
+ * surprise discovered afterwards.
+ */
+export async function defaultBackupPath(database, when = new Date()) {
+  const day = when.toISOString().slice(0, 10);
+  const name = `${String(database).replace(/[\\/:*?"<>|]/g, "_")}-${day}.sql`;
+  return join(await homeDir(), "Documents", "Thabi Backups", name);
+}
