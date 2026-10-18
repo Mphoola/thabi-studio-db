@@ -17,6 +17,17 @@ import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
 import { diagramTargetFor, qualifiedName } from "../../lib/explorerTree.js";
 
+/**
+ * What the backup dialog is for, and whether it is open.
+ *
+ * At module scope, not inside the composable, because the menu that opens it
+ * and the panel that renders it call this separately. Refs made per call are
+ * two different pieces of state: the menu set one, the dialog watched the
+ * other, and nothing on screen happened at all.
+ */
+const exportTarget = ref(null);
+const exportOpen = ref(false);
+
 /** Context-menu items and actions for explorer nodes. */
 export function useExplorerActions() {
   const explorer = useExplorer();
@@ -24,10 +35,6 @@ export function useExplorerActions() {
   const hostKeys = useHostKeyTrust();
   const workspace = useTabs();
   const profile = store.selectedProfile;
-  // What the export dialog is for, and whether it is open. Refs rather than
-  // arguments so a menu item can open a dialog it does not render.
-  const target = ref(null);
-  const open = ref(false);
   const toasts = useToasts();
 
   function menuFor(node) {
@@ -140,7 +147,7 @@ export function useExplorerActions() {
       return;
     }
     const one = node.type === "object";
-    target.value = {
+    exportTarget.value = {
       profileId: profile.value.id,
       database: one
         ? node.database
@@ -154,8 +161,8 @@ export function useExplorerActions() {
       tables: one ? [node.name] : [],
       available: [],
     };
-    open.value = true;
+    exportOpen.value = true;
   }
 
-  return { menuFor, run, target, open };
+  return { menuFor, run, target: exportTarget, open: exportOpen };
 }
