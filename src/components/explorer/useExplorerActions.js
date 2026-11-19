@@ -2,8 +2,17 @@ import { copyText } from "../../lib/clipboard.js";
 import { ref } from "vue";
 import {
   ClipboardCopy,
+  Code,
   Columns3,
+  DatabaseZap,
+  FileUp,
+  FolderPlus,
+  HardDrive,
+  HardDriveDownload,
+  HardDriveUpload,
+  Trash2,
   FileCode2,
+  FilePlus2,
   Network,
   RefreshCw,
   Repeat,
@@ -16,6 +25,10 @@ import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
 import { diagramTargetFor, qualifiedName } from "../../lib/explorerTree.js";
+import { sqlTemplate } from "../../lib/sqlTemplates.js";
+import { useContainerDialog } from "./useContainerDialog.js";
+import { useImportDialog } from "./useImportDialog.js";
+import { describeObject, objectDefinition } from "../../lib/tauri/commands.js";
 
 /**
  * What the backup dialog is for, and whether it is open.
@@ -36,9 +49,55 @@ export function useExplorerActions() {
   const workspace = useTabs();
   const profile = store.selectedProfile;
   const toasts = useToasts();
+  const containers = useContainerDialog();
+  const imports = useImportDialog();
+  const writable = () => profile.value?.safeMode !== "read-only";
+
+  /** New and Drop for databases and schemas, where the engine has them and
+   *  the connection may change things. */
+  function containerItems(node) {
+    const driver = profile.value?.driver;
+    if (profile.value?.safeMode === "read-only") return [];
+    const items = [];
+    if (node.type === "database") {
+      items.push({
+        id: "new-database",
+        label: "New Database…",
+        icon: DatabaseZap,
+      });
+      if (driver !== "mysql")
+        items.push({
+          id: "new-schema",
+          label: "New Schema…",
+          icon: FolderPlus,
+        });
+      items.push({
+        id: "drop-database",
+        label: "Drop Database…",
+        icon: Trash2,
+        danger: true,
+      });
+    }
+    if (node.type === "schema")
+      items.push({
+        id: "drop-schema",
+        label: "Drop Schema…",
+        icon: Trash2,
+        danger: true,
+      });
+    return items.length ? [{ separator: true }, ...items] : [];
+  }
+
+  const driverOf = () => profile.value?.driver;
 
   function menuFor(node) {
     if (!node) return [];
+    if (node.type === "routine")
+      return [
+        { id: "show-definition", label: "Show Definition", icon: Code },
+        { separator: true },
+        { id: "copy-name", label: "Copy Name", icon: ClipboardCopy },
+      ];
     const copy = [
       { id: "copy-name", label: "Copy Name", icon: ClipboardCopy },
       ...(node.type === "object"
@@ -49,7 +108,36 @@ export function useExplorerActions() {
       return [
         { id: "open-data", label: "Open Data", icon: Rows3 },
         { id: "open-structure", label: "Show Structure", icon: Columns3 },
+        { id: "show-create", label: "Show CREATE Statement", icon: Code },
         { separator: true },
+        ...(node.kind === "table"
+          ? [
+              {
+                id: "script-select",
+                label: "Script as SELECT",
+                icon: FilePlus2,
+              },
+              {
+                id: "script-insert",
+                label: "Script as INSERT",
+                icon: FilePlus2,
+              },
+              {
+                id: "script-update",
+                label: "Script as UPDATE",
+                icon: FilePlus2,
+              },
+              {
+                id: "script-delete",
+                label: "Script as DELETE",
+                icon: FilePlus2,
+              },
+              { separator: true },
+            ]
+          : []),
+        ...(node.kind === "table" && writable()
+          ? [{ id: "import-data", label: "Import Data…", icon: FileUp }]
+          : []),
         { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
         { separator: true },
         ...copy,
@@ -70,12 +158,72 @@ export function useExplorerActions() {
       ...(node.type === "schema" || node.type === "database"
         ? [
             { id: "diagram", label: "Show Diagram", icon: Network },
+            ...(node.type === "schema" || driverOf() === "mysql"
+              ? [{ id: "storage", label: "Show Storage", icon: HardDrive }]
+              : []),
+            ...((node.type === "schema" || driverOf() === "mysql") && writable()
+              ? [
+                  {
+                    id: "import-new",
+                    label: "Import into New Table…",
+                    icon: FileUp,
+                  },
+                ]
+              : []),
             { id: "export-sql", label: "Create Backup…", icon: FileCode2 },
           ]
         : []),
+      ...(node.type === "database"
+        ? [
+            {
+              id: "native-backup",
+              label: "Back Up with Native Tools…",
+              icon: HardDriveDownload,
+            },
+            ...(writable()
+              ? [
+                  {
+                    id: "native-restore",
+                    label: "Restore from Backup…",
+                    icon: HardDriveUpload,
+                  },
+                ]
+              : []),
+          ]
+        : []),
+      ...containerItems(node),
       { separator: true },
       ...copy,
     ].filter((item) => node.type !== "group" || item.id !== "copy-name");
+  }
+
+  /**
+   * Opens a new query tab with an object's CREATE statement or a template
+   * for it. Nothing runs: the tab is a starting point.
+   */
+  async function openScript(id, node, engine) {
+    const profileId = profile.value?.id;
+    try {
+      const sql =
+        id === "show-create"
+          ? await objectDefinition(profileId, node)
+          : sqlTemplate(
+              id.slice("script-".length),
+              engine,
+              node,
+              (await describeObject(profileId, node)).columns,
+            );
+      workspace.newQuery({
+        sql,
+        database: node.database ?? null,
+        title:
+          id === "show-create"
+            ? `CREATE ${node.name}`
+            : `${id.slice("script-".length).toUpperCase()} ${node.name}`,
+      });
+    } catch (error) {
+      toasts.error(`Couldn’t script “${node.name}”`, toUserDetail(error));
+    }
   }
 
   async function copy(text) {
@@ -90,6 +238,8 @@ export function useExplorerActions() {
   async function run(id, node) {
     const engine = profile.value?.driver;
     switch (id) {
+      case "show-definition":
+        return explorer.open(node);
       case "open-data":
         return explorer.open(node, "data");
       case "open-structure":
@@ -100,6 +250,65 @@ export function useExplorerActions() {
         return copy(qualifiedName(engine, node));
       case "refresh":
         return explorer.refresh(node);
+      case "native-backup":
+      case "native-restore":
+        return imports.showBackup({
+          profileId: profile.value?.id,
+          database: node.database,
+          mode: id === "native-backup" ? "backup" : "restore",
+        });
+      case "run-dump":
+        return imports.showRestore({
+          profileId: profile.value?.id,
+          database: node.database,
+        });
+      case "import-data":
+        return imports.show({
+          profileId: profile.value?.id,
+          database: node.database,
+          schema: node.schema,
+          table: node.name,
+        });
+      case "import-new":
+        return imports.show({
+          profileId: profile.value?.id,
+          database: node.database,
+          schema: node.type === "schema" ? node.schema : null,
+        });
+      case "storage":
+        return workspace.openServer({
+          profileId: profile.value?.id,
+          view: "storage",
+          database: node.database,
+          schema: node.type === "schema" ? node.schema : null,
+          title: `${profile.value?.name ?? "Server"} server`,
+        });
+      case "new-database":
+        return containers.show("createDatabase", {
+          profileId: profile.value?.id,
+        });
+      case "drop-database":
+        return containers.show("dropDatabase", {
+          profileId: profile.value?.id,
+          name: node.database ?? node.name,
+        });
+      case "new-schema":
+        return containers.show("createSchema", {
+          profileId: profile.value?.id,
+          database: node.database ?? node.name,
+        });
+      case "drop-schema":
+        return containers.show("dropSchema", {
+          profileId: profile.value?.id,
+          database: node.database,
+          name: node.schema ?? node.name,
+        });
+      case "show-create":
+      case "script-select":
+      case "script-insert":
+      case "script-update":
+      case "script-delete":
+        return openScript(id, node, engine);
       case "export-sql":
         // A table exports just itself; a database or schema exports all of it.
         return emitExport(node);

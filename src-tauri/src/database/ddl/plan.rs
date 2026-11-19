@@ -5,7 +5,8 @@
 //! cannot drift from what is sent.
 
 use super::super::{Engine, quote};
-use super::alter::{Change, alter_column};
+use super::alter::{Change, alter_column_with};
+use super::current::Current;
 use super::keys::{IndexSpec, KeyChange, alter_key, create_index, drop_index};
 use super::table::TableSpec;
 
@@ -83,6 +84,19 @@ pub fn table_script(
     table: &str,
     plan: &TablePlan,
 ) -> Vec<String> {
+    table_script_with(engine, database, schema, table, plan, &Current::default())
+}
+
+/// [`table_script`], restating columns from what the server says they are
+/// now. The app always builds through this, after reading the table.
+pub fn table_script_with(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    table: &str,
+    plan: &TablePlan,
+    current: &Current,
+) -> Vec<String> {
     // A plan that creates the table is one statement, or an error: the
     // changes in a create plan are the columns it is created with.
     if let Some(spec) = &plan.create {
@@ -113,7 +127,9 @@ pub fn table_script(
     for change in &plan.columns {
         // A rename that SQL Server does with sp_rename also restates the
         // column, and both are part of the one change.
-        out.extend(alter_column(engine, target.0, target.1, target.2, change));
+        out.extend(alter_column_with(
+            engine, target.0, target.1, target.2, change, current,
+        ));
     }
     for change in &plan.keys {
         let removing = matches!(
@@ -201,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sql_server_rename_keeps_its_two_statements_together() {
+    fn a_sql_server_rename_is_one_procedure_call() {
         let plan = TablePlan {
             create: None,
             columns: vec![Change::RenameColumn {
@@ -216,10 +232,11 @@ mod tests {
             }],
             ..TablePlan::default()
         };
+        // sp_rename alone: it keeps the column's type, nullability and
+        // default, so restating them would only risk changing them.
         let script = table_script(Engine::SqlServer, "shop", "dbo", "orders", &plan);
-        assert_eq!(script.len(), 2);
+        assert_eq!(script.len(), 1);
         assert!(script[0].contains("sp_rename"));
-        assert!(script[1].contains("ALTER COLUMN"));
     }
 
     #[test]
@@ -334,9 +351,10 @@ pub fn preview(
     schema: &str,
     table: &str,
     plan: &TablePlan,
+    current: &Current,
 ) -> DdlPreview {
     DdlPreview {
-        statements: table_script(engine, database, schema, table, plan),
+        statements: table_script_with(engine, database, schema, table, plan, current),
         note: atomicity_note(engine).to_owned(),
         transactional: atomicity(engine) == Atomicity::Transactional,
     }
@@ -390,6 +408,44 @@ pub fn action_script(
         TableAction::Drop { if_exists } => Ok(vec![super::table::drop_table(
             engine, database, schema, table, *if_exists,
         )]),
+        // MySQL and PostgreSQL copy a table's definition themselves, exactly:
+        // defaults, indexes, auto-increment and checks, which a copy rebuilt
+        // from described columns would get wrong (MySQL describes a default
+        // 'new' as new). Foreign keys are not copied by either.
+        TableAction::DuplicateStructure { to } | TableAction::DuplicateWithData { to }
+            if engine != Engine::SqlServer =>
+        {
+            let from = quote::table(engine, database, schema, table);
+            let into = quote::table(engine, database, schema, to);
+            let mut out = vec![match engine {
+                Engine::MySql => format!("CREATE TABLE {into} LIKE {from};"),
+                _ => format!("CREATE TABLE {into} (LIKE {from} INCLUDING ALL);"),
+            }];
+            if matches!(action, TableAction::DuplicateWithData { .. }) {
+                // Columns named when known, so the copy follows the table even
+                // if the two differ; PostgreSQL's identity columns take the
+                // copied values only when told to.
+                let names = structure.map(|spec| {
+                    spec.columns
+                        .iter()
+                        .map(|column| quote::ident(engine, &column.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
+                let overriding = if engine == Engine::Postgres {
+                    " OVERRIDING SYSTEM VALUE"
+                } else {
+                    ""
+                };
+                out.push(match names {
+                    Some(names) => format!(
+                        "INSERT INTO {into} ({names}){overriding} SELECT {names} FROM {from};"
+                    ),
+                    None => format!("INSERT INTO {into}{overriding} SELECT * FROM {from};"),
+                });
+            }
+            Ok(out)
+        }
         TableAction::DuplicateStructure { to } | TableAction::DuplicateWithData { to } => {
             let spec = structure.ok_or_else(|| {
                 "The table's structure could not be read, so it was not copied.".to_owned()
@@ -500,15 +556,19 @@ mod action_tests {
             Some(&spec()),
         )
         .unwrap();
-        assert_eq!(copy.len(), 1, "a structure-only copy is one statement");
-        assert!(copy[0].contains("\"orders_copy\""));
-        assert!(!copy[0].to_uppercase().contains("INSERT"));
-
-        // Guessing the structure would be worse than refusing: the copy would
-        // look right and not match.
-        assert!(
-            action_script(Engine::Postgres, "shop", "public", "orders", &action, None).is_err()
+        // PostgreSQL and MySQL copy the definition themselves, exactly.
+        assert_eq!(
+            copy,
+            ["CREATE TABLE \"public\".\"orders_copy\" (LIKE \"public\".\"orders\" INCLUDING ALL);"]
         );
+        assert_eq!(
+            action_script(Engine::MySql, "shop", "", "orders", &action, None).unwrap(),
+            ["CREATE TABLE `shop`.`orders_copy` LIKE `shop`.`orders`;"]
+        );
+
+        // SQL Server rebuilds it from the structure; guessing that would be
+        // worse than refusing, because the copy would look right and not match.
+        assert!(action_script(Engine::SqlServer, "shop", "dbo", "orders", &action, None).is_err());
     }
 
     #[test]
@@ -528,7 +588,7 @@ mod action_tests {
         assert!(script[0].starts_with("CREATE TABLE"));
         assert_eq!(
             script[1],
-            "INSERT INTO \"public\".\"orders_copy\" (\"id\") SELECT \"id\" FROM \"public\".\"orders\";"
+            "INSERT INTO \"public\".\"orders_copy\" (\"id\") OVERRIDING SYSTEM VALUE SELECT \"id\" FROM \"public\".\"orders\";"
         );
     }
 

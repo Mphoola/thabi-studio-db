@@ -70,4 +70,4 @@ export THABI_IT_SSH_PORT="${THABI_IT_SSH_PORT:-52222}"
 export THABI_IT_SSH_JUMP_PORT="${THABI_IT_SSH_JUMP_PORT:-52223}"
 export THABI_IT_PG_MTLS_PORT="${THABI_IT_PG_MTLS_PORT:-55433}"
 
-cargo test --manifest-path "$root/src-tauri/Cargo.toml" --test drivers --test ssh --test queries -- --ignored --test-threads=1 "$@"
+cargo test --manifest-path "$root/src-tauri/Cargo.toml" --test drivers --test designer --test admin --test import --test backup --test users --test ssh --test queries -- --ignored --test-threads=1 "$@"

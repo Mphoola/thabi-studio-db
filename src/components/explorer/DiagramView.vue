@@ -10,18 +10,13 @@
  * drawing, and useDiagramZoom holds the pan and zoom.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useToasts } from "../../composables/useToasts.js";
 import { useDiagramZoom } from "../../composables/useDiagramZoom.js";
-import { whyEmpty } from "../../composables/useDiagramEmpty.js";
-import { schemaDiagram } from "../../lib/tauri/commands.js";
+import { useDiagramData } from "../../composables/useDiagramData.js";
+import { useToasts } from "../../composables/useToasts.js";
 import { toUserDetail } from "../../lib/errors.js";
-import { buildGraph, plainGraph, positionsFrom } from "../../lib/erLayout.js";
-import {
-  buildSvg,
-  downloadSvg,
-  fileNameFor,
-  rowsFor,
-} from "../../lib/erSvg.js";
+import { saveImage } from "../../lib/tauri/commands.js";
+import { pickImageDestination } from "../../lib/tauri/files.js";
+import { buildSvg, svgToPng, fileNameFor, rowsFor } from "../../lib/erSvg.js";
 import DiagramCanvas from "./DiagramCanvas.vue";
 import DiagramSearch from "./DiagramSearch.vue";
 import DiagramStates from "./DiagramStates.vue";
@@ -41,28 +36,29 @@ const emit = defineEmits(["open-table"]);
 /** Columns shown per table, so a 400-column table is still a box. */
 const MAX_ROWS = 14;
 
-const toasts = useToasts();
-const loading = ref(false);
-const failed = ref("");
-const tables = ref([]);
-const foreignKeys = ref([]);
-const nodes = ref({});
-const lines = ref([]);
-const laidOut = ref(false);
 const hovered = ref(null);
 const selected = ref(null);
 /** Tables whose every column is drawn, rather than the first few. */
 const expanded = ref(new Set());
 /** The list is collapsible: the drawing is the point, not the list. */
 const listing = ref(true);
-/** Why nothing came back, worked out rather than guessed at. */
-const emptyReason = ref("");
 
+const toasts = useToasts();
 const view = useDiagramZoom();
 const { host, zoom, offset, panning, extent } = view;
-let elk = null;
+const {
+  loading,
+  failed,
+  tables,
+  foreignKeys,
+  nodes,
+  lines,
+  laidOut,
+  emptyReason,
+  load,
+  rearrange,
+} = useDiagramData({ tab: props.tab, profileId: () => props.profileId, view });
 
-/** Tables as drawn: columns capped, the rest counted rather than dropped. */
 /** Columns by table, so the list can search column names as well as tables. */
 const columnsByTable = computed(() =>
   Object.fromEntries(
@@ -88,58 +84,6 @@ const trimmed = computed(() =>
   })),
 );
 
-async function load() {
-  if (!props.profileId) {
-    failed.value = "This connection is not open.";
-    return;
-  }
-  loading.value = true;
-  failed.value = "";
-  laidOut.value = false;
-  try {
-    const diagram = await schemaDiagram(
-      props.profileId,
-      props.tab.database,
-      props.tab.schema,
-    );
-    tables.value = diagram.tables ?? [];
-    foreignKeys.value = diagram.foreignKeys ?? [];
-    emptyReason.value = "";
-    if (!tables.value.length) emptyReason.value = await whyEmpty();
-    const graph = buildGraph(diagram);
-    // Something correct on screen while elk works out where things go.
-    const plain = plainGraph(graph);
-    nodes.value = plain.nodes;
-    lines.value = plain.lines;
-    view.setNodes(plain.nodes);
-    await arrange(graph);
-  } catch (failure) {
-    failed.value = toUserDetail(failure);
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function arrange(graph) {
-  try {
-    if (!elk) {
-      const ELK = (await import("elkjs/lib/elk.bundled.js")).default;
-      elk = new ELK();
-    }
-    const placed = positionsFrom(await elk.layout(graph));
-    nodes.value = placed.nodes;
-    lines.value = placed.lines;
-    view.setNodes(placed.nodes);
-    laidOut.value = true;
-  } catch (failure) {
-    // The boxes are already drawn and correct; only the arrangement failed, so
-    // say so rather than replacing a usable picture with an error.
-    laidOut.value = false;
-    toasts.error("Couldn't arrange the diagram", toUserDetail(failure));
-  }
-  view.fit();
-}
-
 /** Puts a table in the middle of the window, big enough to read. */
 function focusTable(name) {
   const node = nodes.value[name];
@@ -163,21 +107,38 @@ function toggleExpand(name) {
   if (next.has(name)) next.delete(name);
   else next.add(name);
   expanded.value = next;
-  if (elk)
-    arrange(
-      buildGraph({ tables: tables.value, foreignKeys: foreignKeys.value }),
-    );
+  rearrange();
 }
 
-function exportSvg() {
+/** Saves the drawing as SVG or PNG, through a save dialog. */
+async function exportAs(format) {
   if (!extent.value.width) return;
-  downloadSvg(
-    buildSvg(
-      { ...extent.value, nodes: nodes.value, lines: lines.value },
-      trimmed.value,
-    ),
-    fileNameFor(props.tab.title),
+  const svg = buildSvg(
+    { ...extent.value, nodes: nodes.value, lines: lines.value },
+    trimmed.value,
   );
+  try {
+    const path = await pickImageDestination(
+      fileNameFor(props.tab.title, format),
+      format,
+    );
+    if (!path) return;
+    const saved = await saveImage(
+      path,
+      format === "png"
+        ? {
+            pngBase64: await svgToPng(
+              svg,
+              extent.value.width,
+              extent.value.height,
+            ),
+          }
+        : { svg },
+    );
+    toasts.success("Diagram saved", saved);
+  } catch (error) {
+    toasts.error("Couldn't save the diagram", toUserDetail(error));
+  }
 }
 
 defineExpose({ reload: load });
@@ -199,7 +160,7 @@ onBeforeUnmount(view.panEnd);
       @zoom-out="view.zoomBy(1 / 1.1)"
       @zoom-in="view.zoomBy(1.1)"
       @fit="view.fit"
-      @export="exportSvg"
+      @export="exportAs"
       @reload="load"
     />
 

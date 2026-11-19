@@ -41,6 +41,9 @@ sqlx-postgres = { version = "0.9", default-features = false, features = [
   "uuid",
   "json",
 ] }
+# The same for MySQL, whose prepared protocol sends dates and times in
+# binary: without chrono they can't be read back as values.
+sqlx-mysql = { version = "0.9", default-features = false, features = ["chrono"] }
 tiberius = { version = "0.13", default-features = false, features = [
   "tds80",
   "rustls",
@@ -48,7 +51,7 @@ tiberius = { version = "0.13", default-features = false, features = [
 ] }
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time", "process", "io-util"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tauri-plugin-dialog = "2"
 russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
@@ -64,6 +67,7 @@ rust_xlsxwriter = { version = "0.99", default-features = false, features = ["con
 # password-hash's getrandom feature supplies the OS random salt.
 argon2 = "0.5"
 password-hash = { version = "0.5", features = ["getrandom"] }
+csv = "1"
 
 [dev-dependencies]
 # The mock runtime, to test the app-lock gate on real IPC requests.

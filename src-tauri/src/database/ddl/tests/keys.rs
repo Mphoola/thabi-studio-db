@@ -38,7 +38,17 @@ fn indexes_live_in_different_places() {
     );
     assert_eq!(
         drop_index(Engine::Postgres, PG.0, PG.1, "orders", "orders_status_idx"),
-        "DROP INDEX \"orders_status_idx\";"
+        "DROP INDEX \"public\".\"orders_status_idx\";"
+    );
+    assert_eq!(
+        drop_index(
+            Engine::SqlServer,
+            "shop",
+            "dbo",
+            "orders",
+            "orders_status_idx"
+        ),
+        "DROP INDEX [orders_status_idx] ON [shop].[dbo].[orders];"
     );
     assert_eq!(
         drop_index(Engine::MySql, MY.0, MY.1, "orders", "orders_status_idx"),
@@ -203,4 +213,19 @@ fn a_plan_from_the_webview_is_read() {
 fn a_pascal_case_plan_is_refused() {
     let json = r#"{ "columns": [ { "DropColumn": { "name": "x" } } ] }"#;
     assert!(serde_json::from_str::<crate::database::ddl::TablePlan>(json).is_err());
+}
+
+/// The Create Table wizard sends only what it asks for; anything else on a
+/// column takes its default rather than refusing the plan.
+#[test]
+fn the_wizards_create_plan_is_readable() {
+    let json = r#"{ "create": { "columns": [
+        { "name": "id", "dataType": "INTEGER", "nullable": false, "primaryKey": true },
+        { "name": "note", "dataType": "TEXT", "nullable": true, "default": "", "primaryKey": false }
+    ] } }"#;
+    let plan: crate::database::ddl::TablePlan =
+        serde_json::from_str(json).expect("the wizard's plan should be readable");
+    let spec = plan.create.expect("a create plan");
+    assert_eq!(spec.columns.len(), 2);
+    assert!(!spec.columns[0].unique);
 }

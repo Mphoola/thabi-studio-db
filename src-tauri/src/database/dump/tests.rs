@@ -9,6 +9,7 @@ use crate::database::values::Cell;
 
 fn structure() -> ObjectStructure {
     ObjectStructure {
+        constraints: None,
         columns: vec![super::super::metadata::ColumnInfo {
             name: "id".into(),
             data_type: "INTEGER".into(),
@@ -238,6 +239,7 @@ fn table_named(name: &str) -> (String, ObjectStructure) {
     (
         name.to_owned(),
         ObjectStructure {
+            constraints: None,
             columns: vec![ColumnInfo {
                 name: "id".into(),
                 data_type: "INTEGER".into(),

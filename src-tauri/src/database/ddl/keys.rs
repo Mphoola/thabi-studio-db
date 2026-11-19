@@ -77,8 +77,17 @@ pub fn drop_index(
             "ALTER TABLE {} DROP INDEX {name};",
             quote::table(engine, database, schema, table)
         ),
-        // PostgreSQL and SQL Server drop an index without naming the table.
-        _ => format!("DROP INDEX {name};"),
+        // An index belongs to a schema on PostgreSQL, so it is qualified the
+        // way the table is; otherwise only the search path would find it.
+        Engine::Postgres if !schema.is_empty() => {
+            format!("DROP INDEX {}.{name};", quote::ident(engine, schema))
+        }
+        Engine::Postgres => format!("DROP INDEX {name};"),
+        // SQL Server refuses DROP INDEX without the table it is on.
+        Engine::SqlServer => format!(
+            "DROP INDEX {name} ON {};",
+            quote::table(engine, database, schema, table)
+        ),
     }
 }
 

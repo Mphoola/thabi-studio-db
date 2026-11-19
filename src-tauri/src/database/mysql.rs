@@ -178,7 +178,7 @@ impl DatabaseSession for MySqlSession {
             }
             result
                 .rows
-                .push((0..row.len()).map(|i| cell(&row, i)).collect());
+                .push((0..row.len()).map(|i| bound_cell(&row, i)).collect());
         }
         if !result.columns.is_empty() {
             result.rows_affected = None;
@@ -348,7 +348,27 @@ impl DatabaseSession for MySqlSession {
                     }
                 })
             });
+        let constraints = if kind == ObjectKind::Table {
+            let mut rows = self
+                .query_text(
+                    &metadata::constraints_sql(Engine::MySql, database),
+                    &[database, name],
+                )
+                .await?;
+            // Older servers have no check constraints to read; a table there
+            // must still open, or it can't be edited at all.
+            if let Ok(checks) = self
+                .query_text(metadata::mysql_checks_sql(), &[database, name])
+                .await
+            {
+                rows.extend(checks);
+            }
+            Some(metadata::constraint_rows(rows))
+        } else {
+            None
+        };
         Ok(ObjectStructure {
+            constraints,
             columns: metadata::column_rows(columns),
             indexes,
             show_create: shown,
@@ -404,9 +424,87 @@ fn cell(row: &sqlx::mysql::MySqlRow, index: usize) -> Cell {
     }
 }
 
+/// A value from a bound query, by its column's type.
+///
+/// A query with parameters goes through MySQL's prepared protocol, which
+/// sends numbers, dates and times in binary rather than as text. Read as text,
+/// 42 came out as `*\0\0\0\0\0\0\0` and a date as a blob. Each type is
+/// read as itself and written the way the text protocol would show it, so a
+/// column reads the same with or without a parameter.
+fn bound_cell(row: &sqlx::mysql::MySqlRow, index: usize) -> Cell {
+    use sqlx::{Column, Row, TypeInfo};
+    let type_name = row.columns()[index].type_info().name().to_ascii_uppercase();
+    macro_rules! read {
+        ($type:ty, $render:expr) => {
+            match row.try_get_unchecked::<Option<$type>, _>(index) {
+                Ok(Some(value)) => Cell::Value(($render)(value)),
+                Ok(None) => Cell::Null,
+                Err(_) => cell(row, index),
+            }
+        };
+    }
+    match type_name.as_str() {
+        name if name.ends_with("UNSIGNED") && !name.starts_with("DECIMAL") => {
+            read!(u64, |v: u64| v.to_string())
+        }
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "BOOLEAN" | "YEAR" => {
+            read!(i64, |v: i64| v.to_string())
+        }
+        "DOUBLE" => read!(f64, |v: f64| v.to_string()),
+        "FLOAT" => read!(f32, |v: f32| v.to_string()),
+        "DATE" => read!(chrono::NaiveDate, |v: chrono::NaiveDate| v.to_string()),
+        "DATETIME" | "TIMESTAMP" => {
+            read!(chrono::NaiveDateTime, |v: chrono::NaiveDateTime| v
+                .to_string())
+        }
+        "TIME" => match row.try_get_unchecked::<Option<Vec<u8>>, _>(index) {
+            Ok(Some(bytes)) => Cell::Value(binary_time(&bytes)),
+            Ok(None) => Cell::Null,
+            Err(_) => cell(row, index),
+        },
+        // Decimals, text, enums and JSON arrive as text in both protocols.
+        _ => cell(row, index),
+    }
+}
+
+/// MySQL's binary TIME: sign, days, hours, minutes, seconds, microseconds.
+/// It can be negative and longer than a day, so it isn't a time of day.
+fn binary_time(bytes: &[u8]) -> String {
+    if bytes.len() < 8 {
+        return "00:00:00".to_owned();
+    }
+    let negative = bytes[0] == 1;
+    let days = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+    let hours = u64::from(days) * 24 + u64::from(bytes[5]);
+    let mut text = format!(
+        "{}{:02}:{:02}:{:02}",
+        if negative { "-" } else { "" },
+        hours,
+        bytes[6],
+        bytes[7]
+    );
+    if bytes.len() >= 12 {
+        let micros = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        if micros > 0 {
+            text.push_str(&format!(".{micros:06}"));
+        }
+    }
+    text
+}
+
 #[cfg(test)]
 mod binary_tests {
     use super::looks_binary;
+
+    #[test]
+    fn binary_times_can_be_negative_and_longer_than_a_day() {
+        use super::binary_time;
+        assert_eq!(binary_time(&[0, 1, 0, 0, 0, 2, 3, 4]), "26:03:04");
+        assert_eq!(
+            binary_time(&[1, 0, 0, 0, 0, 0, 30, 0, 64, 226, 1, 0]),
+            "-00:30:00.123456"
+        );
+    }
 
     #[test]
     fn control_characters_mark_binary() {

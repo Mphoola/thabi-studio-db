@@ -35,8 +35,10 @@ breadth. See `plan.md` §2 and §7b for scope.
   (`.github/workflows/release.yml`: .dmg and .exe on every push to main).
 - Optional app password and lock screen, enforced in Rust, with recovery
   codes and security questions (`0033`). Settings is a page (`0034`).
-- Next: Phase 14 (schema and object management). Phase 10 (packaging) is
-  deferred until signing options exist.
+- Phases 14 and 15 (schema management; import, backup and administration):
+  done on `review-phases-12-15` after a review of 12–15. Read `0036` and
+  `docs/reviews/2026-10-20-phases-12-15.md`. The optional metrics board is
+  not built. Phase 10 (packaging) is deferred until signing options exist.
 
 Update this section and the tracker in `plan.md` §12 when a phase finishes.
 

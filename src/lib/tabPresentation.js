@@ -6,7 +6,13 @@
  * reading `tab.node` without checking the type first will throw on the first
  * tab kind anybody adds, which is the wrong moment to find out.
  */
-import { Eye, Network, SquareTerminal, Table2 } from "lucide-vue-next";
+import {
+  Activity,
+  Eye,
+  Network,
+  SquareTerminal,
+  Table2,
+} from "lucide-vue-next";
 
 /** True for tabs that stand for one object in the explorer. */
 export const isObjectTab = (tab) => tab?.type === "object";
@@ -17,6 +23,7 @@ export function tabIcon(tab) {
   // Checked by type rather than by the presence of a node, so a tab that has
   // no node cannot fall through to a line that assumes it has one.
   if (tab?.type === "diagram") return Network;
+  if (tab?.type === "server") return Activity;
   return SquareTerminal;
 }
 

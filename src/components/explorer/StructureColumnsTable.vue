@@ -1,6 +1,8 @@
 <script setup>
+import { ArrowDown, ArrowUp } from "lucide-vue-next";
 import TextInput from "../common/TextInput.vue";
 import BaseButton from "../common/BaseButton.vue";
+import IconButton from "../common/IconButton.vue";
 
 /**
  * The table's columns, editable in place when the structure is being changed.
@@ -21,8 +23,17 @@ defineProps({
   editing: { type: Boolean, default: false },
   /** Types the table already uses, space separated, for the input's list. */
   typeNames: { type: String, default: "" },
+  /** Column order can be changed (MySQL; the others have no DDL for it). */
+  canMove: { type: Boolean, default: false },
 });
-const emit = defineEmits(["rename", "retype", "toggle-nullable", "drop"]);
+const emit = defineEmits([
+  "rename",
+  "retype",
+  "toggle-nullable",
+  "set-default",
+  "move",
+  "drop",
+]);
 </script>
 
 <template>
@@ -34,7 +45,7 @@ const emit = defineEmits(["rename", "retype", "toggle-nullable", "drop"]);
         <th :class="th">Type</th>
         <th :class="th">Nullable</th>
         <th :class="th">Default</th>
-        <th v-if="editing" :class="th" class="w-24">Change</th>
+        <th v-if="editing" :class="[th, canMove ? 'w-40' : 'w-24']">Change</th>
       </tr>
     </thead>
     <tbody>
@@ -71,10 +82,39 @@ const emit = defineEmits(["rename", "retype", "toggle-nullable", "drop"]);
         <td
           class="h-7 max-w-64 truncate border-b border-line px-3 font-mono text-fg-muted"
         >
-          {{ column.default === null ? "—" : column.default }}
+          <!-- An expression as the server writes it: 'new', 0, now(). Cleared
+               means no default. -->
+          <TextInput
+            v-if="editing"
+            :model-value="column.default ?? ''"
+            class="h-6 min-w-0 font-mono"
+            placeholder="none"
+            :aria-label="`Default of ${column.name}`"
+            autocomplete="off"
+            @change="emit('set-default', column, $event.target.value)"
+          />
+          <template v-else>{{
+            column.default === null ? "—" : column.default
+          }}</template>
         </td>
         <td v-if="editing" class="h-7 border-b border-line px-3">
           <div class="flex items-center gap-1">
+            <template v-if="canMove">
+              <IconButton
+                :icon="ArrowUp"
+                size="sm"
+                :label="`Move ${column.name} up`"
+                :disabled="index === 0"
+                @click="emit('move', column, -1)"
+              />
+              <IconButton
+                :icon="ArrowDown"
+                size="sm"
+                :label="`Move ${column.name} down`"
+                :disabled="index === columns.length - 1"
+                @click="emit('move', column, 1)"
+              />
+            </template>
             <BaseButton
               size="sm"
               variant="ghost"

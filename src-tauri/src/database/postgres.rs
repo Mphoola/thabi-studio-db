@@ -471,7 +471,19 @@ impl DatabaseSession for PgSession {
         } else {
             None
         };
+        let constraints = if matches!(kind, ObjectKind::Table) {
+            let rows = self
+                .query_text(
+                    &metadata::constraints_sql(Engine::Postgres, database),
+                    &[schema, name],
+                )
+                .await?;
+            Some(metadata::constraint_rows(rows))
+        } else {
+            None
+        };
         Ok(ObjectStructure {
+            constraints,
             columns: metadata::column_rows(columns),
             indexes,
             // Neither engine will state its CREATE TABLE; a dump rebuilds it

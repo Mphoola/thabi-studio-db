@@ -313,7 +313,19 @@ impl DatabaseSession for SqlServerSession {
                 &[schema, name],
             )
             .await?;
+        let constraints = if kind == ObjectKind::Table {
+            let rows = self
+                .query_text(
+                    &metadata::constraints_sql(Engine::SqlServer, database),
+                    &[schema, name],
+                )
+                .await?;
+            Some(metadata::constraint_rows(rows))
+        } else {
+            None
+        };
         Ok(ObjectStructure {
+            constraints,
             columns: metadata::column_rows(columns),
             indexes: Some(metadata::index_rows(rows)),
             // SQL Server will not state its CREATE TABLE, so a dump rebuilds it

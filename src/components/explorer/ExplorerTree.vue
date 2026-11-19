@@ -5,8 +5,13 @@ import {
   Database,
   Eye,
   Folder,
+  Hash,
   Layers,
+  Shapes,
+  SquareFunction,
   Table2,
+  Workflow,
+  Zap,
 } from "lucide-vue-next";
 import { useExplorer } from "../../composables/useExplorer.js";
 import DropdownMenu from "../common/DropdownMenu.vue";
@@ -29,17 +34,24 @@ const icons = {
   view: Eye,
   materialized_view: Eye,
   foreign_table: Table2,
+  function: SquareFunction,
+  procedure: Workflow,
+  trigger: Zap,
+  sequence: Hash,
+  type: Shapes,
 };
 const iconFor = (node) =>
-  node.type === "object" ? icons[node.kind] : icons[node.type];
-const expandable = (node) => node.type !== "object";
+  node.type === "object" || node.type === "routine"
+    ? icons[node.kind]
+    : icons[node.type];
+const expandable = (node) => node.type !== "object" && node.type !== "routine";
 
 const menuItems = computed(() => actions.menuFor(menuNode.value));
 
 function activate(node) {
   selectedKey.value = node.key;
-  if (node.type === "object") explorer.open(node, "data");
-  else explorer.toggle(node);
+  if (expandable(node)) explorer.toggle(node);
+  else explorer.open(node, "data");
 }
 
 function focusRow(index) {

@@ -185,12 +185,18 @@ pub fn tls(ctx: Context<'_>, detail: &str) -> AppError {
 }
 
 pub fn permission_denied(ctx: Context<'_>, detail: &str, code: Option<String>) -> AppError {
-    AppError::new(
-        "permission_denied",
-        "This user doesn't have permission to read that.",
+    AppError::new("permission_denied", "This user isn't allowed to do that.")
+        .with_detail(Some(sanitise(detail, ctx.password)))
+        .with_code(code)
+}
+
+/// Whether an error means the session is gone, rather than that one
+/// statement was refused.
+pub fn is_connection_failure(error: &AppError) -> bool {
+    matches!(
+        error.kind,
+        "connection_closed" | "connection_refused" | "unreachable" | "connection" | "timeout"
     )
-    .with_detail(Some(sanitise(detail, ctx.password)))
-    .with_code(code)
 }
 
 /// The session can't be used any more (server gone, network dropped).
@@ -226,10 +232,17 @@ pub fn from_sqlx(error: sqlx::Error, ctx: Context<'_>) -> AppError {
                     let number = db
                         .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
                         .map(|e| e.number());
+                    // 1044 is "access denied to database x": the database
+                    // being opened can't be, or a statement (CREATE
+                    // DATABASE) wasn't allowed on another one.
+                    let opening = number == Some(1044)
+                        && ctx
+                            .database
+                            .is_some_and(|name| message.contains(&format!("'{name}'")));
                     (
                         matches!(number, Some(1045 | 1698)),
-                        matches!(number, Some(1049 | 1044)),
-                        matches!(number, Some(1142 | 1143)),
+                        number == Some(1049) || opening,
+                        matches!(number, Some(1142 | 1143)) || (number == Some(1044) && !opening),
                         number.map(|n| n.to_string()),
                     )
                 }

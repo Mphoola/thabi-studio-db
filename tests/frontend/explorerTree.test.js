@@ -109,3 +109,35 @@ describe("a diagram's target", () => {
     expect(diagramTargetFor({ type: "group" })).toBeNull();
   });
 });
+
+describe("routine groups", () => {
+  it("lists functions and triggers after tables, keyed by identity", () => {
+    const schema = {
+      key: "schema:shop\u0000public",
+      database: "shop",
+      schema: "public",
+    };
+    const groups = objectGroups(
+      schema,
+      [{ name: "orders", kind: "table" }],
+      [
+        { name: "total", kind: "function", identity: "101", table: null },
+        { name: "total", kind: "function", identity: "102", table: null },
+        { name: "audit", kind: "trigger", identity: "7", table: "orders" },
+      ],
+    );
+    expect(groups.map((g) => g.label)).toEqual([
+      "Tables",
+      "Functions",
+      "Triggers",
+    ]);
+    const functions = groups[1].children;
+    // Two overloads of one name are two rows.
+    expect(new Set(functions.map((f) => f.key)).size).toBe(2);
+    expect(groups[2].children[0]).toMatchObject({
+      type: "routine",
+      label: "audit (orders)",
+      identity: "7",
+    });
+  });
+});

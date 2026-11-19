@@ -1,6 +1,7 @@
 //! Changing a table that already exists: one action is one or more statements.
 
 use super::super::{Engine, quote};
+use super::current::{Current, MySqlColumn};
 use super::table::{ColumnSpec, ForeignKey};
 
 /// A change to a table that already exists.
@@ -94,7 +95,30 @@ pub fn alter_column(
     table: &str,
     change: &Change,
 ) -> Vec<String> {
+    alter_column_with(engine, database, schema, table, change, &Current::default())
+}
+
+/// Like [`alter_column`], restating columns from what the server says they
+/// are now (see [`super::current`]), so a change keeps what it doesn't touch.
+pub fn alter_column_with(
+    engine: Engine,
+    database: &str,
+    schema: &str,
+    table: &str,
+    change: &Change,
+    current: &Current,
+) -> Vec<String> {
     let target = quote::table(engine, database, schema, table);
+    if engine == Engine::MySql
+        && let Some(statements) = mysql_restated(&target, change, current)
+    {
+        return statements;
+    }
+    if engine == Engine::SqlServer
+        && let Some(statements) = sql_server(schema, table, &target, change, current)
+    {
+        return statements;
+    }
     match change {
         Change::AddColumn(column) => {
             // SQL Server has no COLUMN keyword here: `ALTER TABLE t ADD c INT`.
@@ -121,25 +145,8 @@ pub fn alter_column(
                 quote::ident(engine, from),
                 spec.column_line(engine)
             )],
-            // SQL Server has no column rename in DDL; it goes through a
-            // procedure and says which kind of object it is renaming.
-            Engine::SqlServer => vec![
-                format!(
-                    "EXEC sp_rename N'{}.{}.{}.{}', N'{}', N'COLUMN';",
-                    quote::ident(engine, database),
-                    quote::ident(engine, schema),
-                    quote::ident(engine, table),
-                    quote::ident(engine, from),
-                    if to.is_empty() { from.as_str() } else { to }
-                ),
-                // The type still needs restating, since sp_rename does not
-                // touch it.
-                format!(
-                    "ALTER TABLE {target} ALTER COLUMN {};",
-                    spec.column_line(engine)
-                ),
-            ],
-            Engine::Postgres => vec![format!(
+            // SQL Server's rename is in `sql_server`.
+            _ => vec![format!(
                 "ALTER TABLE {target} RENAME COLUMN {} TO {};",
                 quote::ident(engine, from),
                 quote::ident(engine, to)
@@ -231,7 +238,8 @@ pub fn alter_column(
                 }
             )],
             // PostgreSQL comments are separate statements on the object.
-            Engine::Postgres => {
+            // (SQL Server's extended property is in `sql_server`.)
+            _ => {
                 let column = quote::ident(engine, name);
                 vec![format!(
                     "COMMENT ON COLUMN {target}.{column} IS {};",
@@ -240,20 +248,6 @@ pub fn alter_column(
                     } else {
                         quote::literal(engine, comment.trim())
                     }
-                )]
-            }
-            // SQL Server has no column comment; a description is an extended
-            // property, and changing one means dropping the old first.
-            _ => {
-                let described = if comment.trim().is_empty() {
-                    "NULL".to_owned()
-                } else {
-                    quote::literal(engine, comment.trim())
-                };
-                vec![format!(
-                    "EXEC sp_updateextendedproperty N'MS_Description', {}, N'SCHEMA', N'{database}', \
-                     N'TABLE', N'{table}', N'COLUMN', N'{name}';",
-                    described
                 )]
             }
         },
@@ -272,6 +266,149 @@ pub fn alter_column(
             _ => Vec::new(),
         },
     }
+}
+
+/// MySQL changes that restate the column, built from its current definition.
+/// None when the definition isn't known, or the change doesn't restate.
+fn mysql_restated(target: &str, change: &Change, current: &Current) -> Option<Vec<String>> {
+    let engine = Engine::MySql;
+    let column = |name: &str| current.definitions.get(name).map(|d| MySqlColumn::parse(d));
+    let statement = match change {
+        Change::RenameColumn { from, to, .. } => {
+            let definition = column(from)?;
+            format!(
+                "ALTER TABLE {target} CHANGE COLUMN {} {} {};",
+                quote::ident(engine, from),
+                quote::ident(engine, if to.is_empty() { from } else { to }),
+                definition.definition()
+            )
+        }
+        Change::SetType { name, data_type } => {
+            let mut definition = column(name)?;
+            definition.set_type(data_type);
+            modify(target, name, &definition, "")
+        }
+        Change::SetNullable { name, nullable, .. } => {
+            let mut definition = column(name)?;
+            definition.set_nullable(*nullable);
+            modify(target, name, &definition, "")
+        }
+        Change::SetComment { name, comment, .. } => {
+            let mut definition = column(name)?;
+            definition.set_comment(comment);
+            modify(target, name, &definition, "")
+        }
+        Change::MoveColumn { name, after } => {
+            let definition = column(name)?;
+            let position = match after {
+                Some(previous) => format!(" AFTER {}", quote::ident(engine, previous)),
+                None => " FIRST".to_owned(),
+            };
+            modify(target, name, &definition, &position)
+        }
+        _ => return None,
+    };
+    Some(vec![statement])
+}
+
+fn modify(target: &str, name: &str, definition: &MySqlColumn, position: &str) -> String {
+    format!(
+        "ALTER TABLE {target} MODIFY COLUMN {} {}{position};",
+        quote::ident(Engine::MySql, name),
+        definition.definition()
+    )
+}
+
+/// SQL Server's own shapes for the changes it does differently: a rename is
+/// a procedure call, a default is a named constraint, and a comment is an
+/// extended property. None for the changes the shared code handles.
+fn sql_server(
+    schema: &str,
+    table: &str,
+    target: &str,
+    change: &Change,
+    current: &Current,
+) -> Option<Vec<String>> {
+    let engine = Engine::SqlServer;
+    let schema = if schema.is_empty() { "dbo" } else { schema };
+    let object = format!(
+        "{}.{}",
+        quote::ident(engine, schema),
+        quote::ident(engine, table)
+    );
+    Some(match change {
+        // sp_rename takes the old name as one string and the new name bare;
+        // both are literals, so a quote in either can't end the string early.
+        Change::RenameColumn { from, to, .. } => vec![format!(
+            "EXEC sp_rename {}, {}, N'COLUMN';",
+            quote::literal(engine, &format!("{object}.{}", quote::ident(engine, from))),
+            quote::literal(engine, if to.is_empty() { from } else { to })
+        )],
+        // ALTER COLUMN restates nullability; left out, the column becomes
+        // nullable. The default is a separate constraint and stays.
+        Change::SetType { name, data_type } => {
+            let nullability = match current.nullable.get(name) {
+                Some(true) => " NULL",
+                Some(false) => " NOT NULL",
+                None => "",
+            };
+            vec![format!(
+                "ALTER TABLE {target} ALTER COLUMN {} {}{nullability};",
+                quote::ident(engine, name),
+                data_type.trim(),
+            )]
+        }
+        // A default is a constraint with a name: the old one is dropped by
+        // that name before a new one is added.
+        Change::SetDefault { name, default } => {
+            let mut out = Vec::new();
+            if let Some(existing) = current.default_constraints.get(name) {
+                out.push(format!(
+                    "ALTER TABLE {target} DROP CONSTRAINT {};",
+                    quote::ident(engine, existing)
+                ));
+            }
+            if !default.trim().is_empty() {
+                let constraint: String = format!("DF_{table}_{name}").chars().take(128).collect();
+                out.push(format!(
+                    "ALTER TABLE {target} ADD CONSTRAINT {} DEFAULT {} FOR {};",
+                    quote::ident(engine, &constraint),
+                    default.trim(),
+                    quote::ident(engine, name)
+                ));
+            }
+            out
+        }
+        // A description is the MS_Description extended property: updated if
+        // there is one, added if not, dropped when cleared.
+        Change::SetComment { name, comment, .. } => {
+            let levels = format!(
+                "N'SCHEMA', {}, N'TABLE', {}, N'COLUMN', {}",
+                quote::literal(engine, schema),
+                quote::literal(engine, table),
+                quote::literal(engine, name)
+            );
+            let exists = format!(
+                "EXISTS (SELECT 1 FROM sys.extended_properties WHERE name = N'MS_Description' \
+                 AND major_id = OBJECT_ID({}) AND minor_id = COLUMNPROPERTY(OBJECT_ID({}), {}, 'ColumnId'))",
+                quote::literal(engine, &object),
+                quote::literal(engine, &object),
+                quote::literal(engine, name)
+            );
+            if comment.trim().is_empty() {
+                vec![format!(
+                    "IF {exists} EXEC sp_dropextendedproperty N'MS_Description', {levels};"
+                )]
+            } else {
+                let value = quote::literal(engine, comment.trim());
+                vec![format!(
+                    "IF {exists} EXEC sp_updateextendedproperty N'MS_Description', {value}, {levels} \
+                     ELSE EXEC sp_addextendedproperty N'MS_Description', {value}, {levels};"
+                )]
+            }
+        }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

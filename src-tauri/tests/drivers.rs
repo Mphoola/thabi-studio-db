@@ -919,6 +919,38 @@ async fn applies_generated_ddl(engine: Engine) {
         "{engine:?} did not create the unique index: {indexes:?}"
     );
 
+    // Dropping the index through the designer's path. Each engine names the
+    // table differently here: SQL Server refuses a bare DROP INDEX.
+    let drop = TablePlan {
+        indexes: vec![IndexAction::Drop {
+            name: "thabi_ddl_status_idx".into(),
+        }],
+        ..Default::default()
+    };
+    for statement in &table_script(engine, db, schema, "thabi ddl", &drop) {
+        session
+            .execute(statement, 1)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?} refused {statement}\n{e:?}"));
+    }
+    let after_drop = session
+        .describe(
+            db,
+            schema,
+            "thabi ddl",
+            thabi_studio_lib::database::ObjectKind::Table,
+        )
+        .await
+        .expect("describe after dropping the index");
+    assert!(
+        !after_drop
+            .indexes
+            .unwrap_or_default()
+            .iter()
+            .any(|i| i.name == "thabi_ddl_status_idx"),
+        "{engine:?} kept the dropped index"
+    );
+
     // The path the Create Table wizard uses: a create plan previewed and then
     // applied, which is one statement rather than a list of alters.
     let wizard = TablePlan {
@@ -945,8 +977,14 @@ async fn applies_generated_ddl(engine: Engine) {
         }),
         ..Default::default()
     };
-    let shown =
-        thabi_studio_lib::database::ddl::preview(engine, db, schema, "thabi wizard", &wizard);
+    let shown = thabi_studio_lib::database::ddl::preview(
+        engine,
+        db,
+        schema,
+        "thabi wizard",
+        &wizard,
+        &Default::default(),
+    );
     assert!(shown.note.contains("transaction") || shown.note.contains("commits"));
     for statement in &shown.statements {
         assert!(

@@ -72,18 +72,58 @@ fn renames_a_column_the_way_each_engine_does() {
         ),
         ["ALTER TABLE \"public\".\"orders\" RENAME COLUMN \"note\" TO \"summary\";"]
     );
-    // SQL Server goes through a procedure, and then still needs the type
-    // restated because sp_rename does not touch it.
-    let statements = alter_column(Engine::SqlServer, MS.0, MS.1, "orders", &rename(spec));
+    // SQL Server goes through a procedure. Both names are literals, so a
+    // quote in either can't end the string.
     assert_eq!(
-        statements.len(),
-        2,
-        "one statement cannot rename and retype"
+        alter_column(Engine::SqlServer, MS.0, MS.1, "orders", &rename(spec)),
+        ["EXEC sp_rename N'[dbo].[orders].[note]', N'summary', N'COLUMN';"]
     );
-    assert!(
-        statements[0].contains("sp_rename N'[shop].[dbo].[orders].[note]', N'summary', N'COLUMN';")
+    let odd = Change::RenameColumn {
+        from: "it's".into(),
+        to: "it's new".into(),
+        spec: column("it's new", "INT"),
+    };
+    assert_eq!(
+        alter_column(Engine::SqlServer, MS.0, MS.1, "orders", &odd),
+        ["EXEC sp_rename N'[dbo].[orders].[it''s]', N'it''s new', N'COLUMN';"]
     );
-    assert!(statements[1].starts_with("ALTER TABLE [shop].[dbo].[orders] ALTER COLUMN [summary]"));
+}
+
+#[test]
+fn restates_a_column_from_what_the_server_says_it_is() {
+    use super::super::current::Current;
+    let mut current = Current::default();
+    current.definitions.insert(
+        "status".into(),
+        "varchar(20) NOT NULL DEFAULT 'new' COMMENT 'state'".into(),
+    );
+    current.nullable.insert("status".into(), false);
+    let retype = Change::SetType {
+        name: "status".into(),
+        data_type: "varchar(40)".into(),
+    };
+    // MySQL keeps NOT NULL, the default and the comment.
+    assert_eq!(
+        alter_column_with(Engine::MySql, MY.0, MY.1, "orders", &retype, &current),
+        [
+            "ALTER TABLE `shop`.`orders` MODIFY COLUMN `status` varchar(40) NOT NULL DEFAULT 'new' COMMENT 'state';"
+        ]
+    );
+    // SQL Server restates nullability, or the column becomes nullable.
+    assert_eq!(
+        alter_column_with(Engine::SqlServer, MS.0, MS.1, "orders", &retype, &current),
+        ["ALTER TABLE [shop].[dbo].[orders] ALTER COLUMN [status] varchar(40) NOT NULL;"]
+    );
+    let moved = Change::MoveColumn {
+        name: "status".into(),
+        after: Some("id".into()),
+    };
+    assert_eq!(
+        alter_column_with(Engine::MySql, MY.0, MY.1, "orders", &moved, &current),
+        [
+            "ALTER TABLE `shop`.`orders` MODIFY COLUMN `status` varchar(20) NOT NULL DEFAULT 'new' COMMENT 'state' AFTER `id`;"
+        ]
+    );
 }
 
 #[test]
@@ -171,7 +211,21 @@ fn sets_and_drops_a_default() {
     );
     assert_eq!(
         alter_column(Engine::SqlServer, MS.0, MS.1, "orders", &set),
-        ["ALTER TABLE [shop].[dbo].[orders] ALTER COLUMN [status] SET DEFAULT 'new';"]
+        [
+            "ALTER TABLE [shop].[dbo].[orders] ADD CONSTRAINT [DF_orders_status] DEFAULT 'new' FOR [status];"
+        ]
+    );
+    // An existing default is a named constraint, dropped by that name first.
+    let mut current = super::super::current::Current::default();
+    current
+        .default_constraints
+        .insert("status".into(), "DF__orders__status__1A2B".into());
+    assert_eq!(
+        alter_column_with(Engine::SqlServer, MS.0, MS.1, "orders", &set, &current),
+        [
+            "ALTER TABLE [shop].[dbo].[orders] DROP CONSTRAINT [DF__orders__status__1A2B];",
+            "ALTER TABLE [shop].[dbo].[orders] ADD CONSTRAINT [DF_orders_status] DEFAULT 'new' FOR [status];"
+        ]
     );
     assert_eq!(
         alter_column(
@@ -296,7 +350,14 @@ fn the_preview_is_the_script_that_will_run() {
     };
 
     for engine in [Engine::Postgres, Engine::MySql, Engine::SqlServer] {
-        let shown = preview(engine, "shop", "public", "orders", &plan);
+        let shown = preview(
+            engine,
+            "shop",
+            "public",
+            "orders",
+            &plan,
+            &Default::default(),
+        );
         let ran = table_script(engine, "shop", "public", "orders", &plan);
         assert_eq!(
             shown.statements, ran,
@@ -313,8 +374,14 @@ fn the_preview_is_the_script_that_will_run() {
 /// half that will already be applied.
 #[test]
 fn mysql_says_it_cannot_roll_back() {
-    let my =
-        crate::database::ddl::preview(Engine::MySql, "shop", "", "orders", &Default::default());
+    let my = crate::database::ddl::preview(
+        Engine::MySql,
+        "shop",
+        "",
+        "orders",
+        &Default::default(),
+        &Default::default(),
+    );
     assert!(!my.transactional);
     assert!(my.note.contains("commits each statement"));
 }

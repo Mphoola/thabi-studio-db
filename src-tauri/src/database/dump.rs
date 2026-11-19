@@ -117,9 +117,9 @@ pub fn fidelity_note(engine: Engine, options: &DumpOptions) -> Option<String> {
         "--\n\
          -- {} has no SHOW CREATE TABLE, so CREATE TABLE statements below were\n\
          -- rebuilt from the catalog. They carry columns, types, nullability,\n\
-         -- defaults, primary keys, unique constraints, indexes and\n\
-         -- single-column foreign keys — not check constraints, triggers or\n\
-         -- partitions. mysqldump or pg_dump would be needed for those.\n",
+         -- defaults, primary keys, indexes, foreign keys and check\n\
+         -- constraints — not triggers, partitions or comments. pg_dump or\n\
+         -- the server's own backup would be needed for those.\n",
         engine.label()
     ))
 }
@@ -176,15 +176,11 @@ pub fn insert_statement(
 fn spec_for_dump(name: &str, structure: &ObjectStructure) -> super::ddl::TableSpec {
     use super::ddl::{ColumnSpec, ForeignKey, TableSpec};
 
-    let indexes = structure.indexes.as_deref().unwrap_or(&[]);
-    // The primary key goes inside CREATE TABLE, so it must not also be a
-    // unique constraint or the table would get two differently named keys.
-    let uniques: Vec<&str> = indexes
-        .iter()
-        .filter(|index| !index.primary && index.unique)
-        .flat_map(|index| index.columns.iter().map(String::as_str))
-        .collect();
-
+    // Unique indexes are written after the table by `structure_statements`,
+    // exactly as they are (name, columns, order). Marking their columns
+    // unique here as well would add a second constraint, and would turn a
+    // unique index on (a, b) into a rule on a and a rule on b, which refuses
+    // rows the original table accepts.
     let columns = structure
         .columns
         .iter()
@@ -195,36 +191,66 @@ fn spec_for_dump(name: &str, structure: &ObjectStructure) -> super::ddl::TableSp
             default: column.default.clone().unwrap_or_default(),
             comment: String::new(),
             primary_key: column.primary_key.is_some(),
-            unique: uniques.contains(&column.name.as_str()),
+            unique: false,
         })
         .collect();
 
-    let foreign_keys = structure
-        .columns
-        .iter()
-        .filter_map(|column| {
-            let reference = column.references.as_ref()?;
-            Some(ForeignKey {
-                name: format!("{}_{}_fk", name, column.name),
-                columns: vec![column.name.clone()],
-                references: {
-                    let mut parts = vec![reference.schema.clone()];
-                    parts.push(reference.table.clone());
-                    parts.retain(|part| !part.is_empty());
-                    parts
-                },
-                referenced_columns: vec![reference.column.clone()],
-                on_delete: "NO ACTION".to_owned(),
-                on_update: "NO ACTION".to_owned(),
+    let foreign_keys = match &structure.constraints {
+        // Every key by its own name, on any number of columns, with its
+        // actions: what the server reported.
+        Some(constraints) => constraints
+            .iter()
+            .filter(|c| c.kind == "foreignKey")
+            .map(|c| ForeignKey {
+                name: c.name.clone(),
+                columns: c.columns.clone(),
+                references: [c.referenced_schema.clone(), c.referenced_table.clone()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect(),
+                referenced_columns: c.referenced_columns.clone(),
+                on_delete: c.on_delete.clone(),
+                on_update: c.on_update.clone(),
             })
-        })
-        .collect();
+            .collect(),
+        // An older read without constraints: single-column keys only.
+        None => structure
+            .columns
+            .iter()
+            .filter_map(|column| {
+                let reference = column.references.as_ref()?;
+                Some(ForeignKey {
+                    name: format!("{}_{}_fk", name, column.name),
+                    columns: vec![column.name.clone()],
+                    references: {
+                        let mut parts = vec![reference.schema.clone()];
+                        parts.push(reference.table.clone());
+                        parts.retain(|part| !part.is_empty());
+                        parts
+                    },
+                    referenced_columns: vec![reference.column.clone()],
+                    on_delete: "NO ACTION".to_owned(),
+                    on_update: "NO ACTION".to_owned(),
+                })
+            })
+            .collect(),
+    };
 
     TableSpec {
         columns,
         unique_names: Vec::new(),
         primary_key_name: String::new(),
         foreign_keys,
+    }
+}
+
+/// A check's condition from how the server prints the whole constraint:
+/// PostgreSQL says `CHECK ((total >= 0))`, SQL Server `([total]>=(0))`.
+fn check_expression(definition: &str) -> &str {
+    let trimmed = definition.trim();
+    match trimmed.get(..5) {
+        Some(word) if word.eq_ignore_ascii_case("CHECK") => trimmed[5..].trim(),
+        _ => trimmed,
     }
 }
 
@@ -294,6 +320,20 @@ pub fn structure_statements(
                         engine, database, schema, name, &spec
                     ))
                 ));
+            }
+            for check in described
+                .constraints
+                .iter()
+                .flatten()
+                .filter(|c| c.kind == "check")
+            {
+                let change = super::ddl::KeyChange::AddCheck {
+                    name: check.name.clone(),
+                    expression: check_expression(&check.definition).to_owned(),
+                };
+                for statement in super::ddl::alter_key(engine, database, schema, name, &change) {
+                    out.push(format!("{}\n", one_statement(&statement)));
+                }
             }
         }
         Err(reason) => {
@@ -407,12 +447,26 @@ fn order_for_restore(tables: Vec<(String, ObjectStructure)>) -> Vec<(String, Obj
     let names: Vec<String> = tables.iter().map(|(name, _)| name.clone()).collect();
     let needs: Vec<Vec<usize>> = tables
         .iter()
-        .map(|(_, structure)| {
-            structure
-                .columns
-                .iter()
-                .filter_map(|column| column.references.as_ref())
-                .filter_map(|reference| names.iter().position(|n| *n == reference.table))
+        .enumerate()
+        .map(|(own, (_, structure))| {
+            let referenced: Vec<&str> = match &structure.constraints {
+                Some(constraints) => constraints
+                    .iter()
+                    .filter(|c| c.kind == "foreignKey")
+                    .map(|c| c.referenced_table.as_str())
+                    .collect(),
+                None => structure
+                    .columns
+                    .iter()
+                    .filter_map(|column| column.references.as_ref())
+                    .map(|reference| reference.table.as_str())
+                    .collect(),
+            };
+            referenced
+                .into_iter()
+                .filter_map(|table| names.iter().position(|n| n == table))
+                // A table that references itself only needs itself.
+                .filter(|&index| index != own)
                 .collect()
         })
         .collect();

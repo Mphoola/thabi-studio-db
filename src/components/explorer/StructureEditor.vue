@@ -1,5 +1,8 @@
 <script setup>
 import { computed, ref } from "vue";
+import { describeDrops } from "../../lib/structurePlan.js";
+import { typesFor } from "../../lib/createTable.js";
+import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
 import { Pencil, Plus } from "lucide-vue-next";
 import { useStructureChanges } from "../../composables/useStructureChanges.js";
 import BaseButton from "../common/BaseButton.vue";
@@ -34,6 +37,13 @@ const props = defineProps({
 });
 const emit = defineEmits(["applied"]);
 
+const connections = useConnectionProfiles();
+const engine = computed(
+  () =>
+    connections.profiles.value.find((p) => p.id === props.profileId)?.driver ??
+    "postgres",
+);
+
 const changes = useStructureChanges({
   tab: props.tab,
   structure: computed(() => props.structure),
@@ -48,6 +58,28 @@ const changes = useStructureChanges({
 
 /** Nullability needs the column's type carried: two engines restate the whole
  *  column to change it, and a restatement with no type changes the type. */
+function setDefault(column, value) {
+  const next = String(value).trim();
+  if (next === (column.default ?? "")) return;
+  changes.stage({ kind: "setDefault", name: column.name, default: next });
+}
+
+/** One place up or down. MySQL states a position as "after x" or "first". */
+function move(column, step) {
+  const names = props.structure.columns.map((c) => c.name);
+  const from = names.indexOf(column.name);
+  const to = from + step;
+  if (to < 0 || to >= names.length) return;
+  const order = names.filter((name) => name !== column.name);
+  order.splice(to, 0, column.name);
+  const at = order.indexOf(column.name);
+  changes.stage({
+    kind: "moveColumn",
+    name: column.name,
+    after: at === 0 ? null : order[at - 1],
+  });
+}
+
 function toggleNullable(column) {
   changes.stage({
     kind: "setNullable",
@@ -56,6 +88,8 @@ function toggleNullable(column) {
     dataType: column.dataType,
   });
 }
+
+const dropSummary = computed(() => describeDrops(changes.drops.value));
 
 function dropColumn(column) {
   changes.stage({ kind: "dropColumn", name: column.name });
@@ -67,6 +101,11 @@ const adding = ref(false);
 /** Types this table already uses, so a new column tends to match its table. */
 const existingTypes = computed(() => [
   ...new Set(props.structure.columns.map((column) => column.dataType)),
+]);
+
+/** The table's own types first, then the engine's common ones. */
+const suggestedTypes = computed(() => [
+  ...new Set([...existingTypes.value, ...typesFor(engine.value)]),
 ]);
 
 const existingNames = computed(() =>
@@ -151,7 +190,7 @@ function retype(column, dataType) {
       v-if="adding"
       class="mx-3 my-2"
       :existing="existingNames"
-      :type-names="existingTypes"
+      :type-names="suggestedTypes"
       @add="changes.stage"
       @error="changes.error.value = $event"
       @cancel="adding = false"
@@ -171,14 +210,20 @@ function retype(column, dataType) {
         :columns="structure.columns"
         :editing="editing"
         :type-names="typeNames"
+        :can-move="engine === 'mysql'"
         @rename="rename"
         @retype="retype"
         @toggle-nullable="toggleNullable"
+        @set-default="setDefault"
+        @move="move"
         @drop="dropColumn"
       />
       <StructureKeysPanel
         :structure="structure"
         :editing="editing"
+        :engine="engine"
+        :profile-id="profileId"
+        :tab-id="tab.id"
         :schema="schema"
         :database="database"
         @change="changes.stage"
@@ -190,6 +235,8 @@ function retype(column, dataType) {
       :title="`Change ${title}`"
       :preview="changes.preview.value"
       :applying="changes.applying.value"
+      :require-name="changes.drops.value.length ? props.title : ''"
+      :drop-summary="dropSummary"
       @close="changes.reviewOpen.value = false"
       @apply="changes.run"
     />

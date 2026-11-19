@@ -35,6 +35,11 @@ export function useStructureChanges({
   );
 
   const dirty = computed(() => edits.value.length > 0);
+  /** Staged drops (columns, indexes, keys): these lose data or protection,
+   *  so the review asks for the table's name before it runs them. */
+  const drops = computed(() =>
+    edits.value.filter((edit) => edit.kind?.startsWith("drop")),
+  );
 
   function stage(change) {
     tab.structureEdits = stageChange(edits.value, change);
@@ -101,6 +106,7 @@ export function useStructureChanges({
     edits,
     plan,
     dirty,
+    drops,
     warnings,
     reviewOpen,
     preview,

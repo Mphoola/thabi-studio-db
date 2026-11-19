@@ -8,11 +8,11 @@
  * because the server would refuse them later and the review dialog would
  * already have shown SQL that cannot run.
  */
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import BaseButton from "../common/BaseButton.vue";
 import CheckboxInput from "../common/CheckboxInput.vue";
-import SelectInput from "../common/SelectInput.vue";
 import TextInput from "../common/TextInput.vue";
+import TypeInput from "./TypeInput.vue";
 
 const props = defineProps({
   /** Names already in use, so a duplicate is caught before it is staged. */
@@ -24,10 +24,13 @@ const props = defineProps({
 });
 const emit = defineEmits(["add", "cancel", "error"]);
 
-const form = ref({ name: "", dataType: props.dataType, nullable: true });
-const typeOptions = computed(() =>
-  props.typeNames.map((name) => ({ value: name, label: name })),
-);
+const blank = (dataType) => ({
+  name: "",
+  dataType,
+  nullable: true,
+  default: "",
+});
+const form = ref(blank(props.dataType));
 
 function submit() {
   const name = form.value.name.trim();
@@ -39,35 +42,47 @@ function submit() {
     emit("error", `${name} already exists.`);
     return;
   }
+  if (!form.value.dataType.trim()) {
+    emit("error", `Give ${name} a type.`);
+    return;
+  }
   emit("add", {
     kind: "addColumn",
     column: {
       name,
-      dataType: form.value.dataType,
+      dataType: form.value.dataType.trim(),
       nullable: form.value.nullable,
-      default: "",
+      // Needed to add a NOT NULL column to a table that already has rows.
+      default: form.value.default.trim(),
       comment: "",
       primaryKey: false,
       unique: false,
     },
   });
-  form.value = { name: "", dataType: form.value.dataType, nullable: true };
+  form.value = blank(form.value.dataType);
 }
 </script>
 
 <template>
-  <div class="flex items-end gap-2 rounded-md border border-line p-2">
+  <div class="flex flex-wrap items-end gap-2 rounded-md border border-line p-2">
     <TextInput
       v-model="form.name"
       label="Name"
       placeholder="Column name"
       class="w-40"
     />
-    <SelectInput
+    <TypeInput
       v-model="form.dataType"
       label="Type"
-      :options="typeOptions"
+      :suggestions="typeNames"
       class="w-44"
+    />
+    <TextInput
+      v-model="form.default"
+      label="Default"
+      mono
+      placeholder="none"
+      class="w-32"
     />
     <CheckboxInput v-model="form.nullable" label="Nullable" />
     <BaseButton size="sm" variant="primary" @click="submit"

@@ -6,21 +6,26 @@
 //! statements run on the same server session, and cancelling a query needs
 //! to know which backend is running it.
 
+pub mod admin;
 pub mod ddl;
+pub mod definition;
 pub mod diagram;
 pub mod dump;
 pub mod edit;
 pub mod error;
 pub mod filter;
+pub mod import;
 pub mod metadata;
 mod mysql;
 pub mod paging;
 pub mod plan;
 mod postgres;
 pub mod quote;
+pub mod routines;
 pub mod script;
 mod sqlserver;
 pub mod transfer;
+pub mod users;
 pub mod values;
 
 use crate::{

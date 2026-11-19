@@ -1,5 +1,6 @@
 mod app_lock;
 mod app_recovery;
+pub mod backup;
 mod commands;
 mod connections;
 mod credentials;
@@ -120,6 +121,29 @@ pub fn run() {
             commands::connections::list_objects,
             commands::connections::schema_diagram,
             commands::connections::describe_object,
+            commands::connections::object_definition,
+            commands::files::save_image,
+            commands::users::list_users,
+            commands::users::user_grants,
+            commands::users::preview_user_action,
+            commands::users::apply_user_action,
+            commands::backup::backup_tools,
+            commands::backup::backup_database,
+            commands::backup::restore_database,
+            commands::backup::backup_log,
+            commands::backup::cancel_backup,
+            commands::import::preview_import,
+            commands::import::import_rows,
+            commands::import::import_progress,
+            commands::import::cancel_import,
+            commands::admin::list_processes,
+            commands::admin::kill_process,
+            commands::admin::server_overview,
+            commands::admin::storage_overview,
+            commands::connections::list_routines,
+            commands::connections::routine_definition,
+            commands::connections::preview_container_action,
+            commands::connections::apply_container_action,
             commands::connections::open_object_data,
             commands::connections::fetch_table_page,
             commands::connections::count_table_rows,

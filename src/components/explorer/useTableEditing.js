@@ -26,6 +26,7 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
   const primaryKey = ref([]);
   const columnInfo = ref(new Map()); // name -> structure column
   const keyChecked = ref(false);
+  const keyError = ref(""); // why the structure couldn't be read
   const applying = ref(false);
   const preview = ref(null); // statements shown in the review dialog
 
@@ -42,6 +43,8 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
     if (readOnlyMode.value)
       return "Read-only: this connection's safe mode is Read-only";
     if (!keyChecked.value) return "";
+    if (keyError.value)
+      return `Read-only: couldn't read this table's key (${keyError.value})`;
     return editor.enabled.value
       ? ""
       : "Read-only: this table has no primary key";
@@ -52,6 +55,7 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
 
   async function loadKey() {
     keyChecked.value = false;
+    keyError.value = "";
     primaryKey.value = [];
     columnInfo.value = new Map();
     const target = node.value;
@@ -64,8 +68,9 @@ export function useTableEditing({ tab, node, profileId, columns, reload }) {
         .filter((c) => c.primaryKey)
         .sort((a, b) => a.primaryKey - b.primaryKey)
         .map((c) => c.name);
-    } catch {
-      primaryKey.value = []; // Stays read-only; the data view shows errors.
+    } catch (failure) {
+      primaryKey.value = []; // Stays read-only, and says why.
+      if (node.value === target) keyError.value = toUserDetail(failure);
     } finally {
       keyChecked.value = true;
     }

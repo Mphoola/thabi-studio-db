@@ -6,6 +6,8 @@ import BaseButton from "../common/BaseButton.vue";
 import EmptyState from "../common/EmptyState.vue";
 import KbdShortcut from "../common/KbdShortcut.vue";
 import DiagramView from "../explorer/DiagramView.vue";
+import ServerView from "../admin/ServerView.vue";
+import { objectNode } from "../../lib/explorerTree.js";
 import ObjectView from "../explorer/ObjectView.vue";
 import QueryTabView from "./QueryTabView.vue";
 import TabBar from "./TabBar.vue";
@@ -14,21 +16,12 @@ const { tabs, active, activeId, splitPanes, openObject } = useTabs();
 const visible = (tab) =>
   active.value?.id === tab.id || Boolean(splitPanes.value?.includes(tab.id));
 
-/** Clicking a table in the diagram opens that table, as one click. */
-function openTableFromDiagram(tab, name) {
-  openObject(
-    {
-      key: `object:db:${tab.database}\u0000${name}`,
-      type: "object",
-      label: name,
-      name,
-      kind: "table",
-      database: tab.database,
-      schema: tab.schema,
-    },
-    "structure",
-    { profileId: tab.profileId },
-  );
+/** Clicking a table in the diagram or the storage list opens that table. */
+function openTableFromDiagram(tab, name, view = "structure") {
+  // Keyed the way the explorer keys it, so an open tab is reused.
+  openObject(objectNode(tab.database, tab.schema, name), view, {
+    profileId: tab.profileId,
+  });
 }
 </script>
 
@@ -57,6 +50,12 @@ function openTableFromDiagram(tab, name) {
           :profile-id="tab.profileId"
           class="min-h-0 flex-1"
           @open-table="openTableFromDiagram(tab, $event)"
+        />
+        <ServerView
+          v-else-if="tab.type === 'server' && active?.id === tab.id"
+          :tab="tab"
+          class="min-h-0 flex-1"
+          @open-table="openTableFromDiagram(tab, $event.name, 'data')"
         />
         <ObjectView
           v-else-if="active?.id === tab.id"

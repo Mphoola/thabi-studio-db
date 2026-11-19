@@ -252,6 +252,17 @@ impl ConnectionService {
         }
     }
 
+    /// The parameters a live connection was opened with, for checks such as
+    /// read-only mode on commands that use the main session.
+    pub async fn params(&self, profile_id: &str) -> Result<ConnectParams, AppError> {
+        let entries = self.inner.entries.lock().await;
+        entries
+            .get(profile_id)
+            .filter(|entry| entry.state == ConnectionState::Connected)
+            .and_then(|entry| entry.params.clone())
+            .ok_or_else(AppError::not_connected)
+    }
+
     /// The query tab for `tab_id`, created on first use, with the
     /// connection's parameters for opening its session.
     pub async fn query_tab(

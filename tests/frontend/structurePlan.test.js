@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeDrops,
+  foreignKeyActions,
   describeEdit,
   planWarnings,
   sameEdit,
@@ -382,5 +384,42 @@ describe("keys and foreign keys", () => {
     expect(describeEdit({ kind: "dropPrimaryKey", name: "pkey" })).toBe(
       "Drop the primary key",
     );
+  });
+});
+
+describe("describeDrops", () => {
+  it("counts what staged changes drop", () => {
+    expect(
+      describeDrops([
+        { kind: "dropColumn", name: "a" },
+        { kind: "addColumn", name: "b" },
+        { kind: "dropIndex", name: "i1" },
+        { kind: "dropIndex", name: "i2" },
+        { kind: "dropForeignKey", name: "fk" },
+      ]),
+    ).toBe("Drops 1 column and 2 indexes and 1 foreign key.");
+    expect(describeDrops([{ kind: "addColumn" }])).toBe("");
+  });
+});
+
+describe("check constraints and key actions", () => {
+  it("stages checks instead of dropping them", () => {
+    const plan = toPlan({ columns: [], indexes: [] }, [
+      { kind: "addCheck", name: "positive", expression: "total > 0" },
+      { kind: "dropCheck", name: "old_check" },
+    ]);
+    expect(plan.keys).toEqual([
+      { addCheck: { name: "positive", expression: "total > 0" } },
+      { dropCheck: { name: "old_check" } },
+    ]);
+    expect(describeDrops([{ kind: "dropCheck", name: "x" }])).toBe(
+      "Drops 1 check.",
+    );
+  });
+
+  it("offers only the actions each engine accepts", () => {
+    expect(foreignKeyActions("sqlserver")).not.toContain("RESTRICT");
+    expect(foreignKeyActions("mysql")).not.toContain("SET DEFAULT");
+    expect(foreignKeyActions("postgres")).toHaveLength(5);
   });
 });

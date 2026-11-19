@@ -59,6 +59,11 @@ export function removeSecurityQuestions(current) {
   return call("remove_security_questions", { current });
 }
 
+/** Writes a diagram image to a path from a save dialog. */
+export function saveImage(path, { svg = null, pngBase64 = null }) {
+  return call("save_image", { path, svg, pngBase64 });
+}
+
 export function saveRecoveryCodes(path, codes) {
   return call("save_recovery_codes", { path, codes });
 }
@@ -244,6 +249,29 @@ export function schemaDiagram(id, database, schema = null) {
 
 export function describeObject(id, { database, schema, name, kind }) {
   return call("describe_object", { id, database, schema, name, kind });
+}
+
+/** Creating and dropping databases and schemas, previewed then applied. */
+export function previewContainerAction(id, tabId, action) {
+  return call("preview_container_action", { id, tabId, action });
+}
+
+export function applyContainerAction(id, tabId, action) {
+  return call("apply_container_action", { id, tabId, action });
+}
+
+/** Functions, procedures, triggers, sequences and types in a schema. */
+export function listRoutines(id, database, schema) {
+  return call("list_routines", { id, database, schema });
+}
+
+export function routineDefinition(id, database, kind, identity) {
+  return call("routine_definition", { id, database, kind, identity });
+}
+
+/** A table's or view's CREATE statement, for Show CREATE. */
+export function objectDefinition(id, { database, schema, name, kind }) {
+  return call("object_definition", { id, database, schema, name, kind });
 }
 
 /**
@@ -610,4 +638,76 @@ export function runSqlFile(id, tabId, { database, path, keepGoing = false }) {
 /** [done, total] while a SQL file runs, or null. */
 export function sqlFileProgress(id, tabId) {
   return call("sql_file_progress", { id, tabId });
+}
+
+/** Server activity, kill, server facts and storage (Phase 15). */
+export function listProcesses(id) {
+  return call("list_processes", { id });
+}
+
+export function killProcess(id, processId, terminate) {
+  return call("kill_process", { id, processId, terminate });
+}
+
+export function serverOverview(id) {
+  return call("server_overview", { id });
+}
+
+export function storageOverview(id, database, schema) {
+  return call("storage_overview", { id, database, schema });
+}
+
+/** Importing a CSV, TSV or JSON file into a table (Phase 15). */
+export function previewImport(id, path, options) {
+  return call("preview_import", { id, path, options });
+}
+
+export function importRows(id, tabId, target, mappings, options, path) {
+  return call("import_rows", { id, tabId, target, mappings, options, path });
+}
+
+export function importProgress(tabId) {
+  return call("import_progress", { tabId });
+}
+
+export function cancelImport(tabId) {
+  return call("cancel_import", { tabId });
+}
+
+/** Backup and restore with the engines' own tools (Phase 15). */
+export function backupTools(id) {
+  return call("backup_tools", { id });
+}
+
+export function backupDatabase(id, jobId, database, path) {
+  return call("backup_database", { id, jobId, database, path });
+}
+
+export function restoreDatabase(id, jobId, database, path) {
+  return call("restore_database", { id, jobId, database, path });
+}
+
+export function backupLog(jobId) {
+  return call("backup_log", { jobId });
+}
+
+export function cancelBackup(jobId) {
+  return call("cancel_backup", { jobId });
+}
+
+/** Users, roles and permissions (Phase 15). */
+export function listUsers(id, database) {
+  return call("list_users", { id, database });
+}
+
+export function userGrants(id, database, name, host) {
+  return call("user_grants", { id, database, name, host });
+}
+
+export function previewUserAction(id, action) {
+  return call("preview_user_action", { id, action });
+}
+
+export function applyUserAction(id, tabId, database, action) {
+  return call("apply_user_action", { id, tabId, database, action });
 }

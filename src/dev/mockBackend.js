@@ -179,8 +179,50 @@ const handlers = {
               primary: false,
             },
           ],
+    constraints:
+      kind === "view"
+        ? null
+        : [
+            {
+              name: "orders_customer_email_fkey",
+              kind: "foreignKey",
+              columns: ["customer_email"],
+              referencedSchema: "public",
+              referencedTable: "customers",
+              referencedColumns: ["email"],
+              onDelete: "CASCADE",
+              onUpdate: "NO ACTION",
+              definition: "",
+            },
+            {
+              name: "orders_total_check",
+              kind: "check",
+              columns: [],
+              referencedSchema: "",
+              referencedTable: "",
+              referencedColumns: [],
+              onDelete: "",
+              onUpdate: "",
+              definition: "CHECK ((total >= (0)::numeric))",
+            },
+          ],
   }),
 };
+// The designer's review: a stand-in script so the dialog can be seen. The
+// real statements come from Rust; this only lists what was staged.
+handlers.preview_table_ddl = ({ plan }) => ({
+  statements: [
+    ...(plan.keys ?? []).map((k) => `-- ${Object.keys(k)[0]} (preview only)`),
+    ...(plan.columns ?? []).map(
+      (c) => `-- ${Object.keys(c)[0]} (preview only)`,
+    ),
+    ...(plan.indexes ?? []).map(
+      (i) => `-- ${Object.keys(i)[0]} index (preview only)`,
+    ),
+  ],
+  note: "These run in one transaction. If one fails, none of them are applied.",
+  transactional: true,
+});
 
 let cancelRun = null;
 handlers.run_statement = ({ sql }) =>
@@ -259,7 +301,7 @@ handlers.open_object_data = ({ name }) =>
   name === "customers"
     ? Promise.reject({
         kind: "permission_denied",
-        message: "This user doesn't have permission to read that.",
+        message: "This user isn't allowed to do that.",
         detail: "permission denied for table customers",
         code: "42501",
       })
@@ -283,6 +325,207 @@ handlers.lookup_reference = ({ search }) =>
     value: `customer${i}@example.com`,
     label: `Customer ${i}`,
   })).filter((r) => r.value.includes(search.trim().toLowerCase()));
+handlers.preview_container_action = ({ action }) => ({
+  statements: [
+    `${action.kind.startsWith("drop") ? "DROP" : "CREATE"} ${action.kind.endsWith("Database") ? "DATABASE" : "SCHEMA"} "${action.name}";`,
+  ],
+  note: "Runs on its own, outside a transaction.",
+  transactional: false,
+});
+handlers.apply_container_action = () => 1;
+// Import: a stand-in file, its preview, and a run that refuses one row.
+handlers["plugin:dialog|open"] ??= () => "/Users/you/Downloads/customers.csv";
+handlers.preview_import = () => ({
+  columns: ["Customer ID", "Email", "Name", "Joined"],
+  rows: [
+    ["1", "ada@example.com", "Ada Lovelace", "2026-01-04"],
+    ["2", "grace@example.com", "Grace Hopper", "2026-02-11"],
+    ["3", "", "Tabitha M.", "2026-03-30"],
+  ],
+  delimiter: ",",
+  suggestedTypes: ["INTEGER", "TEXT", "TEXT", "DATE"],
+});
+handlers.import_rows = () =>
+  new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          inserted: 1204,
+          rejected: [
+            {
+              line: 418,
+              message: "value too long for type character varying(40)",
+            },
+          ],
+          rejectedTotal: 1,
+          cancelled: false,
+          rolledBack: false,
+        }),
+      1500,
+    ),
+  );
+handlers.import_progress = () => ({
+  rows: 600,
+  rejected: 1,
+  bytes: 51200,
+  totalBytes: 102400,
+});
+handlers.cancel_import = () => null;
+handlers.backup_tools = () => ({
+  dump: "/opt/homebrew/opt/libpq/bin/pg_dump",
+  restore: "/opt/homebrew/opt/libpq/bin/psql",
+  archiveRestore: "/opt/homebrew/opt/libpq/bin/pg_restore",
+  serverSide: false,
+});
+handlers["plugin:dialog|save"] ??= ({ options }) =>
+  `/Users/you/Backups/${options?.defaultPath ?? "backup"}`;
+handlers.backup_database = ({ path }) =>
+  new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          path,
+          bytes: 48211968,
+          log: [
+            "pg_dump: reading extensions",
+            'pg_dump: dumping contents of table "public.orders"',
+          ],
+          warnings: [],
+        }),
+      1500,
+    ),
+  );
+handlers.backup_log = () => [
+  "Using /opt/homebrew/opt/libpq/bin/pg_dump",
+  "pg_dump: reading extensions",
+  "pg_dump: reading schemas",
+];
+handlers.cancel_backup = () => null;
+handlers.list_processes = () => [
+  {
+    id: "4021",
+    user: "app",
+    database: "shop",
+    client: "10.0.4.12",
+    state: "active",
+    waiting: "Lock: transactionid",
+    seconds: 194,
+    query: "UPDATE orders SET status = 'paid' WHERE id = 100231",
+    own: false,
+  },
+  {
+    id: "4022",
+    user: "app",
+    database: "shop",
+    client: "local",
+    state: "active",
+    waiting: "",
+    seconds: 0,
+    query: "SELECT pid, usename FROM pg_stat_activity",
+    own: true,
+  },
+  {
+    id: "3990",
+    user: "report",
+    database: "shop",
+    client: "10.0.4.30",
+    state: "idle",
+    waiting: "",
+    seconds: 3600,
+    query: "SELECT count(*) FROM orders",
+    own: false,
+  },
+];
+handlers.kill_process = () => null;
+const mockUsers = [
+  {
+    name: "postgres",
+    host: "",
+    kind: "role",
+    canLogin: true,
+    superuser: true,
+    roles: [],
+  },
+  {
+    name: "app",
+    host: "",
+    kind: "role",
+    canLogin: true,
+    superuser: false,
+    roles: ["readers"],
+  },
+  {
+    name: "readers",
+    host: "",
+    kind: "role",
+    canLogin: false,
+    superuser: false,
+    roles: [],
+  },
+];
+handlers.list_users = () => mockUsers;
+handlers.user_grants = ({ name }) =>
+  name === "readers" ? ["GRANT SELECT ON public.orders TO readers"] : [];
+handlers.preview_user_action = ({ action }) => [
+  `-- ${action.kind} ${action.name}${action.password ? " (password ••••••)" : ""}`,
+];
+handlers.apply_user_action = ({ action }) => {
+  if (action.kind === "createUser")
+    mockUsers.push({
+      name: action.name,
+      host: "",
+      kind: "role",
+      canLogin: true,
+      superuser: false,
+      roles: [],
+    });
+  return null;
+};
+handlers.server_overview = () => [
+  { label: "Version", value: "PostgreSQL 16.4 on aarch64-unknown-linux-gnu" },
+  { label: "Up for", value: "12 days 04:21:07" },
+  { label: "Connections", value: "14" },
+  { label: "Max connections", value: "100" },
+  { label: "This database", value: "1450 MB" },
+];
+handlers.storage_overview = () => [
+  {
+    schema: "public",
+    name: "orders",
+    rows: 1203344,
+    dataBytes: 912261120,
+    indexBytes: 214958080,
+    totalBytes: 1127219200,
+  },
+  {
+    schema: "public",
+    name: "customers",
+    rows: 84210,
+    dataBytes: 22020096,
+    indexBytes: 5242880,
+    totalBytes: 27262976,
+  },
+  {
+    schema: "public",
+    name: "Order Details",
+    rows: 3601212,
+    dataBytes: 402653184,
+    indexBytes: 120586240,
+    totalBytes: 523239424,
+  },
+];
+handlers.list_routines = () => [
+  { name: "order_total", kind: "function", identity: "16501", table: null },
+  { name: "audit_orders", kind: "trigger", identity: "16602", table: "orders" },
+  { name: "orders_id_seq", kind: "sequence", identity: "16390", table: null },
+  { name: "order_status", kind: "type", identity: "16384", table: null },
+];
+handlers.routine_definition = ({ kind }) =>
+  kind === "function"
+    ? "CREATE OR REPLACE FUNCTION public.order_total(order_id bigint)\n RETURNS numeric\n LANGUAGE sql\nAS $function$ SELECT total FROM orders WHERE id = order_id $function$"
+    : `-- ${kind} definition (preview)`;
+handlers.object_definition = ({ name }) =>
+  `CREATE TABLE "public"."${name}" (\n  "id" bigint NOT NULL,\n  PRIMARY KEY ("id")\n);`;
 handlers.completion_schema = () => [
   {
     schema: "public",

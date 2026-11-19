@@ -67,11 +67,60 @@ export function objectNode(database, schema, name, kind = "table") {
   };
 }
 
+/** Functions, procedures and the rest, after the tables and views. */
+const ROUTINE_GROUPS = [
+  { kind: "function", label: "Functions" },
+  { kind: "procedure", label: "Procedures" },
+  { kind: "trigger", label: "Triggers" },
+  { kind: "sequence", label: "Sequences" },
+  { kind: "type", label: "Types" },
+];
+
 /**
- * Groups objects by kind under "Tables", "Views", … in that order. Empty
- * groups are left out. Each group carries its children already.
+ * A function, procedure, trigger, sequence or type. `identity` is what its
+ * definition is read by (functions can be overloaded, so not the name), and
+ * it is in the key so two overloads are two rows.
  */
-export function objectGroups(parent, objects) {
+export function routineNode(parent, routine) {
+  return {
+    key: `routine:${parent.key}\u0000${routine.kind}\u0000${routine.identity}`,
+    type: "routine",
+    label: routine.table ? `${routine.name} (${routine.table})` : routine.name,
+    name: routine.name,
+    kind: routine.kind,
+    identity: routine.identity,
+    table: routine.table ?? null,
+    database: parent.database,
+    schema: parent.schema,
+  };
+}
+
+/**
+ * Groups objects by kind under "Tables", "Views", …, then routines under
+ * "Functions", "Procedures", … in that order. Empty groups are left out.
+ * Each group carries its children already.
+ */
+export function objectGroups(parent, objects, routines = []) {
+  const routineGroups = ROUTINE_GROUPS.map(({ kind, label }) => {
+    const children = routines
+      .filter((routine) => routine.kind === kind)
+      .map((routine) => routineNode(parent, routine));
+    return {
+      key: `group:${parent.key}\u0000${kind}`,
+      type: "group",
+      label,
+      count: children.length,
+      database: parent.database,
+      schema: parent.schema,
+      children,
+    };
+  });
+  return [...tableGroups(parent, objects), ...routineGroups].filter(
+    (group) => group.count > 0,
+  );
+}
+
+function tableGroups(parent, objects) {
   return GROUPS.map(({ kind, label }) => {
     const children = objects
       .filter((object) => object.kind === kind)
@@ -93,7 +142,7 @@ export function objectGroups(parent, objects) {
       schema: parent.schema,
       children,
     };
-  }).filter((group) => group.count > 0);
+  });
 }
 
 /**

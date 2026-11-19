@@ -159,3 +159,52 @@ export async function defaultBackupPath(database, when = new Date()) {
   const name = `${String(database).replace(/[\\/:*?"<>|]/g, "_")}-${day}.sql`;
   return join(await homeDir(), "Documents", "Thabi Backups", name);
 }
+
+/** Native save dialog for a diagram image, "svg" or "png". */
+export async function pickImageDestination(defaultName, format) {
+  const path = await save({
+    title: `Export Diagram as ${format.toUpperCase()}`,
+    defaultPath: defaultName,
+    filters: [{ name: format.toUpperCase(), extensions: [format] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Native picker for a file to import. */
+export async function pickImportFile() {
+  const path = await open({
+    title: "Choose a File to Import",
+    multiple: false,
+    directory: false,
+    filters: [
+      {
+        name: "Data",
+        extensions: ["csv", "tsv", "txt", "json", "jsonl", "ndjson"],
+      },
+    ],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** Where a native backup goes: a pg_dump archive or a mysqldump .sql file. */
+export async function pickBackupDestination(defaultName, extension) {
+  const path = await save({
+    title: "Save Backup",
+    defaultPath: `${defaultName}.${extension}`,
+    filters: [{ name: "Backup", extensions: [extension] }],
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** A backup to restore. */
+export async function pickBackupFile() {
+  const path = await open({
+    title: "Choose a Backup",
+    multiple: false,
+    directory: false,
+    filters: [
+      { name: "Backups", extensions: ["dump", "backup", "sql", "bak"] },
+    ],
+  });
+  return typeof path === "string" ? path : null;
+}

@@ -1,14 +1,12 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useExplorer } from "../../composables/useExplorer.js";
 import { useToasts } from "../../composables/useToasts.js";
 import { useConnectionProfiles } from "../../composables/useConnectionProfiles.js";
-import { describeObject, openObjectData } from "../../lib/tauri/commands.js";
 import ResultView from "../grid/ResultView.vue";
 import TablePager from "../grid/TablePager.vue";
 import { columnLayoutRef } from "../../composables/useColumns.js";
-import { tableSource } from "../../lib/gridSources.js";
-import { pagerProps, tablePageSize } from "../../lib/tablePaging.js";
+import { tablePageSize } from "../../lib/tablePaging.js";
 import AddRowDialog from "./AddRowDialog.vue";
 import CreateTableDialog from "./CreateTableDialog.vue";
 import ChangesPreviewDialog from "./ChangesPreviewDialog.vue";
@@ -16,6 +14,8 @@ import EditChangesBar from "./EditChangesBar.vue";
 import FilterBar from "./FilterBar.vue";
 import ObjectHeader from "./ObjectHeader.vue";
 import ObjectLoadState from "./ObjectLoadState.vue";
+import { useObjectLoad } from "./useObjectLoad.js";
+import { useTablePager } from "./useTablePager.js";
 import { useTableEditing } from "./useTableEditing.js";
 import { useTableFilters } from "./useTableFilters.js";
 import { useTableLinks } from "./useTableLinks.js";
@@ -40,22 +40,38 @@ const tab = computed({
   set: (value) => (props.tab.view = value),
 });
 
-const results = ref({}); // tab -> { status, value?, error? }
 // Columns of the last rows read, so the bar keeps working after an error.
 const columns = ref([]);
 const profileId = computed(
   () => props.tab.profileId ?? explorer.profile.value?.id,
 );
+// The loader reads with the filters and the key, which are built from the
+// columns it reads; it reaches them through `deps`, filled in just below.
+const deps = {};
+const objectLoad = useObjectLoad({
+  tab: props.tab,
+  node,
+  view: tab,
+  profileId,
+  columns,
+  pageSize,
+  filterRequest: () => deps.filters.request(),
+  primaryKey: () =>
+    deps.editing.keyReady().then(() => deps.editing.primaryKey.value),
+  onData: (count) => (deps.filters.appliedCount.value = count),
+});
+const reloadData = () => objectLoad.load("data");
 const tableFilters = useTableFilters({
   tab: props.tab,
   node,
   profileId,
   columns,
   view: tab,
-  reload: () => load("data"),
+  reload: reloadData,
   toasts,
 });
 const { filters, appliedCount } = tableFilters;
+deps.filters = tableFilters;
 
 // Column layout lives on the tab, so a table remembers it next time.
 const columnLayout = columnLayoutRef(props.tab);
@@ -65,8 +81,9 @@ const editing = useTableEditing({
   node,
   profileId,
   columns,
-  reload: () => load("data"),
+  reload: reloadData,
 });
+deps.editing = editing;
 const editor = editing.editor;
 const links = useTableLinks({
   node,
@@ -86,86 +103,20 @@ const canEditStructure = computed(
 // Save (Mod+S) in this tab applies the staged edits.
 props.tab.applyEdits = editing.apply;
 
-async function load(which = tab.value) {
-  const target = node.value;
-  const id = props.tab.profileId ?? explorer.profile.value?.id;
-  if (!target || !id) return;
-  results.value = { ...results.value, [which]: { status: "loading" } };
-  const request = which === "data" ? tableFilters.request() : [];
-  try {
-    const value =
-      which === "data"
-        ? await openObjectData(id, props.tab.id, {
-            ...target,
-            // One page at a time, ordered by the key (Phase 12), sized by
-            // the connection's row limit.
-            maxRows: pageSize.value,
-            filters: request,
-            // The key must be known first: paging without it would order
-            // the first page differently from the rest.
-            primaryKey: await editing
-              .keyReady()
-              .then(() => editing.primaryKey.value),
-          })
-        : await describeObject(id, target);
-    if (node.value !== target) return;
-    results.value = { ...results.value, [which]: { status: "loaded", value } };
-    if (which === "data") {
-      columns.value = value.columns;
-      appliedCount.value = request.length;
-    }
-  } catch (error) {
-    if (node.value === target)
-      results.value = { ...results.value, [which]: { status: "error", error } };
-  }
-}
-
-watch(node, () => {
-  results.value = {};
-  columns.value = [];
-  load();
-});
-watch(tab, (value) => !results.value[value] && load(value));
-// A foreign key jump re-filters an open tab and asks for a reload.
-watch(
-  () => props.tab.reloadToken,
-  () => load("data"),
-);
+const { load, current, page } = objectLoad;
 if (node.value) load();
 
-const current = computed(() => results.value[tab.value] ?? { status: "idle" });
-/** The page just read, and the estimate of how many rows the table has. */
-const page = computed(() =>
-  current.value.status === "loaded" ? current.value.value : null,
-);
-
-const previewSource = computed(() =>
-  tab.value === "data" && page.value
-    ? tableSource({
-        profileId: props.tab.profileId ?? explorer.profile.value?.id,
-        tabId: props.tab.id,
-        target: node.value,
-        filters: tableFilters.request(),
-        primaryKey: editing.primaryKey.value,
-        estimate: page.value.estimatedTotal ?? null,
-        // The live list, not a snapshot: the grid and the editor must agree.
-        columns,
-        pageSize: pageSize.value,
-        firstRows: page.value.rows,
-      })
-    : null,
-);
-const gridView = ref(null);
-
-/** What the pager shows; see lib/tablePaging.js. */
-const pager = computed(() =>
-  pagerProps(
-    gridView.value?.paging ?? null,
-    previewSource.value,
-    pageSize.value,
-  ),
-);
-const goToPage = (index) => gridView.value?.goToPage(index);
+const { previewSource, gridView, pager, goToPage } = useTablePager({
+  tab: props.tab,
+  view: tab,
+  node,
+  page,
+  columns,
+  pageSize,
+  profileId,
+  filterRequest: () => tableFilters.request(),
+  primaryKey: () => editing.primaryKey.value,
+});
 </script>
 
 <template>

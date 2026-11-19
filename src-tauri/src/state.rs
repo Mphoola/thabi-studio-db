@@ -3,6 +3,7 @@ use crate::connections::ConnectionService;
 use crate::credentials::{CredentialStore, OsCredentialStore};
 use crate::errors::AppError;
 use rusqlite::Connection;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +15,10 @@ pub struct AppState {
     /// One flag per connection running a dump, so an export of a real database
     /// — which is minutes, not seconds — can be stopped.
     pub exports: Arc<Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>>,
+    /// Imports running now, by the tab running them, for progress and cancel.
+    pub imports: Mutex<HashMap<String, Arc<crate::database::import::ImportProgress>>>,
+    /// Backups and restores running now, by the job id the webview gave.
+    pub jobs: Mutex<HashMap<String, Arc<crate::backup::Job>>>,
 }
 
 impl AppState {
@@ -23,6 +28,8 @@ impl AppState {
             credentials: Arc::new(OsCredentialStore),
             connections: ConnectionService::default(),
             app_lock: AppLock::default(),
+            imports: Mutex::default(),
+            jobs: Mutex::default(),
             exports: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }

@@ -144,6 +144,43 @@ export function useTabs() {
     return tab;
   }
 
+  /**
+   * A connection's Server tab, on `view` ("activity", "server" or
+   * "storage"). One per connection: opening it again switches its view.
+   */
+  function openServer({
+    profileId,
+    view = "activity",
+    database = null,
+    schema = null,
+    title,
+  }) {
+    const existing = tabs.value.find(
+      (tab) => tab.type === "server" && tab.profileId === profileId,
+    );
+    if (existing) {
+      existing.view = view;
+      if (database) {
+        existing.database = database;
+        existing.schema = schema;
+      }
+      show(existing);
+      return existing;
+    }
+    const tab = reactive({
+      id: newId(),
+      type: "server",
+      title: title ?? "Server",
+      profileId,
+      view,
+      database,
+      schema,
+    });
+    tabs.value.push(tab);
+    show(tab);
+    return tab;
+  }
+
   const hasStagedEdits = (tab) =>
     Boolean(
       tab.edits &&
@@ -235,6 +272,7 @@ export function useTabs() {
     openSaved,
     openObject,
     openDiagram,
+    openServer,
     close,
     isDirty,
   };

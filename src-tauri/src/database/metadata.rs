@@ -123,6 +123,144 @@ pub struct ObjectStructure {
     /// between the server's words and our reconstruction of them.
     #[serde(default)]
     pub show_create: Option<String>,
+    /// Foreign keys (any number of columns) and check constraints, by name,
+    /// so the designer can drop them. `None` where the object has none to
+    /// have (views).
+    #[serde(default)]
+    pub constraints: Option<Vec<ConstraintInfo>>,
+}
+
+/// A foreign key or check constraint on a table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConstraintInfo {
+    pub name: String,
+    /// "foreignKey" or "check".
+    pub kind: String,
+    /// The constrained columns, in key order (foreign keys).
+    pub columns: Vec<String>,
+    /// Where a foreign key points: schema (PostgreSQL, SQL Server) or
+    /// database (MySQL), table and columns in the same order.
+    pub referenced_schema: String,
+    pub referenced_table: String,
+    pub referenced_columns: Vec<String>,
+    pub on_delete: String,
+    pub on_update: String,
+    /// A check's condition, as the server prints it.
+    pub definition: String,
+}
+
+/// The query for a table's foreign keys and checks. Rows are (name, kind,
+/// columns, referenced schema, table, columns, on delete, on update,
+/// definition), lists separated by [`SEP`]. Bound values: schema (or MySQL
+/// database), then table; MySQL takes them twice.
+pub(crate) fn constraints_sql(engine: super::Engine, database: &str) -> String {
+    match engine {
+        super::Engine::Postgres => "SELECT con.conname::text,
+                    CASE con.contype WHEN 'f' THEN 'foreignKey' ELSE 'check' END,
+                    (SELECT string_agg(a.attname, chr(31) ORDER BY k.ord)
+                     FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum),
+                    rn.nspname::text, rc.relname::text,
+                    (SELECT string_agg(a.attname, chr(31) ORDER BY k.ord)
+                     FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum),
+                    CASE con.confdeltype WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+                         WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END,
+                    CASE con.confupdtype WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+                         WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END,
+                    CASE WHEN con.contype = 'c' THEN pg_get_constraintdef(con.oid) END
+             FROM pg_constraint con
+             JOIN pg_class c ON c.oid = con.conrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             LEFT JOIN pg_class rc ON rc.oid = con.confrelid
+             LEFT JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+             WHERE n.nspname = $1 AND c.relname = $2 AND con.contype IN ('f', 'c')
+             ORDER BY con.contype DESC, con.conname"
+            .to_owned(),
+        super::Engine::MySql => "SELECT CONVERT(rc.CONSTRAINT_NAME USING utf8mb4), 'foreignKey',
+                    CONVERT(GROUP_CONCAT(k.COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR '\x1f') USING utf8mb4),
+                    CONVERT(MAX(k.REFERENCED_TABLE_SCHEMA) USING utf8mb4),
+                    CONVERT(MAX(k.REFERENCED_TABLE_NAME) USING utf8mb4),
+                    CONVERT(GROUP_CONCAT(k.REFERENCED_COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR '\x1f') USING utf8mb4),
+                    CONVERT(rc.DELETE_RULE USING utf8mb4), CONVERT(rc.UPDATE_RULE USING utf8mb4), NULL
+             FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+             JOIN information_schema.KEY_COLUMN_USAGE k
+               ON k.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA AND k.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+              AND k.TABLE_NAME = rc.TABLE_NAME
+             WHERE rc.CONSTRAINT_SCHEMA = ? AND rc.TABLE_NAME = ?
+             GROUP BY rc.CONSTRAINT_NAME, rc.DELETE_RULE, rc.UPDATE_RULE"
+            .to_owned(),
+        super::Engine::SqlServer => {
+            let db = super::quote::ident(super::Engine::SqlServer, database);
+            format!(
+                "SELECT fk.name, 'foreignKey',
+                        STRING_AGG(pc.name, CHAR(31)) WITHIN GROUP (ORDER BY fkc.constraint_column_id),
+                        MAX(rs.name), MAX(ro.name),
+                        STRING_AGG(rcol.name, CHAR(31)) WITHIN GROUP (ORDER BY fkc.constraint_column_id),
+                        REPLACE(MAX(fk.delete_referential_action_desc), '_', ' '),
+                        REPLACE(MAX(fk.update_referential_action_desc), '_', ' '),
+                        NULL
+                 FROM {db}.sys.foreign_keys fk
+                 JOIN {db}.sys.objects o ON o.object_id = fk.parent_object_id
+                 JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id
+                 JOIN {db}.sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+                 JOIN {db}.sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+                 JOIN {db}.sys.objects ro ON ro.object_id = fk.referenced_object_id
+                 JOIN {db}.sys.schemas rs ON rs.schema_id = ro.schema_id
+                 JOIN {db}.sys.columns rcol ON rcol.object_id = fkc.referenced_object_id AND rcol.column_id = fkc.referenced_column_id
+                 WHERE s.name = @P1 AND o.name = @P2
+                 GROUP BY fk.name
+                 UNION ALL
+                 SELECT cc.name, 'check', NULL, NULL, NULL, NULL, NULL, NULL, cc.definition
+                 FROM {db}.sys.check_constraints cc
+                 JOIN {db}.sys.objects o ON o.object_id = cc.parent_object_id
+                 JOIN {db}.sys.schemas s ON s.schema_id = o.schema_id
+                 WHERE s.name = @P1 AND o.name = @P2"
+            )
+        }
+    }
+}
+
+/// MySQL's check constraints, apart from [`constraints_sql`]:
+/// `information_schema.CHECK_CONSTRAINTS` only exists from MySQL 8.0.16, so
+/// on older servers (MySQL 5.7, as MAMP ships) this fails and is skipped.
+pub(crate) fn mysql_checks_sql() -> &'static str {
+    "SELECT CONVERT(cc.CONSTRAINT_NAME USING utf8mb4), 'check', NULL, NULL, NULL, NULL, NULL, NULL,
+                    CONVERT(cc.CHECK_CLAUSE USING utf8mb4)
+             FROM information_schema.CHECK_CONSTRAINTS cc
+             JOIN information_schema.TABLE_CONSTRAINTS tc
+               ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? AND tc.CONSTRAINT_TYPE = 'CHECK'"
+}
+
+/// Rows from [`constraints_sql`].
+pub(crate) fn constraint_rows(rows: TextRows) -> Vec<ConstraintInfo> {
+    let list = |v: Option<String>| -> Vec<String> {
+        v.map(|text| text.split(SEP).map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    let mut out: Vec<ConstraintInfo> = rows
+        .into_iter()
+        .map(|mut row| {
+            row.resize(9, None);
+            let mut cells = row.into_iter();
+            let mut next = || cells.next().flatten();
+            ConstraintInfo {
+                name: next().unwrap_or_default(),
+                kind: next().unwrap_or_default(),
+                columns: list(next()),
+                referenced_schema: next().unwrap_or_default(),
+                referenced_table: next().unwrap_or_default(),
+                referenced_columns: list(next()),
+                on_delete: next().unwrap_or_default(),
+                on_update: next().unwrap_or_default(),
+                definition: next().unwrap_or_default(),
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| b.kind.cmp(&a.kind).then(a.name.cmp(&b.name)));
+    out
 }
 
 /// A single-column foreign key in another table that points at this one.

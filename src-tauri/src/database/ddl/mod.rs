@@ -10,6 +10,8 @@
 //! called `order"; DROP TABLE x; --` is one quoted name in every statement.
 
 pub mod alter;
+pub mod containers;
+pub mod current;
 pub mod keys;
 pub mod plan;
 pub mod table;
@@ -17,11 +19,14 @@ pub mod table;
 pub use alter::Change;
 pub use keys::{IndexSpec, KeyChange};
 
-pub use alter::alter_column;
+pub use alter::{alter_column, alter_column_with};
+pub use containers::{ContainerAction, container_preview, container_script};
+pub use current::Current;
 pub use keys::{alter_key, create_index, drop_index};
 pub use plan::{
     Atomicity, DdlPreview, IndexAction, TableAction, TablePlan, TableTarget, action_script,
     atomicity, atomicity_note, preview, preview_of, spec_from_structure, table_script,
+    table_script_with,
 };
 pub use table::{
     ColumnSpec, ForeignKey, TableSpec, create_table, drop_table, rename_table, truncate_table,

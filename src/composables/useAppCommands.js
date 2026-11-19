@@ -346,6 +346,21 @@ export function useAppCommands() {
       },
     },
     {
+      id: "view.serverActivity",
+      title: "Show Server Activity",
+      group: "View",
+      enabled: () => explorer.connected.value,
+      run: () => {
+        const profile = explorer.profile.value;
+        if (!profile) return;
+        workspace.openServer({
+          profileId: profile.id,
+          view: "activity",
+          title: `${profile.name} server`,
+        });
+      },
+    },
+    {
       id: "view.connections",
       title: "Show Connections",
       group: "View",

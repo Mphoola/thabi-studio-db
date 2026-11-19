@@ -145,16 +145,13 @@ pub async fn list_connections(
 
 /// Errors that mean the session itself is gone rather than the request failing.
 fn is_connection_failure(error: &AppError) -> bool {
-    matches!(
-        error.kind,
-        "connection_closed" | "connection_refused" | "unreachable" | "connection" | "timeout"
-    )
+    database::error::is_connection_failure(error)
 }
 
 /// Runs explorer work on a profile's session. If the session turns out to
 /// be dead, it is closed and the caller gets a "connection lost" error so
 /// the UI can offer to reconnect instead of showing stale data.
-async fn with_session<T>(
+pub(crate) async fn with_session<T>(
     state: &AppState,
     id: &str,
     work: impl AsyncFnOnce(&mut Session) -> Result<T, AppError>,
@@ -234,6 +231,54 @@ pub async fn describe_object(
     let kind = ObjectKind::from_code(&kind);
     with_session(&state, &id, async |s| {
         s.describe(&database, &schema, &name, kind).await
+    })
+    .await
+}
+
+/// Functions, procedures, triggers, sequences and types in a schema.
+#[tauri::command]
+pub async fn list_routines(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<database::routines::RoutineInfo>, AppError> {
+    let schema = schema.unwrap_or_default();
+    with_session(&state, &id, async |s| {
+        database::routines::list_routines(s, &database, &schema).await
+    })
+    .await
+}
+
+/// The definition of a function, procedure, trigger, sequence or type.
+#[tauri::command]
+pub async fn routine_definition(
+    id: String,
+    database: String,
+    kind: String,
+    identity: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    with_session(&state, &id, async |s| {
+        database::routines::routine_definition(s, &database, &kind, &identity).await
+    })
+    .await
+}
+
+/// The CREATE statement for a table or view, for Show CREATE.
+#[tauri::command]
+pub async fn object_definition(
+    id: String,
+    database: String,
+    schema: Option<String>,
+    name: String,
+    kind: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let schema = schema.unwrap_or_default();
+    let kind = ObjectKind::from_code(&kind);
+    with_session(&state, &id, async |s| {
+        database::definition::object_definition(s, &database, &schema, &name, kind).await
     })
     .await
 }
@@ -548,6 +593,20 @@ pub async fn list_referencing(
     .await
 }
 
+/// Refuses a change the app generates on a read-only connection. MySQL and
+/// PostgreSQL sessions refuse writes themselves; SQL Server has no read-only
+/// session, so this is its only guard, and it stops all three before any SQL
+/// is built.
+pub(crate) fn refuse_read_only(params: &database::ConnectParams) -> Result<(), AppError> {
+    if params.read_only {
+        return Err(AppError::new(
+            "read_only",
+            "This connection is read-only. Change its safe mode to make changes.",
+        ));
+    }
+    Ok(())
+}
+
 /// Applies staged row edits in one transaction on the table tab's session.
 /// All or nothing; returns how many statements ran.
 #[tauri::command]
@@ -559,6 +618,7 @@ pub async fn apply_row_changes(
     state: State<'_, AppState>,
 ) -> Result<usize, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
     let statements = database::edit::statements(params.engine, &target, &changes)?;
     let result = tab
         .apply(&params, Some(target.database.clone()), &statements)
@@ -621,6 +681,9 @@ pub async fn run_sql_file(
     state: State<'_, AppState>,
 ) -> Result<crate::queries::ScriptSummary, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    // A SQL file is changes; the webview says so too, but SQL Server has no
+    // read-only session to back it up.
+    refuse_read_only(&params)?;
     let engine = params.engine;
     let statements = tauri::async_runtime::spawn_blocking(move || {
         read_text_file(
@@ -1329,14 +1392,43 @@ pub async fn preview_table_ddl(
     plan: database::ddl::TablePlan,
     state: State<'_, AppState>,
 ) -> Result<database::ddl::DdlPreview, AppError> {
-    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
+    let current = current_columns(&tab, &params, &target, &plan).await?;
     Ok(database::ddl::preview(
         params.engine,
         &target.database,
         target.schema.as_deref().unwrap_or_default(),
         &target.name,
         &plan,
+        &current,
     ))
+}
+
+/// What the table's columns are now, for the engines that restate a column
+/// to change part of it. Read for both the preview and the apply, so both
+/// build the same script from the same table.
+async fn current_columns(
+    tab: &crate::queries::QueryTab,
+    params: &database::ConnectParams,
+    target: &database::ddl::TableTarget,
+    plan: &database::ddl::TablePlan,
+) -> Result<database::ddl::Current, AppError> {
+    if plan.create.is_some() || plan.columns.is_empty() {
+        return Ok(database::ddl::Current::default());
+    }
+    let engine = params.engine;
+    tab.with_session(params, Some(target.database.clone()), async |session| {
+        database::ddl::current::read(
+            session,
+            engine,
+            &target.database,
+            target.schema.as_deref().unwrap_or_default(),
+            &target.name,
+        )
+        .await
+    })
+    .await
 }
 
 /// Applies a table's staged changes.
@@ -1352,12 +1444,15 @@ pub async fn apply_table_ddl(
     state: State<'_, AppState>,
 ) -> Result<usize, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
-    let script = database::ddl::table_script(
+    refuse_read_only(&params)?;
+    let current = current_columns(&tab, &params, &target, &plan).await?;
+    let script = database::ddl::table_script_with(
         params.engine,
         &target.database,
         target.schema.as_deref().unwrap_or_default(),
         &target.name,
         &plan,
+        &current,
     );
     tab.apply(&params, Some(target.database.clone()), &script)
         .await
@@ -1420,6 +1515,7 @@ pub async fn preview_table_action(
     state: State<'_, AppState>,
 ) -> Result<database::ddl::DdlPreview, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
     let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
     Ok(database::ddl::preview_of(params.engine, script))
 }
@@ -1434,7 +1530,80 @@ pub async fn apply_table_action(
     state: State<'_, AppState>,
 ) -> Result<usize, AppError> {
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
     let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
     tab.apply(&params, Some(target.database.clone()), &script)
         .await
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+
+    #[test]
+    fn read_only_connections_refuse_generated_changes() {
+        let mut params = database::ConnectParams {
+            engine: database::Engine::SqlServer,
+            host: "localhost".into(),
+            port: 1433,
+            database: None,
+            username: "sa".into(),
+            password: None,
+            tls: database::TlsMode::Verify,
+            ca_path: None,
+            client_cert: None,
+            client_key: None,
+            ssh: None,
+            connect_to: None,
+            read_only: false,
+            startup_commands: Vec::new(),
+        };
+        assert!(refuse_read_only(&params).is_ok());
+        params.read_only = true;
+        assert_eq!(refuse_read_only(&params).unwrap_err().kind, "read_only");
+    }
+}
+
+/// The SQL to create or drop a database or schema, before it runs.
+#[tauri::command]
+pub async fn preview_container_action(
+    id: String,
+    tab_id: String,
+    action: database::ddl::ContainerAction,
+    state: State<'_, AppState>,
+) -> Result<database::ddl::DdlPreview, AppError> {
+    let (_, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
+    let statements = database::ddl::container_script(params.engine, &action)
+        .map_err(|message| AppError::new("invalid", message))?;
+    Ok(database::ddl::container_preview(statements, &action))
+}
+
+/// Creates or drops a database or schema: the statements the preview showed,
+/// each on its own, outside a transaction (PostgreSQL refuses CREATE DATABASE
+/// inside one). Stops at the first failure; never retried.
+#[tauri::command]
+pub async fn apply_container_action(
+    id: String,
+    tab_id: String,
+    action: database::ddl::ContainerAction,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
+    refuse_read_only(&params)?;
+    let statements = database::ddl::container_script(params.engine, &action)
+        .map_err(|message| AppError::new("invalid", message))?;
+    // A PostgreSQL schema is made in the database it belongs to; the others
+    // run from wherever the tab is.
+    let database = match params.engine {
+        database::Engine::Postgres => action.runs_in().map(str::to_owned),
+        _ => None,
+    };
+    tab.with_session(&params, database, async |session| {
+        for statement in &statements {
+            session.execute(statement, 0).await?;
+        }
+        Ok(statements.len())
+    })
+    .await
 }

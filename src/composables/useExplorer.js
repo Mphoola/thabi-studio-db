@@ -9,8 +9,12 @@ import {
 import {
   listDatabases,
   listObjects,
+  listRoutines,
   listSchemas,
+  routineDefinition,
 } from "../lib/tauri/commands.js";
+import { toUserDetail } from "../lib/errors.js";
+import { useToasts } from "./useToasts.js";
 import { useConnectionProfiles } from "./useConnectionProfiles.js";
 import { useTabs } from "./useTabs.js";
 
@@ -51,6 +55,16 @@ export function useExplorer() {
     }
   }
 
+  /** Tables and views, and the routines beside them. A login that can't
+   *  read routines still sees its tables: that list is not lost with it. */
+  async function groupsOf(id, node) {
+    const [objects, routines] = await Promise.all([
+      listObjects(id, node.database, node.schema ?? undefined),
+      listRoutines(id, node.database, node.schema ?? undefined).catch(() => []),
+    ]);
+    return objectGroups(node, objects, routines);
+  }
+
   async function fetchChildren(node) {
     const id = profile.value.id;
     if (!node) {
@@ -67,15 +81,10 @@ export function useExplorer() {
     }
     if (node.type === "database") {
       const schemas = await listSchemas(id, node.database);
-      if (schemas === null)
-        return objectGroups(node, await listObjects(id, node.database));
+      if (schemas === null) return groupsOf(id, node);
       return schemas.map((schema) => schemaNode(node.database, schema));
     }
-    if (node.type === "schema")
-      return objectGroups(
-        node,
-        await listObjects(id, node.database, node.schema),
-      );
+    if (node.type === "schema") return groupsOf(id, node);
     return [];
   }
 
@@ -122,7 +131,31 @@ export function useExplorer() {
 
   function open(node, view = "data") {
     selectedKey.value = node.key;
+    if (node.type === "routine") return openDefinition(node);
     workspace.openObject(node, view);
+  }
+
+  /**
+   * A routine opens as its definition in a query tab: read it, change it to
+   * CREATE OR REPLACE or ALTER, and run it like any statement, with the
+   * connection's safe mode asking first.
+   */
+  async function openDefinition(node) {
+    try {
+      const sql = await routineDefinition(
+        profile.value.id,
+        node.database,
+        node.kind,
+        node.identity,
+      );
+      workspace.newQuery({
+        sql,
+        database: node.database,
+        title: `${node.kind[0].toUpperCase()}${node.kind.slice(1)} ${node.name}`,
+      });
+    } catch (error) {
+      useToasts().error(`Couldn’t read “${node.name}”`, toUserDetail(error));
+    }
   }
 
   async function refresh(node = null) {

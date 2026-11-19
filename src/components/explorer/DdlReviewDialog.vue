@@ -1,10 +1,11 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { TriangleAlert } from "lucide-vue-next";
 import InlineAlert from "../common/InlineAlert.vue";
 import BaseButton from "../common/BaseButton.vue";
 import BaseDialog from "../common/BaseDialog.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
+import TextInput from "../common/TextInput.vue";
 
 /**
  * The DDL a change will run, before it runs.
@@ -27,6 +28,11 @@ const props = defineProps({
   applying: { type: Boolean, default: false },
   /** Shown instead of the statements when something went wrong reading them. */
   error: { type: String, default: "" },
+  /** When set, the name to type before running: for changes that drop
+   *  something, so a reflex click can't lose a column. */
+  requireName: { type: String, default: "" },
+  /** What will be lost, said above the name field. */
+  dropSummary: { type: String, default: "" },
 });
 const emit = defineEmits(["close", "apply"]);
 
@@ -35,6 +41,11 @@ const statements = computed(() => props.preview?.statements ?? []);
  * closed, so every branch has to cope with there not being one yet. */
 const ready = computed(() => Boolean(props.preview));
 const empty = computed(() => ready.value && !statements.value.length);
+const typed = ref("");
+watch(open, () => (typed.value = ""));
+const named = computed(
+  () => !props.requireName || typed.value.trim() === props.requireName,
+);
 </script>
 
 <template>
@@ -78,15 +89,30 @@ const empty = computed(() => ready.value && !statements.value.length);
             aria-hidden="true"
           />
         </InlineAlert>
+        <div
+          v-if="requireName && statements.length"
+          class="flex flex-col gap-2 rounded-md border border-danger p-3"
+        >
+          <p class="text-sm text-fg">
+            {{ dropSummary }} This can't be undone. Type
+            <strong class="font-mono">{{ requireName }}</strong> to run it.
+          </p>
+          <TextInput
+            v-model="typed"
+            mono
+            :aria-label="`Type ${requireName} to confirm`"
+            autocomplete="off"
+          />
+        </div>
       </template>
     </div>
     <template #footer>
       <BaseButton size="sm" @click="emit('close')">Cancel</BaseButton>
       <BaseButton
         size="sm"
-        variant="primary"
         :loading="applying"
-        :disabled="loading || !ready || !statements.length"
+        :variant="requireName ? 'danger' : 'primary'"
+        :disabled="loading || !ready || !statements.length || !named"
         @click="emit('apply')"
       >
         {{ applying ? "Running…" : "Run these" }}

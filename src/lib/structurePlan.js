@@ -98,6 +98,11 @@ export function toPlan(structure, edits) {
           },
         });
         break;
+      case "moveColumn":
+        columns.push({
+          moveColumn: { name: currentName(one.name), after: one.after },
+        });
+        break;
       case "dropIndex":
         indexes.push({ drop: { name: one.name } });
         break;
@@ -138,6 +143,14 @@ export function toPlan(structure, edits) {
       case "dropForeignKey":
         keys.push({ dropForeignKey: { name: one.name } });
         break;
+      case "addCheck":
+        keys.push({
+          addCheck: { name: one.name, expression: one.expression },
+        });
+        break;
+      case "dropCheck":
+        keys.push({ dropCheck: { name: one.name } });
+        break;
       default:
         // An edit this build does not know about is dropped rather than sent:
         // showing SQL for something that will not run is worse than not
@@ -175,6 +188,10 @@ export function describeEdit(one) {
       return one.default
         ? `${one.name} defaults to ${one.default}`
         : `Drop the default on ${one.name}`;
+    case "moveColumn":
+      return one.after
+        ? `Move ${one.name} after ${one.after}`
+        : `Move ${one.name} first`;
     case "dropIndex":
       return `Drop index ${one.name}`;
     case "addIndex":
@@ -187,6 +204,10 @@ export function describeEdit(one) {
       return `Foreign key ${one.columns.join(", ")} → ${one.references.join(".")}.${one.referencedColumns.join(", ")}`;
     case "dropForeignKey":
       return `Drop foreign key ${one.name}`;
+    case "addCheck":
+      return `Check ${one.name}: ${one.expression}`;
+    case "dropCheck":
+      return `Drop check ${one.name}`;
     default:
       return one.kind;
   }
@@ -251,4 +272,36 @@ export function planWarnings(structure, plan) {
     }
   }
   return warnings;
+}
+
+/**
+ * "Drops 1 column and 2 indexes." for the confirmation before staged drops
+ * run, or "" when nothing is dropped.
+ */
+export function describeDrops(edits) {
+  const counts = new Map();
+  for (const edit of edits) {
+    if (!edit.kind?.startsWith("drop")) continue;
+    const noun =
+      edit.kind
+        .slice(4)
+        .replace(/([A-Z])/g, " $1")
+        .trim()
+        .toLowerCase() || "item";
+    counts.set(noun, (counts.get(noun) ?? 0) + 1);
+  }
+  const parts = [...counts].map(([noun, n]) =>
+    n === 1 ? `1 ${noun}` : `${n} ${noun}${noun.endsWith("x") ? "es" : "s"}`,
+  );
+  return parts.length ? `Drops ${parts.join(" and ")}.` : "";
+}
+
+/** The ON DELETE / ON UPDATE actions each engine accepts. SQL Server has no
+ *  RESTRICT; MySQL (InnoDB) parses SET DEFAULT and then refuses it. */
+export function foreignKeyActions(engine) {
+  if (engine === "sqlserver")
+    return ["NO ACTION", "CASCADE", "SET NULL", "SET DEFAULT"];
+  if (engine === "mysql")
+    return ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL"];
+  return ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"];
 }

@@ -964,10 +964,11 @@ definition.
   100 twelve-column tables and 99 edges through elk and checks every node
   comes back placed.
 
-**Still open in this phase** (recorded rather than hidden): indexes, primary
-keys and foreign keys in the designer; routines, triggers and other objects
-in the explorer; Show CREATE and the SELECT/INSERT/UPDATE/DELETE templates;
-database and schema actions; PNG export of the diagram.
+**Status:** done on `review-phases-12-15` (`0036`): indexes, keys,
+multi-column foreign keys and checks in the designer; routines, triggers,
+sequences and types in the explorer; Show CREATE and templates; database
+and schema actions; PNG export; drops confirmed by name; read-only enforced
+in Rust.
 
 ---
 
@@ -1029,6 +1030,11 @@ sleeping session.
   MySQL and PostgreSQL, and SQL Server server-side backup works.
 - No credential appears in a process list, log, temp file left behind,
   or error message (tested).
+
+---
+
+**Status:** done on `review-phases-12-15` (`0036`) except the optional
+metrics board. Still open: a million-row import test for flat memory.
 
 ---
 
@@ -1313,7 +1319,14 @@ Update this section as work progresses.
   - [x] Bound parameters on all three engines, with a values form (`0030`, `0031`)
   - [x] Autocomplete, Format/Minify, EXPLAIN plans, multiple row sets, streaming with partial results on cancel (`0031`)
   - [x] Split panes, snippet keywords, open/run SQL files, editor settings and Vim, charts (`0031`)
-- [ ] Phase 14 — Schema and object management (branch `phase-14-schema-management`) — DDL generation per engine (CREATE TABLE, ALTER TABLE for columns, indexes and keys, rename, drop, truncate), quoted per engine and tested with awkward identifiers. Staged changes become one ordered script; preview and apply come from the same call, and the preview carries the engine's own failure behaviour. Every generated statement is applied to MySQL, PostgreSQL and SQL Server and read back through describe. The Create Table wizard, the review dialog and the structure designer (stage column and index changes, review the SQL, apply) are done; the destructive table actions and their confirm-by-name are next.
-- [ ] Phase 15 — Import, export, backup and administration
+- [x] Phase 14 — Schema and object management (finished on `review-phases-12-15`, `0036`)
+  - [x] Designer: columns, indexes, primary key, multi-column foreign keys, checks, MySQL reorder; Create Table wizard; table actions
+  - [x] Routines, triggers, sequences and types in the explorer; Show CREATE; templates; database and schema actions; diagram PNG export
+  - [x] Every drop confirmed by name; read-only enforced in Rust
+- [x] Phase 15 — Import, export, backup and administration (branch `review-phases-12-15`, `0036`)
+  - [x] Server activity and kill, server facts, storage overview
+  - [x] CSV/TSV/JSON import with mapping, progress, cancel and bad-row line numbers; Run SQL Dump
+  - [x] Native backup and restore (pg_dump/pg_restore, mysqldump/mysql, SQL Server BACKUP/RESTORE); users and permissions
+  - [ ] Metrics board (optional); a million-row import test
 
 **Final principle:** Build the smallest genuinely reliable database client first. A polished connection flow, accurate query results, safe credential handling, and dependable remote access are more valuable than many incomplete features.

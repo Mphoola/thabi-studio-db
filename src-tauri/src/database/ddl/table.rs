@@ -1,9 +1,10 @@
 //! `CREATE TABLE`, and the actions that remove or rename one, per engine.
 
 use super::super::{Engine, quote};
-/// A column as the designer describes it.
+/// A column as the designer describes it. Fields the webview leaves out take
+/// their defaults: the wizard has no comment field, and that is not an error.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ColumnSpec {
     pub name: String,
     /// The engine's own type name, as the structure view reported it.
@@ -47,7 +48,7 @@ impl ColumnSpec {
 
 /// A foreign key to add with the table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ForeignKey {
     pub name: String,
     pub columns: Vec<String>,
@@ -60,7 +61,7 @@ pub struct ForeignKey {
 
 /// A table as the Create Table wizard describes it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct TableSpec {
     pub columns: Vec<ColumnSpec>,
     /// Constraint names, when the engine wants one and the user gave it.
@@ -73,7 +74,7 @@ pub struct TableSpec {
 ///
 /// The engines disagree about almost everything here: MySQL puts indexes and
 /// comments inside the statement and takes no schema, SQL Server will not
-/// create a table without a schema, and only PostgreSQL adds `IF NOT EXISTS`
+/// create a table without a schema, and none adds `IF NOT EXISTS`
 /// and a constraint block in one statement. Those differences are the point of
 /// this function rather than something to paper over.
 pub fn create_table(
@@ -104,27 +105,23 @@ pub fn create_table(
             join_idents(engine, key.iter().map(|c| c.name.as_str()))
         ));
     }
-    let uniques: Vec<&ColumnSpec> = spec
+    // One constraint per unique column: two columns marked unique are two
+    // rules, not one rule about the pair.
+    for column in spec
         .columns
         .iter()
         .filter(|column| column.unique && !column.primary_key)
-        .collect();
-    if !uniques.is_empty() {
-        body.push(format!(
-            "  UNIQUE ({})",
-            join_idents(engine, uniques.iter().map(|c| c.name.as_str()))
-        ));
+    {
+        body.push(format!("  UNIQUE ({})", quote::ident(engine, &column.name)));
     }
     for (index, key) in spec.foreign_keys.iter().enumerate() {
         body.push(foreign_key_clause(engine, key, index));
     }
 
-    let exists = match engine {
-        // MySQL's CREATE TABLE IF NOT EXISTS is silent about a different shape,
-        // so it is left off and the wizard says the name does not exist.
-        Engine::Postgres => "IF NOT EXISTS ",
-        _ => "",
-    };
+    // No IF NOT EXISTS on any engine: it turns "that name is taken" into a
+    // silent success, and the wizard would then say it created a table it
+    // did not.
+    let exists = "";
     let engine_note = match engine {
         Engine::MySql => " ENGINE=InnoDB".to_owned(),
         _ => String::new(),
@@ -300,7 +297,7 @@ mod tests {
     fn creates_a_table_for_each_engine() {
         assert_eq!(
             create_table(Engine::Postgres, "shop", "public", "orders", &spec()).unwrap(),
-            "CREATE TABLE IF NOT EXISTS \"public\".\"orders\" (\n  \
+            "CREATE TABLE \"public\".\"orders\" (\n  \
              \"id\" INTEGER NOT NULL,\n  \
              \"note\" TEXT NULL,\n  \
              \"status\" VARCHAR(20) NOT NULL DEFAULT 'new',\n  \

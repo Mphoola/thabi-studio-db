@@ -99,22 +99,24 @@ export function buildSvg(placed, tables) {
 }
 
 /** A file name from a tab title, with anything a filesystem would object to removed. */
-export function fileNameFor(title) {
-  return `${String(title ?? "diagram").replace(/[^\w.-]+/g, "-")}.svg`;
+export function fileNameFor(title, extension = "svg") {
+  return `${String(title ?? "diagram").replace(/[^\w.-]+/g, "-")}.${extension}`;
 }
 
 /**
- * Hands an SVG to the user as a file.
- *
- * The object URL is revoked immediately: on some platforms a download that has
- * not started yet can be cancelled by a revoked URL, and the leak is otherwise
- * a blob per export for the life of the window.
+ * A PNG of the SVG at `scale` times its size, as base64, by drawing it on a
+ * canvas. White underneath, because a PNG viewer's default background is
+ * often dark and the diagram's lines are drawn for a light one.
  */
-export function downloadSvg(svg, filename) {
-  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+export async function svgToPng(svg, width, height, scale = 2) {
+  const image = new Image();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(width * scale);
+  canvas.height = Math.ceil(height * scale);
+  const context = canvas.getContext("2d");
+  context.scale(scale, scale);
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/png").split(",")[1];
 }

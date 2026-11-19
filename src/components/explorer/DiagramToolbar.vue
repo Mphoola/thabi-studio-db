@@ -5,7 +5,14 @@
  * Its own component so DiagramView can be about the data and the drawing
  * rather than about button order.
  */
-import { Download, Minus, Network, Plus, RefreshCw } from "lucide-vue-next";
+import {
+  Download,
+  ImageDown,
+  Minus,
+  Network,
+  Plus,
+  RefreshCw,
+} from "lucide-vue-next";
 import BaseButton from "../common/BaseButton.vue";
 import IconButton from "../common/IconButton.vue";
 
@@ -54,7 +61,13 @@ const emit = defineEmits(["zoom-out", "zoom-in", "fit", "export", "reload"]);
         :icon="Download"
         label="Export SVG"
         :disabled="!canExport"
-        @click="emit('export')"
+        @click="emit('export', 'svg')"
+      />
+      <IconButton
+        :icon="ImageDown"
+        label="Export PNG"
+        :disabled="!canExport"
+        @click="emit('export', 'png')"
       />
       <IconButton
         :icon="RefreshCw"

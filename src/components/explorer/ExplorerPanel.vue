@@ -5,6 +5,7 @@ import { useConnectionProfiles } from "../../composables/useConnectionProfiles.j
 import { useExplorer } from "../../composables/useExplorer.js";
 import { useExplorerActions } from "./useExplorerActions.js";
 import SqlExportDialog from "./SqlExportDialog.vue";
+import ExplorerDialogs from "./ExplorerDialogs.vue";
 import { listObjects } from "../../lib/tauri/commands.js";
 import { useHostKeyTrust } from "../../composables/useHostKeyTrust.js";
 import { useToasts } from "../../composables/useToasts.js";
@@ -26,13 +27,15 @@ const creatingTable = ref(false);
 const newTableTarget = computed(() => {
   const profileId = explorer.profile.value?.id;
   const profile = connections.profiles.value.find((p) => p.id === profileId);
-  if (!profile) return null;
-  const selected = explorer.rows.value
-    .flatMap((row) => row.children ?? [])
-    .find((child) => child.node.key === explorer.selectedKey.value)?.node;
+  // A read-only connection takes no changes, structure included.
+  if (!profile || profile.safeMode === "read-only") return null;
+  // The rows are the visible tree, flat: one per node.
+  const selected = explorer.rows.value.find(
+    (row) => row.node.key === explorer.selectedKey.value,
+  )?.node;
   if (!selected) return null;
-  // A table or view is not a home for a new one; its parent is.
-  if (selected.kind === "table" || selected.kind === "view") return null;
+  // An object is not a home for a new table; a database, schema or group is.
+  if (selected.type === "object") return null;
   return {
     profileId,
     database: selected.database ?? profile.databaseName ?? "",
@@ -151,7 +154,9 @@ async function connect() {
             :title="
               newTableTarget
                 ? `Create a table in ${newTableTarget.schema || newTableTarget.database}`
-                : 'Select a database or schema first'
+                : profile?.safeMode === 'read-only'
+                  ? 'This connection is read-only'
+                  : 'Select a database or schema first'
             "
             @click="creatingTable = true"
           />
@@ -205,6 +210,7 @@ async function connect() {
       </div>
       <ExplorerTree v-else class="min-h-0 flex-1" />
 
+      <ExplorerDialogs @changed="explorer.refresh()" />
       <SqlExportDialog
         v-if="exportActions.target.value"
         v-model:open="exportActions.open.value"
