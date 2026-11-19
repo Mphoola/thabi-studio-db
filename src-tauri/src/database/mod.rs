@@ -469,7 +469,12 @@ impl Session {
         } else {
             schema
         };
-        let rows = dispatch!(self, s => s.query_text(&sql, &[owner, name]).await)?;
+        let params: &[&str] = if engine == Engine::MySql {
+            &[owner, owner, name, owner]
+        } else {
+            &[owner, name]
+        };
+        let rows = dispatch!(self, s => s.query_text(&sql, params).await)?;
         Ok(metadata::referencing_rows(rows))
     }
 

@@ -308,6 +308,63 @@ async fn the_row_limit_is_reported() {
     tab.close().await;
 }
 
+/// A table page comes back whole. Table pages are sized by the connection's
+/// row limit (1,000 by default), and a page cut to the first 200 rows left
+/// the rest of it loading in the grid for ever.
+#[tokio::test]
+#[ignore]
+async fn a_table_page_returns_every_row() {
+    for (engine, sql) in [
+        (
+            Engine::Postgres,
+            "SELECT i FROM generate_series(1, 1000) AS i",
+        ),
+        (
+            Engine::MySql,
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000) SELECT i FROM n",
+        ),
+        (
+            Engine::SqlServer,
+            "SELECT TOP 1000 ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS i FROM sys.all_objects a CROSS JOIN sys.all_objects b",
+        ),
+    ] {
+        let tab = QueryTab::default();
+        let page = tab
+            .read_page(&params(engine), None, sql, 1000)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?}: {}", e.message));
+        assert_eq!(page.rows.len(), 1000, "{engine:?}");
+        tab.close().await;
+    }
+}
+
+/// Structure changes succeed without changing rows. They used to run through
+/// the row-edit path, which wants exactly one row per statement, so every
+/// change that worked was reported as an error.
+#[tokio::test]
+#[ignore]
+async fn structure_changes_report_success() {
+    for engine in [Engine::Postgres, Engine::MySql, Engine::SqlServer] {
+        let tab = QueryTab::default();
+        let p = params(engine);
+        let _ = tab
+            .apply_ddl(&p, None, &["DROP TABLE thabi_ddl_ok".to_owned()])
+            .await;
+        let statements = [
+            "CREATE TABLE thabi_ddl_ok (id int)".to_owned(),
+            "ALTER TABLE thabi_ddl_ok ADD note varchar(20)".to_owned(),
+            "INSERT INTO thabi_ddl_ok (id) VALUES (1), (2)".to_owned(),
+            "DROP TABLE thabi_ddl_ok".to_owned(),
+        ];
+        let ran = tab
+            .apply_ddl(&p, None, &statements)
+            .await
+            .unwrap_or_else(|e| panic!("{engine:?}: {}", e.message));
+        assert_eq!(ran, 4, "{engine:?}");
+        tab.close().await;
+    }
+}
+
 /// Staged row edits run in one transaction; a change that finds no row
 /// rolls back everything before it.
 async fn applies_row_edits(engine: Engine, database: &str, schema: &str) {

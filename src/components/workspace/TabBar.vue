@@ -1,12 +1,33 @@
 <script setup>
+import { ref } from "vue";
 import { Plus, X } from "lucide-vue-next";
 import { runCommand } from "../../composables/useCommands.js";
 import { useTabs } from "../../composables/useTabs.js";
 import { tabIcon, tabTitle } from "../../lib/tabPresentation.js";
+import DropdownMenu from "../common/DropdownMenu.vue";
 import IconButton from "../common/IconButton.vue";
 import SpinnerIcon from "../common/SpinnerIcon.vue";
 
-const { tabs, activeId, close, isDirty } = useTabs();
+const { tabs, activeId, close, closeAll, isDirty } = useTabs();
+
+// Right-click on a tab: close it, the others, or all of them.
+const menu = ref(null);
+const menuTab = ref(null);
+const menuItems = [
+  { id: "close", label: "Close Tab", shortcut: "Mod+W" },
+  { id: "others", label: "Close Other Tabs" },
+  { id: "all", label: "Close All Tabs", shortcut: "Mod+Alt+W" },
+];
+function openMenu(event, tab) {
+  event.preventDefault();
+  menuTab.value = tab.id;
+  menu.value?.openAt(event.clientX, event.clientY);
+}
+function onMenu(id) {
+  if (id === "close") close(menuTab.value);
+  else if (id === "others") closeAll(menuTab.value);
+  else closeAll();
+}
 
 function onKeydown(event, index) {
   const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
@@ -42,6 +63,7 @@ function onKeydown(event, index) {
         "
         @click="activeId = tab.id"
         @auxclick.middle="close(tab.id)"
+        @contextmenu="openMenu($event, tab)"
         @keydown="onKeydown($event, index)"
       >
         <SpinnerIcon v-if="tab.running" :size="11" label="Running" />
@@ -77,6 +99,12 @@ function onKeydown(event, index) {
       label="New Query Tab"
       shortcut="Mod+T"
       @click="runCommand('tabs.newQuery')"
+    />
+    <DropdownMenu
+      ref="menu"
+      :items="menuItems"
+      label="Tab actions"
+      @select="onMenu"
     />
   </div>
 </template>

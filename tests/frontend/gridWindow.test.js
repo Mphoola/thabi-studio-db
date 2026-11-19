@@ -177,3 +177,18 @@ describe("the grid holds a window of a large table", () => {
     expect(calls[0]).toMatchObject({ offset: 1_000, limit: 1_000 });
   });
 });
+
+describe("a short page", () => {
+  it("ends the window where its rows end, so nothing waits for rows that won't come", async () => {
+    const { source } = makeSource({ total: 1_100_000, pageSize: 1_000 });
+    // The first page arrived with only 200 of its 1,000 rows.
+    source.value = {
+      ...source.value,
+      firstRows: source.value.firstRows.slice(0, 200),
+    };
+    const data = useGridData(source);
+    await nextTick();
+    expect(data.loaded.value).toBe(200);
+    expect(data.hasMore.value).toBe(false);
+  });
+});

@@ -228,6 +228,20 @@ export function useTabs() {
     return true;
   }
 
+  /**
+   * Closes every tab, or every tab but `keepId`. Each still asks before
+   * losing unsaved work or stopping a query; saying no stops there, so the
+   * rest stay open.
+   */
+  async function closeAll(keepId = null) {
+    for (const tab of [...tabs.value]) {
+      if (tab.id === keepId) continue;
+      if (!(await close(tab.id))) return false;
+    }
+    if (keepId) activeId.value = keepId;
+    return true;
+  }
+
   /** Both split panes are visible when the active tab is one of them. */
   const splitPanes = computed(() =>
     split.value?.includes(activeId.value) ? split.value : null,
@@ -274,6 +288,7 @@ export function useTabs() {
     openDiagram,
     openServer,
     close,
+    closeAll,
     isDirty,
   };
 }

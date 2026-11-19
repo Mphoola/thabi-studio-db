@@ -323,7 +323,7 @@ pub async fn open_object_data(
         0,
         limit + 1,
     );
-    let result = tab.run(&params, Some(database), &sql, limit, None).await;
+    let result = tab.read_page(&params, Some(database), &sql, limit).await;
     let result = match result {
         Ok(result) => result,
         Err(error) => {
@@ -384,7 +384,7 @@ pub async fn fetch_table_page(
         limit,
     );
     let result = tab
-        .run(&params, Some(database), &sql, limit, None)
+        .read_page(&params, Some(database), &sql, limit)
         .await
         .map_err(|error| {
             if is_connection_failure(&error) {
@@ -1454,7 +1454,7 @@ pub async fn apply_table_ddl(
         &plan,
         &current,
     );
-    tab.apply(&params, Some(target.database.clone()), &script)
+    tab.apply_ddl(&params, Some(target.database.clone()), &script)
         .await
 }
 
@@ -1532,7 +1532,7 @@ pub async fn apply_table_action(
     let (tab, params) = state.connections.query_tab(&id, &tab_id).await?;
     refuse_read_only(&params)?;
     let script = action_script_for(&tab, &params, params.engine, &target, &action).await?;
-    tab.apply(&params, Some(target.database.clone()), &script)
+    tab.apply_ddl(&params, Some(target.database.clone()), &script)
         .await
 }
 

@@ -171,6 +171,21 @@ export function useAppCommands() {
       run: () => workspace.close(),
     },
     {
+      id: "tabs.closeOthers",
+      title: "Close Other Tabs",
+      group: "Query",
+      enabled: () => workspace.tabs.value.length > 1,
+      run: () => workspace.closeAll(workspace.activeId.value),
+    },
+    {
+      id: "tabs.closeAll",
+      title: "Close All Tabs",
+      group: "Query",
+      shortcut: "Mod+Alt+W",
+      enabled: () => workspace.tabs.value.length > 0,
+      run: () => workspace.closeAll(),
+    },
+    {
       id: "grid.rowDetail",
       title: "Show Row Detail",
       group: "Query",

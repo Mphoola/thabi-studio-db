@@ -96,8 +96,8 @@ describe("the exported file", () => {
 
   it("has every line and every box", () => {
     const svg = buildSvg(placed, tables);
-    expect(svg).toContain("<line");
-    expect(svg.match(/<rect/g).length).toBeGreaterThanOrEqual(3);
+    expect(svg).toContain("<path");
+    expect(svg.match(/<rect/g).length).toBeGreaterThanOrEqual(2);
     expect(svg).toContain("users");
   });
 
@@ -106,6 +106,18 @@ describe("the exported file", () => {
     // The weight is what makes a key readable at a glance.
     expect(svg).toMatch(/font-weight="700"[^>]*>id</);
     expect(svg).toContain(">email</text>");
+  });
+
+  it("uses real colours when given them, since a file can't see the app's CSS", () => {
+    const svg = buildSvg(placed, tables, { surface: "#ffffff", fg: "#111111" });
+    expect(svg).toContain('fill="#ffffff"');
+    expect(svg).toContain('fill="#111111"');
+  });
+
+  it("badges a foreign key column", () => {
+    const svg = buildSvg(placed, tables, {}, new Set(["users:email"]));
+    expect(svg).toContain(">FK</text>");
+    expect(svg).toContain(">PK</text>");
   });
 
   it("survives an empty diagram rather than writing a broken file", () => {

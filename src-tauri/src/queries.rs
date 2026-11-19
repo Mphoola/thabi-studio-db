@@ -67,6 +67,11 @@ const CANCEL_GRACE: Duration = Duration::from_secs(5);
 /// Results kept per tab for paging, copying and export. Older ones are
 /// dropped so memory stays bounded.
 const KEPT_RESULTS: usize = 8;
+/// A tab's session idle longer than this is pinged before it is used: servers
+/// close idle connections (MySQL's `wait_timeout`, a laptop that slept), and
+/// the connection's own session is pinged separately, so the header can say
+/// "connected" while a tab's session is already gone.
+const STALE_AFTER: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub struct QueryTab {
@@ -84,6 +89,8 @@ pub struct QueryTab {
     /// While a SQL file runs: statements done, and how many there are.
     script: StdMutex<Option<(usize, usize)>>,
     next_result: std::sync::atomic::AtomicU64,
+    /// When the tab's session last did anything.
+    last_used: StdMutex<Option<std::time::Instant>>,
 }
 
 fn query_running() -> AppError {
@@ -283,6 +290,23 @@ impl QueryTab {
             .await
     }
 
+    /// Reads one page of a table and returns every row of it.
+    ///
+    /// `run` keeps a result for paging and sends only its first rows; a table
+    /// page is already the chunk the grid asked for (up to the connection's
+    /// row limit), so cutting it to the first rows would leave the rest of
+    /// the page loading for ever.
+    pub async fn read_page(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        sql: &str,
+        max_rows: usize,
+    ) -> Result<QueryResult, AppError> {
+        self.statement(params, database, sql, None, max_rows, None, false)
+            .await
+    }
+
     /// Runs one statement, binding `bound` values to its placeholders when
     /// given (the driver binds them; they never become part of the SQL).
     pub async fn run_with(
@@ -294,6 +318,24 @@ impl QueryTab {
         max_rows: usize,
         timeout: Option<Duration>,
     ) -> Result<QueryResult, AppError> {
+        self.statement(params, database, sql, bound, max_rows, timeout, true)
+            .await
+    }
+
+    /// Runs one statement; `keep` stores the result for paging and returns
+    /// its first rows, otherwise every row comes back.
+    #[allow(clippy::too_many_arguments)]
+    async fn statement(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        sql: &str,
+        bound: Option<&[crate::database::values::Param]>,
+        max_rows: usize,
+        timeout: Option<Duration>,
+        keep: bool,
+    ) -> Result<QueryResult, AppError> {
+        let finish = |result: QueryResult| if keep { self.keep(result) } else { result };
         let mut guard = self.session.try_lock().map_err(|_| query_running())?;
         self.open_session(&mut guard, params, database).await?;
 
@@ -364,7 +406,7 @@ impl QueryTab {
             Ok((result, Stop::Timeout)) => match result {
                 Err(_) => Err(with_partial(timed_out(seconds, false), partial())),
                 // It finished just as the limit was reached.
-                Ok(result) => Ok(self.keep(result)),
+                Ok(result) => Ok(finish(result)),
             },
             Ok((result, Stop::None)) => match result {
                 Err(_) if self.cancel_requested.load(Ordering::SeqCst) => {
@@ -376,7 +418,7 @@ impl QueryTab {
                     if let Some(database) = use_target(sql) {
                         *self.database.lock().expect("tab lock") = Some(database);
                     }
-                    Ok(self.keep(result))
+                    Ok(finish(result))
                 }
                 other => other,
             },
@@ -394,6 +436,22 @@ impl QueryTab {
             .filter(|d| !d.is_empty())
             .or_else(|| params.database.clone());
         let same_database = *self.database.lock().expect("tab lock") == wanted;
+        let idle = self
+            .last_used
+            .lock()
+            .expect("tab lock")
+            .replace(std::time::Instant::now())
+            .is_some_and(|at| at.elapsed() > STALE_AFTER);
+        // A session the server already closed is replaced before anything
+        // is sent on it. Nothing ran on it, so nothing is retried; what it
+        // held (temporary tables, a transaction) went when the server closed
+        // it.
+        if idle
+            && let Some(session) = guard.as_mut()
+            && session.ping().await.is_err()
+        {
+            *guard = None;
+        }
         if guard.is_none() || !same_database {
             if let Some(old) = guard.take() {
                 let _ = old.close().await;
@@ -431,6 +489,32 @@ impl QueryTab {
         database: Option<String>,
         statements: &[String],
     ) -> Result<usize, AppError> {
+        self.apply_statements(params, database, statements, true)
+            .await
+    }
+
+    /// Runs a structure change or table action in one transaction where the
+    /// engine allows it (PostgreSQL, SQL Server; MySQL commits each DDL
+    /// statement itself). Unlike row edits, the rows a statement reports are
+    /// not checked: DDL changes none, and copying or emptying a table changes
+    /// many. Stops at the first error. Never retried.
+    pub async fn apply_ddl(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        statements: &[String],
+    ) -> Result<usize, AppError> {
+        self.apply_statements(params, database, statements, false)
+            .await
+    }
+
+    async fn apply_statements(
+        &self,
+        params: &ConnectParams,
+        database: Option<String>,
+        statements: &[String],
+        one_row_each: bool,
+    ) -> Result<usize, AppError> {
         let mut guard = self.session.try_lock().map_err(|_| query_running())?;
         self.open_session(&mut guard, params, database).await?;
         let engine = params.engine;
@@ -449,6 +533,7 @@ impl QueryTab {
             session.execute(begin, 1).await.map_err(|e| (false, e))?;
             for (index, sql) in statements.iter().enumerate() {
                 let count = match engine {
+                    _ if !one_row_each => session.execute(sql, 1).await.map(|r| r.rows_affected),
                     // Simple queries on SQL Server don't report rows affected.
                     Engine::SqlServer => session
                         .execute(&format!("{sql};\nSELECT @@ROWCOUNT"), 1)
@@ -460,6 +545,7 @@ impl QueryTab {
                     _ => session.execute(sql, 1).await.map(|r| r.rows_affected),
                 };
                 match count {
+                    Ok(_) if !one_row_each => {}
                     Ok(Some(1)) => {}
                     Ok(count) => {
                         return Err((true, not_one_row(index, statements.len(), count)));

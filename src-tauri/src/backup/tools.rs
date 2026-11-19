@@ -43,6 +43,11 @@ fn search_dirs() -> Vec<PathBuf> {
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         "/usr/local/mysql/bin".into(),
+        // Local stacks ship client tools that match their own server, which
+        // matters for an old one such as MAMP's MySQL 5.7.
+        "/Applications/MAMP/Library/bin".into(),
+        "/Applications/MAMP PRO/Library/bin".into(),
+        "/Applications/XAMPP/xamppfiles/bin".into(),
     ]);
     #[cfg(target_os = "linux")]
     dirs.extend(["/usr/bin".into(), "/usr/local/bin".into()]);
@@ -77,6 +82,9 @@ pub fn find(name: &str) -> Option<PathBuf> {
 /// (PostgreSQL) 18.0", "mysqldump  Ver 9.3.0 for macos", "PostgreSQL 16.4",
 /// "MySQL 8.4.2". The first number with a dot after it.
 pub fn parse_version(text: &str) -> Option<(u32, u32)> {
+    // MySQL 5.x clients say "Ver 14.14 Distrib 5.7.39": the protocol version
+    // first, the real one after "Distrib".
+    let text = text.split_once("Distrib ").map_or(text, |(_, rest)| rest);
     text.split(|c: char| !(c.is_ascii_digit() || c == '.'))
         .filter(|word| word.contains('.'))
         .find_map(|word| {
@@ -347,6 +355,11 @@ pub fn restore(
         }
         _ => {
             let mut args = mysql_target(params, option_file);
+            // A restore drops and re-creates tables in the file's order, which
+            // foreign keys between them don't allow ("Cannot delete or update
+            // a parent row"); mysqldump's own files turn the check off at the
+            // top, other tools' don't. For this session only.
+            args.push("--init-command=SET FOREIGN_KEY_CHECKS=0".into());
             args.push(database.into());
             (Invocation { args, env: vec![] }, true)
         }
@@ -432,6 +445,10 @@ mod tests {
         );
         assert_eq!(parse_version("PostgreSQL 16.4 on aarch64"), Some((16, 4)));
         assert_eq!(parse_version("MySQL 5.7.33-log"), Some((5, 7)));
+        assert_eq!(
+            parse_version("mysql  Ver 14.14 Distrib 5.7.39, for osx11.0 (x86_64)"),
+            Some((5, 7))
+        );
         assert_eq!(parse_version("no version"), None);
     }
 

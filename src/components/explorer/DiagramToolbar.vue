@@ -23,8 +23,17 @@ defineProps({
   zoomPercent: { type: Number, required: true },
   loading: { type: Boolean, default: false },
   canExport: { type: Boolean, default: false },
+  /** Some tables were dragged, so the layout can be put back. */
+  moved: { type: Boolean, default: false },
 });
-const emit = defineEmits(["zoom-out", "zoom-in", "fit", "export", "reload"]);
+const emit = defineEmits([
+  "zoom-out",
+  "zoom-in",
+  "fit",
+  "export",
+  "reload",
+  "reset-layout",
+]);
 </script>
 
 <template>
@@ -52,6 +61,13 @@ const emit = defineEmits(["zoom-out", "zoom-in", "fit", "export", "reload"]);
         {{ zoomPercent }}%
       </span>
       <IconButton :icon="Minus" label="Zoom out" @click="emit('zoom-out')" />
+      <BaseButton
+        v-if="moved"
+        size="sm"
+        variant="ghost"
+        @click="emit('reset-layout')"
+        >Reset Layout</BaseButton
+      >
       <BaseButton size="sm" variant="ghost" @click="emit('fit')"
         >Fit</BaseButton
       >

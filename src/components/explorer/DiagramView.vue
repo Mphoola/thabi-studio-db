@@ -12,11 +12,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useDiagramZoom } from "../../composables/useDiagramZoom.js";
 import { useDiagramData } from "../../composables/useDiagramData.js";
-import { useToasts } from "../../composables/useToasts.js";
-import { toUserDetail } from "../../lib/errors.js";
-import { saveImage } from "../../lib/tauri/commands.js";
-import { pickImageDestination } from "../../lib/tauri/files.js";
-import { buildSvg, svgToPng, fileNameFor, rowsFor } from "../../lib/erSvg.js";
+import { useDiagramDrag } from "../../composables/useDiagramDrag.js";
+import { useDiagramExport } from "../../composables/useDiagramExport.js";
+import { rowsFor } from "../../lib/erSvg.js";
+import { ROW_LIMIT } from "../../lib/erLayout.js";
 import DiagramCanvas from "./DiagramCanvas.vue";
 import DiagramSearch from "./DiagramSearch.vue";
 import DiagramStates from "./DiagramStates.vue";
@@ -34,7 +33,7 @@ const props = defineProps({
 const emit = defineEmits(["open-table"]);
 
 /** Columns shown per table, so a 400-column table is still a box. */
-const MAX_ROWS = 14;
+const MAX_ROWS = ROW_LIMIT;
 
 const hovered = ref(null);
 const selected = ref(null);
@@ -43,21 +42,37 @@ const expanded = ref(new Set());
 /** The list is collapsible: the drawing is the point, not the list. */
 const listing = ref(true);
 
-const toasts = useToasts();
 const view = useDiagramZoom();
+const late = {};
 const { host, zoom, offset, panning, extent } = view;
 const {
   loading,
   failed,
   tables,
   foreignKeys,
+  keyed,
   nodes,
   lines,
   laidOut,
+  caption,
   emptyReason,
   load,
   rearrange,
-} = useDiagramData({ tab: props.tab, profileId: () => props.profileId, view });
+} = useDiagramData({
+  tab: props.tab,
+  profileId: () => props.profileId,
+  view,
+  limitFor: (name) => (expanded.value.has(name) ? Infinity : MAX_ROWS),
+  // The drag is set up from this data, so it's reached late.
+  afterLayout: () => late.drag?.reapply(),
+});
+const drag = (late.drag = useDiagramDrag({
+  tab: props.tab,
+  nodes,
+  lines,
+  zoom,
+  view,
+}));
 
 /** Columns by table, so the list can search column names as well as tables. */
 const columnsByTable = computed(() =>
@@ -84,18 +99,18 @@ const trimmed = computed(() =>
   })),
 );
 
-/** Puts a table in the middle of the window, big enough to read. */
+/** Picks a table from the list: selects it and brings it into view. */
 function focusTable(name) {
   const node = nodes.value[name];
-  const box = host.value?.getBoundingClientRect();
-  if (!node || !box) return;
+  if (!node) return;
   selected.value = name;
-  // Focusing something small and leaving it small is not focusing it.
-  zoom.value = Math.min(1, Math.max(0.4, zoom.value));
-  offset.value = {
-    x: box.width / 2 - (node.x + node.width / 2) * zoom.value,
-    y: box.height / 2 - (node.y + node.height / 2) * zoom.value,
-  };
+  view.centreOn({ x: node.x + node.width / 2, y: node.y + node.height / 2 });
+}
+
+/** Clicking a table in the drawing selects it, or clears it, in place. */
+function toggleSelect(name) {
+  if (drag.tookClick()) return;
+  selected.value = selected.value === name ? null : name;
 }
 
 /**
@@ -110,36 +125,14 @@ function toggleExpand(name) {
   rearrange();
 }
 
-/** Saves the drawing as SVG or PNG, through a save dialog. */
-async function exportAs(format) {
-  if (!extent.value.width) return;
-  const svg = buildSvg(
-    { ...extent.value, nodes: nodes.value, lines: lines.value },
-    trimmed.value,
-  );
-  try {
-    const path = await pickImageDestination(
-      fileNameFor(props.tab.title, format),
-      format,
-    );
-    if (!path) return;
-    const saved = await saveImage(
-      path,
-      format === "png"
-        ? {
-            pngBase64: await svgToPng(
-              svg,
-              extent.value.width,
-              extent.value.height,
-            ),
-          }
-        : { svg },
-    );
-    toasts.success("Diagram saved", saved);
-  } catch (error) {
-    toasts.error("Couldn't save the diagram", toUserDetail(error));
-  }
-}
+const exportAs = useDiagramExport({
+  title: () => props.tab.title,
+  extent,
+  nodes,
+  lines,
+  tables: trimmed,
+  keyed,
+});
 
 defineExpose({ reload: load });
 
@@ -157,11 +150,13 @@ onBeforeUnmount(view.panEnd);
       :zoom-percent="Math.round(zoom * 100)"
       :loading="loading"
       :can-export="Boolean(extent.width)"
+      :moved="drag.moved.value"
       @zoom-out="view.zoomBy(1 / 1.1)"
       @zoom-in="view.zoomBy(1.1)"
       @fit="view.fit"
       @export="exportAs"
       @reload="load"
+      @reset-layout="drag.reset() || rearrange()"
     />
 
     <div class="flex min-h-0 flex-1">
@@ -192,6 +187,8 @@ onBeforeUnmount(view.panEnd);
           :nodes="nodes"
           :lines="lines"
           :tables="trimmed"
+          :keyed="keyed"
+          :caption="caption"
           :expanded="expanded"
           :hovered="hovered"
           :selected="selected"
@@ -201,11 +198,12 @@ onBeforeUnmount(view.panEnd);
           :panning="panning"
           @open-table="emit('open-table', $event)"
           @hover="hovered = $event"
-          @select="focusTable"
+          @select="toggleSelect"
           @expand="toggleExpand"
+          @drag-start="drag.start"
           @pan-start="view.panStart"
-          @pan-move="view.panMove"
-          @pan-end="view.panEnd"
+          @pan-move="drag.move($event) || view.panMove($event)"
+          @pan-end="drag.end() || view.panEnd()"
           @zoom-wheel="view.wheel"
         />
         <button
@@ -219,7 +217,8 @@ onBeforeUnmount(view.panEnd);
           v-if="tables.length"
           class="pointer-events-none absolute right-3 bottom-2 text-xs text-fg-subtle"
         >
-          drag to pan · ⌘/Ctrl + scroll to zoom · click a table to focus
+          Drag or scroll to move · pinch or ⌘ + scroll to zoom · double-click a
+          table to open it
         </p>
       </div>
     </div>

@@ -165,3 +165,66 @@ async fn mysql_backs_up_and_restores() {
 async fn sqlserver_backs_up_and_restores_on_the_server() {
     round_trip(Engine::SqlServer).await;
 }
+
+/// A dump from a tool that doesn't turn foreign key checks off (phpMyAdmin,
+/// a hand-written file), restored over a database that already has the
+/// linked tables: dropping the parent first used to fail with "Cannot delete
+/// or update a parent row".
+#[tokio::test]
+#[ignore]
+async fn mysql_restores_linked_tables_over_existing_ones() {
+    let p = params(Engine::MySql, "thabi_it");
+    let mut session = Session::connect(&p).await.unwrap();
+    let _ = session
+        .execute("DROP TABLE IF EXISTS thabi_fk_child", 0)
+        .await;
+    let _ = session
+        .execute("DROP TABLE IF EXISTS thabi_fk_parent", 0)
+        .await;
+    run(
+        &mut session,
+        "CREATE TABLE thabi_fk_parent (id INT PRIMARY KEY)",
+    )
+    .await;
+    run(
+        &mut session,
+        "CREATE TABLE thabi_fk_child (id INT PRIMARY KEY, parent_id INT, \
+         FOREIGN KEY (parent_id) REFERENCES thabi_fk_parent (id))",
+    )
+    .await;
+    run(&mut session, "INSERT INTO thabi_fk_parent VALUES (1)").await;
+    run(&mut session, "INSERT INTO thabi_fk_child VALUES (1, 1)").await;
+    session.close().await.unwrap();
+
+    // Parent first, as a dump in alphabetical or creation order would be.
+    let path = std::env::temp_dir().join("thabi-fk-restore.sql");
+    std::fs::write(
+        &path,
+        "DROP TABLE IF EXISTS thabi_fk_parent;\n\
+         CREATE TABLE thabi_fk_parent (id INT PRIMARY KEY);\n\
+         INSERT INTO thabi_fk_parent VALUES (1), (2);\n\
+         DROP TABLE IF EXISTS thabi_fk_child;\n\
+         CREATE TABLE thabi_fk_child (id INT PRIMARY KEY, parent_id INT, \
+         FOREIGN KEY (parent_id) REFERENCES thabi_fk_parent (id));\n\
+         INSERT INTO thabi_fk_child VALUES (1, 2);\n",
+    )
+    .unwrap();
+    let job = Job::default();
+    restore(&p, "thabi_it", path.clone(), &job)
+        .await
+        .unwrap_or_else(|e| panic!("restore: {} {:?}\n{:?}", e.message, e.detail, job.log()));
+    let _ = std::fs::remove_file(&path);
+
+    let mut session = Session::connect(&p).await.unwrap();
+    let result = session
+        .execute("SELECT parent_id FROM thabi_fk_child", 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.rows[0][0],
+        thabi_studio_lib::database::Cell::Value("2".into())
+    );
+    run(&mut session, "DROP TABLE thabi_fk_child").await;
+    run(&mut session, "DROP TABLE thabi_fk_parent").await;
+    session.close().await.unwrap();
+}

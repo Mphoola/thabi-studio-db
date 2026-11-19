@@ -7,13 +7,14 @@
  * wrong about a gesture.
  */
 import { computed } from "vue";
-import { HEADER_HEIGHT, ROW_HEIGHT } from "../../lib/erLayout.js";
+import { roundedPath } from "../../lib/erLayout.js";
 import {
   lineIsDimmed,
   lineIsLit,
   tableIsDimmed,
 } from "../../lib/erHighlight.js";
 import { rowsFor } from "../../lib/erSvg.js";
+import DiagramTableBox from "./DiagramTableBox.vue";
 
 const props = defineProps({
   /** Positioned boxes, from erLayout. */
@@ -23,6 +24,10 @@ const props = defineProps({
   tables: { type: Array, default: () => [] },
   /** Tables whose full column list should be drawn, by name. */
   expanded: { type: Set, default: () => new Set() },
+  /** Where the grid of unrelated tables is labelled, or null. */
+  caption: { type: Object, default: null },
+  /** "table:column" of every foreign key column, for the FK badges. */
+  keyed: { type: Set, default: () => new Set() },
   /** Table being pointed at, and the one clicked. */
   hovered: { type: String, default: null },
   selected: { type: String, default: null },
@@ -33,6 +38,7 @@ const props = defineProps({
 });
 const emit = defineEmits([
   "open-table",
+  "drag-start",
   "pan-start",
   "pan-move",
   "pan-end",
@@ -67,141 +73,112 @@ function rowsOf(name) {
     @pointercancel="emit('pan-end')"
     @wheel="emit('zoom-wheel', $event)"
   >
-    <g :transform="transform">
-      <defs>
-        <!-- Without an arrowhead a line does not say which end points at
-             which table, which is the question every line is asked. -->
-        <marker
-          id="fk-arrow"
-          viewBox="0 0 8 8"
-          refX="7"
-          refY="4"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto-start-reverse"
-        >
-          <path d="M0,0 L8,4 L0,8 z" class="fill-line-strong" />
-        </marker>
-        <marker
-          id="fk-arrow-lit"
-          viewBox="0 0 8 8"
-          refX="7"
-          refY="4"
-          markerWidth="6"
-          markerHeight="6"
-          orient="auto-start-reverse"
-        >
-          <path d="M0,0 L8,4 L0,8 z" class="fill-accent" />
-        </marker>
-        <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-          <circle cx="1" cy="1" r="1" class="fill-line" />
-        </pattern>
-      </defs>
-
-      <!-- A dot grid, so panning reads as movement rather than as nothing. -->
-      <rect
-        x="-20000"
-        y="-20000"
-        width="40000"
-        height="40000"
-        fill="url(#grid)"
-      />
-
-      <line
-        v-for="line in lines"
-        :key="line.id"
-        :x1="line.from.x"
-        :y1="line.from.y"
-        :x2="line.to.x"
-        :y2="line.to.y"
-        :stroke-width="lineIsLit(line, focus) ? 2 : 1.25"
-        :marker-end="
-          lineIsLit(line, focus) ? 'url(#fk-arrow-lit)' : 'url(#fk-arrow)'
-        "
-        :class="
-          lineIsDimmed(line, focus)
-            ? 'stroke-line opacity-30'
-            : 'stroke-line-strong'
-        "
-      />
-      <g
-        v-for="node in Object.values(nodes)"
-        :key="node.id"
-        :transform="`translate(${node.x}, ${node.y})`"
-        class="cursor-pointer"
-        :class="tableIsDimmed(node.id, focus) ? 'opacity-35' : ''"
-        @pointerenter="emit('hover', node.id)"
-        @pointerleave="emit('hover', null)"
-        @click.stop="emit('select', node.id)"
+    <defs>
+      <!-- Crow's foot notation: many rows at the foreign key's end, exactly
+           one at the key it points to. -->
+      <marker
+        v-for="lit in [false, true]"
+        :id="lit ? 'fk-many-lit' : 'fk-many'"
+        :key="`many-${lit}`"
+        viewBox="-2 -8 18 16"
+        refX="0"
+        refY="0"
+        markerWidth="18"
+        markerHeight="16"
+        markerUnits="userSpaceOnUse"
+        orient="auto"
       >
-        <rect
-          :width="node.width"
-          :height="node.height"
-          rx="6"
-          :stroke-width="node.id === selected ? 2 : 1"
-          :class="
-            node.id === selected
-              ? 'fill-surface stroke-accent'
-              : 'fill-surface stroke-line'
-          "
+        <path
+          d="M0,-6 L11,0 L0,6 M0,0 L11,0 M14,-6 L14,6"
+          fill="none"
+          stroke-width="1.4"
+          :class="lit ? 'stroke-accent' : 'stroke-fg-subtle'"
         />
-        <rect
-          :width="node.width"
-          :height="HEADER_HEIGHT"
-          rx="6"
-          class="fill-surface-raised"
+      </marker>
+      <marker
+        v-for="lit in [false, true]"
+        :id="lit ? 'fk-one-lit' : 'fk-one'"
+        :key="`one-${lit}`"
+        viewBox="-16 -8 18 16"
+        refX="0"
+        refY="0"
+        markerWidth="18"
+        markerHeight="16"
+        markerUnits="userSpaceOnUse"
+        orient="auto"
+      >
+        <path
+          d="M-6,-6 L-6,6 M-11,-6 L-11,6"
+          fill="none"
+          stroke-width="1.4"
+          :class="lit ? 'stroke-accent' : 'stroke-fg-subtle'"
         />
-        <line
-          x1="0"
-          :y1="HEADER_HEIGHT"
-          :x2="node.width"
-          :y2="HEADER_HEIGHT"
-          class="stroke-line"
+      </marker>
+      <pattern
+        id="grid"
+        :width="24 * zoom"
+        :height="24 * zoom"
+        :x="offset.x"
+        :y="offset.y"
+        patternUnits="userSpaceOnUse"
+      >
+        <circle
+          :cx="zoom"
+          :cy="zoom"
+          :r="Math.max(0.6, zoom)"
+          class="fill-line"
         />
-        <text
-          x="10"
-          :y="HEADER_HEIGHT - 11"
-          class="fill-fg text-xs font-semibold"
-        >
-          {{ node.id }}
-        </text>
-        <g
-          v-for="(column, index) in rowsOf(node.id).columns"
-          :key="column.name"
-          class="cursor-pointer"
-          @click.stop="emit('open-table', node.id)"
-        >
-          <text
-            x="10"
-            :y="HEADER_HEIGHT + index * ROW_HEIGHT + 13"
-            class="text-[11px]"
-            :class="column.primaryKey ? 'fill-fg font-bold' : 'fill-fg-muted'"
-          >
-            {{ column.name }}
-          </text>
-          <text
-            :x="node.width - 10"
-            :y="HEADER_HEIGHT + index * ROW_HEIGHT + 13"
-            text-anchor="end"
-            class="fill-fg-subtle text-[10px]"
-          >
-            {{ column.dataType }}
-          </text>
-        </g>
-        <text
-          v-if="rowsOf(node.id).hidden"
-          x="10"
-          :y="node.height - 4"
-          class="fill-fg-subtle text-[10px] underline decoration-dotted"
-          @click.stop="emit('expand', node.id)"
-        >
-          {{
-            expanded.has(node.id)
-              ? "show fewer"
-              : `+${rowsOf(node.id).hidden} more`
-          }}
+      </pattern>
+    </defs>
+
+    <!-- A dot grid, so panning reads as movement rather than as nothing. -->
+    <rect width="100%" height="100%" fill="url(#grid)" />
+
+    <g :transform="transform">
+      <g v-if="caption" :transform="`translate(${caption.x}, ${caption.y})`">
+        <text class="fill-fg-muted text-[13px] font-semibold">
+          Tables without relationships
+          <tspan class="fill-fg-subtle font-normal">
+            · {{ caption.count }} with no foreign keys in or out
+          </tspan>
         </text>
       </g>
+      <path
+        v-for="line in lines"
+        :key="line.id"
+        :d="roundedPath(line.points ?? [line.from, line.to])"
+        fill="none"
+        stroke-linejoin="round"
+        :stroke-width="lineIsLit(line, focus) ? 2 : 1.4"
+        :marker-start="
+          lineIsLit(line, focus) ? 'url(#fk-many-lit)' : 'url(#fk-many)'
+        "
+        :marker-end="
+          lineIsLit(line, focus) ? 'url(#fk-one-lit)' : 'url(#fk-one)'
+        "
+        :class="
+          lineIsLit(line, focus)
+            ? 'stroke-accent'
+            : lineIsDimmed(line, focus)
+              ? 'stroke-line opacity-40'
+              : 'stroke-fg-subtle'
+        "
+      />
+      <DiagramTableBox
+        v-for="node in Object.values(nodes)"
+        :key="node.id"
+        :node="node"
+        :rows="rowsOf(node.id)"
+        :keyed="keyed"
+        :expanded="expanded.has(node.id)"
+        :selected="node.id === selected"
+        :dimmed="tableIsDimmed(node.id, focus)"
+        @hover="emit('hover', $event)"
+        @select="emit('select', $event)"
+        @drag-start="(id, event) => emit('drag-start', id, event)"
+        @open-table="emit('open-table', $event)"
+        @expand="emit('expand', $event)"
+      />
     </g>
   </svg>
 </template>

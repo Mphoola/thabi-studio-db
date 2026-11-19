@@ -287,24 +287,30 @@ impl DatabaseSession for MySqlSession {
                         CONVERT(c.COLUMN_DEFAULT USING utf8mb4),
                         CAST((SELECT k.ORDINAL_POSITION
                               FROM information_schema.KEY_COLUMN_USAGE k
-                              WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME
+                              WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ?
                                 AND k.COLUMN_NAME = c.COLUMN_NAME AND k.CONSTRAINT_NAME = 'PRIMARY')
                              AS CHAR),
                         NULL,
                         (SELECT CONVERT(CONCAT_WS(CHAR(31 USING utf8mb4), k.REFERENCED_TABLE_SCHEMA,
                                           k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME) USING utf8mb4)
                          FROM information_schema.KEY_COLUMN_USAGE k
-                         WHERE k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME
+                         WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ?
                            AND k.COLUMN_NAME = c.COLUMN_NAME AND k.REFERENCED_TABLE_NAME IS NOT NULL
                            AND (SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE k2
-                                WHERE k2.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
-                                  AND k2.TABLE_NAME = k.TABLE_NAME
+                                WHERE k2.TABLE_SCHEMA = ? AND k2.TABLE_NAME = ?
                                   AND k2.CONSTRAINT_NAME = k.CONSTRAINT_NAME) = 1
                          LIMIT 1)
                  FROM information_schema.COLUMNS c
                  WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
                  ORDER BY c.ORDINAL_POSITION",
-                &[database, name],
+                // Every information_schema lookup names the table with
+                // constants. MySQL 5.7 can only find a table's rows directly
+                // that way; matched against another column instead, it reads
+                // every table in every database, which is slow and leaves
+                // thousands of table files open.
+                &[
+                    database, name, database, name, database, name, database, name,
+                ],
             )
             .await?;
         let indexes = if kind == ObjectKind::Table {
@@ -352,7 +358,7 @@ impl DatabaseSession for MySqlSession {
             let mut rows = self
                 .query_text(
                     &metadata::constraints_sql(Engine::MySql, database),
-                    &[database, name],
+                    &[database, name, database, name],
                 )
                 .await?;
             // Older servers have no check constraints to read; a table there

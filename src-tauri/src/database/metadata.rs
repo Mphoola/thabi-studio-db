@@ -189,6 +189,7 @@ pub(crate) fn constraints_sql(engine: super::Engine, database: &str) -> String {
                ON k.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA AND k.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
               AND k.TABLE_NAME = rc.TABLE_NAME
              WHERE rc.CONSTRAINT_SCHEMA = ? AND rc.TABLE_NAME = ?
+               AND k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ?
              GROUP BY rc.CONSTRAINT_NAME, rc.DELETE_RULE, rc.UPDATE_RULE"
             .to_owned(),
         super::Engine::SqlServer => {
@@ -277,7 +278,10 @@ pub struct Referencing {
 }
 
 /// SQL listing single-column foreign keys that point at a table. Binds the
-/// schema (or MySQL database) and table name as $1/?/@P1 and $2/?/@P2.
+/// schema (or MySQL database) and table name as $1/?/@P1 and $2/?/@P2; MySQL
+/// binds the database, database, table, database,
+/// and only looks in the same database: MySQL 5.7 can only search
+/// information_schema quickly by a table's own database.
 pub(crate) fn referencing_sql(engine: super::Engine, database: &str) -> String {
     use super::{Engine, quote};
     match engine {
@@ -296,10 +300,10 @@ pub(crate) fn referencing_sql(engine: super::Engine, database: &str) -> String {
         Engine::MySql => "SELECT CONVERT(k.TABLE_SCHEMA USING utf8mb4), CONVERT(k.TABLE_NAME USING utf8mb4),
                     CONVERT(k.COLUMN_NAME USING utf8mb4), CONVERT(k.REFERENCED_COLUMN_NAME USING utf8mb4)
              FROM information_schema.KEY_COLUMN_USAGE k
-             WHERE k.REFERENCED_TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME = ?
+             WHERE k.TABLE_SCHEMA = ?
+               AND k.REFERENCED_TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME = ?
                AND (SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE k2
-                    WHERE k2.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
-                      AND k2.TABLE_NAME = k.TABLE_NAME
+                    WHERE k2.TABLE_SCHEMA = ? AND k2.TABLE_NAME = k.TABLE_NAME
                       AND k2.CONSTRAINT_NAME = k.CONSTRAINT_NAME) = 1
              ORDER BY 1, 2, 3"
             .to_owned(),

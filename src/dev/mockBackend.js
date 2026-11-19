@@ -437,6 +437,130 @@ handlers.list_processes = () => [
   },
 ];
 handlers.kill_process = () => null;
+// A small HR schema for reviewing the ER diagram.
+const col = (name, dataType, extra = {}) => ({
+  name,
+  dataType,
+  nullable: false,
+  primaryKey: false,
+  ...extra,
+});
+handlers.schema_diagram = () => ({
+  tables: [
+    {
+      name: "departments",
+      columns: [
+        col("id", "int", { primaryKey: true }),
+        col("name", "varchar(80)"),
+        col("manager_id", "int", { nullable: true }),
+      ],
+    },
+    {
+      name: "employees",
+      columns: [
+        col("id", "int", { primaryKey: true }),
+        col("first_name", "varchar(60)"),
+        col("last_name", "varchar(60)"),
+        col("email", "varchar(120)"),
+        col("department_id", "int"),
+        col("job_id", "int"),
+        col("hired_on", "date"),
+        col("salary", "decimal(10,2)", { nullable: true }),
+      ],
+    },
+    {
+      name: "jobs",
+      columns: [
+        col("id", "int", { primaryKey: true }),
+        col("title", "varchar(80)"),
+        col("min_salary", "decimal(10,2)", { nullable: true }),
+        col("max_salary", "decimal(10,2)", { nullable: true }),
+      ],
+    },
+    {
+      name: "leave_requests",
+      columns: [
+        col("id", "int", { primaryKey: true }),
+        col("employee_id", "int"),
+        col("approved_by", "int", { nullable: true }),
+        col("starts_on", "date"),
+        col("ends_on", "date"),
+        col("status", "varchar(20)"),
+      ],
+    },
+    {
+      name: "payslips",
+      columns: [
+        col("id", "bigint", { primaryKey: true }),
+        col("employee_id", "int"),
+        col("period", "char(7)"),
+        col("gross", "decimal(10,2)"),
+        col("net", "decimal(10,2)"),
+      ],
+    },
+    {
+      name: "locations",
+      columns: [
+        col("id", "int", { primaryKey: true }),
+        col("city", "varchar(60)"),
+        col("country", "char(2)"),
+      ],
+    },
+    {
+      name: "audit_log",
+      columns: [
+        col("id", "bigint", { primaryKey: true }),
+        col("at", "datetime"),
+        col("action", "varchar(40)"),
+        col("detail", "text", { nullable: true }),
+      ],
+    },
+  ],
+  foreignKeys: [
+    {
+      name: "fk_emp_dept",
+      fromTable: "employees",
+      fromColumns: ["department_id"],
+      toTable: "departments",
+      toColumns: ["id"],
+    },
+    {
+      name: "fk_emp_job",
+      fromTable: "employees",
+      fromColumns: ["job_id"],
+      toTable: "jobs",
+      toColumns: ["id"],
+    },
+    {
+      name: "fk_dept_mgr",
+      fromTable: "departments",
+      fromColumns: ["manager_id"],
+      toTable: "employees",
+      toColumns: ["id"],
+    },
+    {
+      name: "fk_leave_emp",
+      fromTable: "leave_requests",
+      fromColumns: ["employee_id"],
+      toTable: "employees",
+      toColumns: ["id"],
+    },
+    {
+      name: "fk_leave_appr",
+      fromTable: "leave_requests",
+      fromColumns: ["approved_by"],
+      toTable: "employees",
+      toColumns: ["id"],
+    },
+    {
+      name: "fk_pay_emp",
+      fromTable: "payslips",
+      fromColumns: ["employee_id"],
+      toTable: "employees",
+      toColumns: ["id"],
+    },
+  ],
+});
 const mockUsers = [
   {
     name: "postgres",

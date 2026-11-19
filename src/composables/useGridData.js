@@ -141,11 +141,19 @@ export function useGridData(source) {
     loadPage(Math.floor(position / pageSize()));
   }
 
-  /** Rows in the window, which is what the scroller is tall enough to show. */
+  /**
+   * Rows in the window, which is what the scroller is tall enough to show.
+   *
+   * A short last page ends the window where its rows end: counting it as a
+   * full page would leave rows past the end showing "Loading…" for ever.
+   */
   const loaded = computed(() => {
     void version.value;
     const size = pageSize();
-    const end = Math.min((lastLoaded() + 1) * size, source.value.total);
+    const last = lastLoaded();
+    const page = pages.value.get(last);
+    const short = page && page.length < size ? size - page.length : 0;
+    const end = Math.min((last + 1) * size - short, source.value.total);
     return Math.max(0, end - windowStart.value * size);
   });
 

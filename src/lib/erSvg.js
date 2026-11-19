@@ -6,8 +6,11 @@
  * second renderer that can quietly disagree with the screen.
  */
 
-const HEADER = 30;
-const ROW = 20;
+import {
+  HEADER_HEIGHT as HEADER,
+  ROW_HEIGHT as ROW,
+  roundedPath,
+} from "./erLayout.js";
 
 /**
  * Table columns as drawn, capped and with the rest counted.
@@ -39,62 +42,112 @@ export function escapeXml(text) {
   return String(text ?? "").replace(/[<>&"']/g, (one) => replacements[one]);
 }
 
+/** The colour tokens the drawing uses, read from the page for an export. */
+export const SVG_TOKENS = [
+  "canvas",
+  "surface",
+  "surface-raised",
+  "line",
+  "line-strong",
+  "fg",
+  "fg-muted",
+  "fg-subtle",
+  "accent-subtle",
+  "accent-text",
+  "warning-subtle",
+  "warning-text",
+];
+
 /**
  * @param {{ nodes: Record<string, object>, lines: Array<object>, width: number, height: number }} placed
  * @param {Array<object>} tables trimmed tables, as the screen shows them
+ * @param {Record<string, string>} colors token -> colour. A standalone file
+ *   and the canvas a PNG is drawn on can't see the app's CSS variables, so
+ *   an export passes the resolved colours; without them `var(--…)` is kept.
+ * @param {Set<string>} keyed "table:column" of every foreign key column
  */
-export function buildSvg(placed, tables) {
+export function buildSvg(placed, tables, colors = {}, keyed = new Set()) {
   const { nodes, lines, width, height } = placed;
+  const c = (token) => colors[token] || `var(--${token})`;
+  const font =
+    'font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"';
+  const mono = 'font-family="ui-monospace, SFMono-Regular, Menlo, monospace"';
   const parts = [];
 
   for (const line of lines) {
     parts.push(
-      `<line x1="${line.from.x}" y1="${line.from.y}" x2="${line.to.x}" y2="${line.to.y}" ` +
-        `stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>`,
+      `<path d="${roundedPath(line.points ?? [line.from, line.to])}" fill="none" ` +
+        `stroke="${c("fg-subtle")}" stroke-width="1.4" ` +
+        'marker-start="url(#many)" marker-end="url(#one)"/>',
     );
   }
 
   for (const node of Object.values(nodes)) {
     const { columns, hidden } = rowsFor(tables, node.id);
+    const { x, y, width: w } = node;
     parts.push(
-      `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" ` +
-        `rx="6" fill="var(--surface)" stroke="var(--line)"/>`,
-      `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${HEADER}" ` +
-        `rx="6" fill="var(--surface-raised)"/>`,
-      `<line x1="${node.x}" y1="${node.y + HEADER}" x2="${node.x + node.width}" ` +
-        `y2="${node.y + HEADER}" stroke="var(--line)"/>`,
-      `<text x="${node.x + 10}" y="${node.y + 19}" font-size="12" font-weight="600" ` +
-        `fill="var(--fg)">${escapeXml(node.id)}</text>`,
+      `<rect x="${x}" y="${y}" width="${w}" height="${node.height}" rx="8" ` +
+        `fill="${c("surface")}" stroke="${c("line-strong")}"/>`,
+      `<path d="M${x + 0.5},${y + HEADER} V${y + 8} a7.5,7.5 0 0 1 7.5,-7.5 ` +
+        `H${x + w - 8} a7.5,7.5 0 0 1 7.5,7.5 V${y + HEADER} Z" fill="${c("surface-raised")}"/>`,
+      `<line x1="${x}" y1="${y + HEADER}" x2="${x + w}" y2="${y + HEADER}" stroke="${c("line")}"/>`,
+      `<text x="${x + 12}" y="${y + 21.5}" ${font} font-size="12.5" font-weight="600" ` +
+        `fill="${c("fg")}">${escapeXml(node.id)}</text>`,
     );
 
     columns.forEach((column, index) => {
-      const y = node.y + HEADER + index * ROW + 13;
+      const top = y + HEADER + index * ROW;
+      const foreign = keyed.has(`${node.id}:${column.name}`);
+      if (column.primaryKey || foreign) {
+        const kind = column.primaryKey ? "warning" : "accent";
+        parts.push(
+          `<rect x="${x + 10}" y="${top + 5}" width="20" height="12" rx="3" fill="${c(`${kind}-subtle`)}"/>`,
+          `<text x="${x + 20}" y="${top + 14}" ${font} font-size="8" font-weight="700" ` +
+            `text-anchor="middle" fill="${c(`${kind}-text`)}">${column.primaryKey ? "PK" : "FK"}</text>`,
+        );
+      }
       parts.push(
-        `<text x="${node.x + 10}" y="${y}" font-size="11" ` +
-          `font-weight="${column.primaryKey ? 700 : 400}" ` +
-          `fill="${column.primaryKey ? "var(--fg)" : "var(--fg-muted)"}">` +
+        `<text x="${x + 38}" y="${top + 15}" ${font} font-size="12" ` +
+          `font-weight="${column.primaryKey ? 700 : 400}" fill="${c("fg")}">` +
           `${escapeXml(column.name)}</text>`,
-        `<text x="${node.x + node.width - 10}" y="${y}" font-size="10" text-anchor="end" ` +
-          `fill="var(--fg-subtle)">${escapeXml(column.dataType)}</text>`,
+        `<text x="${x + w - 12}" y="${top + 15}" ${mono} font-size="11" text-anchor="end" ` +
+          `fill="${c("fg-muted")}">${escapeXml(column.dataType)}</text>`,
       );
     });
 
     if (hidden)
       parts.push(
-        `<text x="${node.x + 10}" y="${node.y + node.height - 4}" font-size="10" ` +
-          `fill="var(--fg-subtle)">+${hidden} more</text>`,
+        `<text x="${x + 38}" y="${y + HEADER + columns.length * ROW + 15}" ${font} ` +
+          `font-size="11" fill="${c("fg-subtle")}">${hidden} more columns</text>`,
       );
   }
+
+  const marks =
+    '<marker id="many" viewBox="-2 -8 18 16" refX="0" refY="0" markerWidth="18" ' +
+    'markerHeight="16" markerUnits="userSpaceOnUse" orient="auto">' +
+    `<path d="M0,-6 L11,0 L0,6 M0,0 L11,0 M14,-6 L14,6" fill="none" stroke="${c("fg-subtle")}" stroke-width="1.4"/></marker>` +
+    '<marker id="one" viewBox="-16 -8 18 16" refX="0" refY="0" markerWidth="18" ' +
+    'markerHeight="16" markerUnits="userSpaceOnUse" orient="auto">' +
+    `<path d="M-6,-6 L-6,6 M-11,-6 L-11,6" fill="none" stroke="${c("fg-subtle")}" stroke-width="1.4"/></marker>`;
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
     `viewBox="0 0 ${width} ${height}">` +
-    '<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" ' +
-    'markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--line)"/>' +
-    "</marker></defs>" +
-    `<rect width="${width}" height="${height}" fill="var(--bg)"/>` +
+    `<defs>${marks}</defs>` +
+    `<rect width="${width}" height="${height}" fill="${c("canvas")}"/>` +
     parts.join("") +
     "</svg>"
+  );
+}
+
+/** Reads the colour tokens from the page, for an export that can't see them. */
+export function resolvedColors(element = document.documentElement) {
+  const style = getComputedStyle(element);
+  return Object.fromEntries(
+    SVG_TOKENS.map((token) => [
+      token,
+      style.getPropertyValue(`--${token}`).trim(),
+    ]),
   );
 }
 
@@ -105,8 +158,8 @@ export function fileNameFor(title, extension = "svg") {
 
 /**
  * A PNG of the SVG at `scale` times its size, as base64, by drawing it on a
- * canvas. White underneath, because a PNG viewer's default background is
- * often dark and the diagram's lines are drawn for a light one.
+ * canvas. The SVG paints its own background, so the PNG looks like the
+ * screen whatever the viewer's default is.
  */
 export async function svgToPng(svg, width, height, scale = 2) {
   const image = new Image();
